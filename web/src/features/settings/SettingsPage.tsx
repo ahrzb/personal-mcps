@@ -6,12 +6,26 @@ import type { FormEvent, ReactNode } from "react";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { useFlashParams } from "@/chrome/Notice";
 import { OtpBoxes } from "@/chrome/OtpBoxes";
+import { Page, PageHead, PageSubtitle, PageTitle, Pane as PaneFrame, Workspace } from "@/chrome/Page";
 import { PanePills, PaneRail, paneGroups } from "@/chrome/Panes";
 import type { PaneEntry } from "@/chrome/Panes";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge, BadgeDot } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Empty, EmptyDescription } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldError, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { tabsListVariants, tabsTriggerVariants } from "@/components/ui/tabs";
 import { useApi, useAppEnv } from "@/lib/api-context";
-import { alertClass, formatStamp } from "@/lib/format";
+import { cn } from "@/lib/cn";
+import { formatStamp } from "@/lib/format";
 import { ApiError } from "@/lib/http";
 import { noticeOf } from "@/lib/notice";
 import type { Notice } from "@/lib/notice";
@@ -52,9 +66,10 @@ import type { ExecutionErrors, PasswordField, SettingsConfirm } from "./derive";
 /**
  * `/settings` and its six pane URLs — §13's seven panes behind one rail.
  *
- * The port of `server/src/pages/settings.tsx`, element for element and class for class: the
- * rail beside the pane on a wide screen, the pill row above it on a phone, one card per pane,
- * and the destructive confirmations as dialogs that ride the owning pane's `?confirm=` URL.
+ * The port of `server/src/pages/settings.tsx`, element for element, drawn since pass 2 through
+ * `components/ui`, `chrome` and utilities to the look its legacy classes had: the rail beside
+ * the pane on a wide screen, the pill row above it on a phone, one card per pane, and the
+ * destructive confirmations as dialogs that ride the owning pane's `?confirm=` URL.
  * What differs is only what a client has to do differently:
  *
  *   - ONE read (`GET /api/hub/settings`) feeds the rail and every pane, as the server's one
@@ -80,17 +95,17 @@ export function SettingsPage({ pane }: { pane: SettingsPane }): ReactNode {
 
   return (
     <Shell active="settings">
-      <main className="page--workspace">
-        <div className="page-head">
+      <Page shape="workspace">
+        <PageHead>
           <div>
-            <h1 className="page-title">Settings</h1>
-            <p className="page-subtitle">Sign-in and access for {bootstrap.username}.</p>
+            <PageTitle>Settings</PageTitle>
+            <PageSubtitle>Sign-in and access for {bootstrap.username}.</PageSubtitle>
           </div>
-        </div>
+        </PageHead>
         <QueryState query={read} skeleton={<Skeleton rows={7} />}>
           {(data: SettingsRead) => <Board read={data} pane={pane} search={search} flash={flash} />}
         </QueryState>
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -126,16 +141,16 @@ function Board({
     <>
       <PanePills label={PILL_NAV_LABEL} entries={entries} />
       {notice === null ? null : <SettingsNotice notice={notice} />}
-      {/* `--framed`: the rail and the pane are ONE box, as on the agent page, so the paned
-          pages read as one family (design/layout-and-density.md §2). */}
-      <div className="paned paned--framed">
+      {/* The rail and the pane are ONE box, as on the agent page, so the paned pages read as
+          one family (design/layout-and-density.md §2). */}
+      <Workspace>
         <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
         {/* Password is the one pane the boards hold narrow — a form, where the others are
             tables that need every pixel the rail leaves. */}
-        <div className={pane === "password" ? "pane pane--narrow" : "pane"}>
+        <PaneFrame narrow={pane === "password"}>
           <Pane read={read} pane={pane} kind={kind} passwordError={passwordErrorOf(flash, pane)} />
-        </div>
-      </div>
+        </PaneFrame>
+      </Workspace>
       {confirm === null ? null : <SettingsDialog confirm={confirm} />}
     </>
   );
@@ -145,14 +160,46 @@ function Board({
  *  title only when there is one — unlike `chrome/Notice`'s, which the other pages share. */
 function SettingsNotice({ notice }: { notice: Notice }): ReactNode {
   return (
-    <div className={alertClass(notice.tone)} role="alert">
-      <div>
-        {notice.title === undefined ? null : <div className="alert-title">{notice.title}</div>}
-        <div className={notice.title === undefined ? undefined : "alert-text"}>{notice.message}</div>
-      </div>
-    </div>
+    <Alert variant={notice.tone} role="alert">
+      {notice.title === undefined ? (
+        <div>{notice.message}</div>
+      ) : (
+        <div>
+          <AlertTitle>{notice.title}</AlertTitle>
+          <AlertDescription>{notice.message}</AlertDescription>
+        </div>
+      )}
+    </Alert>
   );
 }
+
+/* ---------------------------------------------------------- shared looks --- */
+
+/** `.actions.actions--start`: a row of controls 12px apart, from the left. */
+const ACTIONS = "flex flex-wrap items-center gap-3";
+
+/** legacy.css's narrow `.actions .btn { flex: 1 }`: each button in an `ACTIONS` row takes an
+ *  equal share of the phone's width. Written on the button, since the row may hold other
+ *  things (a hint) that do not grow. */
+const GROW = "max-md:flex-1";
+
+/** `.note`: the muted small print under a card, capped at a readable measure. */
+const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
+
+/** `.table .cell-*`, spelled as `preview/fixtures/primitives/table.tsx` spells them. */
+const CELL = {
+  /** `.cell-muted` */
+  muted: "text-muted-foreground",
+  /** `.cell-mono`: breaks anywhere, so a key prefix or slug never widens the card. */
+  mono: "font-mono text-xs wrap-anywhere",
+  /** `.cell-actions`: right-aligned wide; its own row, left-aligned, under the card on a phone. */
+  actions: "text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left",
+  /** `.table .cell-actions .btn`, over a `sm` button: 10px sides wide, a 44px half-row on a phone. */
+  button: "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3",
+};
+
+/** The flush card's head above a table: `.card-head` at 24px sides and top, 16px under. */
+const TABLE_CARD_HEAD = "px-6 pt-6 pb-4";
 
 /** The pane the URL asked for, and only it — the rail beside it is drawn from the same read
  *  whichever this is. */
@@ -189,7 +236,7 @@ function Pane({
       return (
         <>
           <TokensCard tokens={read.tokens} kind={kind} />
-          <p className="note">
+          <p className={NOTE}>
             Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.
           </p>
         </>
@@ -200,7 +247,7 @@ function Pane({
       return (
         <>
           <ClientsCard connections={read.connections} />
-          <p className="note">
+          <p className={NOTE}>
             A client registers itself the first time you approve it on the consent screen — that screen is a step
             inside the sign-in redirect, never a page you navigate to. Revoking stops its tokens working; the agent it
             acted as, and that agent's grants, are untouched.
@@ -219,10 +266,10 @@ function Pane({
  */
 function ConfirmPasswordField({ autoFocus = false }: { autoFocus?: boolean }): ReactNode {
   return (
-    <label className="field">
-      <span className="label">Password</span>
-      <input type="password" name="password" required autoFocus={autoFocus} />
-    </label>
+    <Field render={<label />}>
+      <Label render={<span />}>Password</Label>
+      <Input type="password" name="password" required autoFocus={autoFocus} />
+    </Field>
   );
 }
 
@@ -262,26 +309,26 @@ function PasswordCard({
   };
 
   return (
-    <div className="card card--pad">
+    <Card>
       <div>
-        <div className="card-title">Password</div>
-        <div className="card-desc">Used with your username at sign-in. App and agent tokens are unaffected.</div>
+        <CardTitle>Password</CardTitle>
+        <CardDescription>Used with your username at sign-in. App and agent tokens are unaffected.</CardDescription>
       </div>
-      <form className="form" onSubmit={submit}>
-        <label className="field">
-          <span className="label">Current password</span>
-          <input
+      <FieldGroup render={<form onSubmit={submit} />}>
+        <Field render={<label />}>
+          <Label render={<span />}>Current password</Label>
+          <Input
             type="password"
             name="currentPassword"
             autoComplete="current-password"
             required
             aria-invalid={error === "currentPassword" ? "true" : undefined}
           />
-          {error === "currentPassword" ? <span className="field-error">{refusal.currentPassword}</span> : null}
-        </label>
-        <label className="field">
-          <span className="label">New password</span>
-          <input
+          {error === "currentPassword" ? <FieldError render={<span />}>{refusal.currentPassword}</FieldError> : null}
+        </Field>
+        <Field render={<label />}>
+          <Label render={<span />}>New password</Label>
+          <Input
             type="password"
             name="newPassword"
             autoComplete="new-password"
@@ -289,46 +336,57 @@ function PasswordCard({
             aria-invalid={error === "newPassword" ? "true" : undefined}
           />
           {/* One sentence, two roles: the standing hint, and the refusal when it named this. */}
-          <span className={error === "newPassword" ? "field-error" : "field-hint"}>{refusal.newPassword}</span>
-        </label>
-        <label className="field">
-          <span className="label">Confirm new password</span>
-          <input
+          {error === "newPassword" ? (
+            <FieldError render={<span />}>{refusal.newPassword}</FieldError>
+          ) : (
+            <FieldDescription render={<span />}>{refusal.newPassword}</FieldDescription>
+          )}
+        </Field>
+        <Field render={<label />}>
+          <Label render={<span />}>Confirm new password</Label>
+          <Input
             type="password"
             name="confirmPassword"
             autoComplete="new-password"
             required
             aria-invalid={error === "confirmPassword" ? "true" : undefined}
           />
-          {error === "confirmPassword" ? <span className="field-error">{refusal.confirmPassword}</span> : null}
-        </label>
+          {error === "confirmPassword" ? <FieldError render={<span />}>{refusal.confirmPassword}</FieldError> : null}
+        </Field>
         {/* Default ON: a password is most often changed on suspicion (§13). */}
-        <label className="checkbox">
-          <input type="checkbox" name="revokeOtherSessions" value="on" defaultChecked />
+        <Field orientation="horizontal" render={<label />}>
+          <Checkbox name="revokeOtherSessions" value="on" defaultChecked />
           <span>Sign out my other sessions</span>
-        </label>
-        <span className="field-hint checkbox-hint">
-          CLI sessions included — each machine runs <code className="code-inline">pmcp login</code> again. This
+        </Field>
+        {/* The box's own small print, not the form's: pulled 12px up into the form's gap and
+            indented past the 16px box and its 10px gap. */}
+        <FieldDescription render={<span />} className="-mt-3 pl-6.5">
+          CLI sessions included — each machine runs <code className={CODE_INLINE}>pmcp login</code> again. This
           browser stays signed in.
-        </span>
-        <div className="actions actions--start">
-          <button type="submit" className="btn btn--primary" disabled={write.pending}>
+        </FieldDescription>
+        <div className={ACTIONS}>
+          <Button type="submit" className={GROW} disabled={write.pending}>
             Update password
-          </button>
-          {confirmedAt === null ? null : <p className="field-hint">{confirmedLine(confirmedAt, Date.now())}</p>}
+          </Button>
+          {confirmedAt === null ? null : (
+            <FieldDescription render={<p />}>{confirmedLine(confirmedAt, Date.now())}</FieldDescription>
+          )}
         </div>
-      </form>
-    </div>
+      </FieldGroup>
+    </Card>
   );
 }
+
+/** `.code-inline`: a command or identifier set in running text, on a muted chip. */
+const CODE_INLINE = "rounded-sm bg-muted px-2 py-[3px] font-mono text-sm";
 
 /** §13's footer, verbatim: change is not reset, and where a forgotten one is recovered. */
 function PasswordFooter(): ReactNode {
   const { bootstrap } = useAppEnv();
   return (
-    <p className="note">
+    <p className={NOTE}>
       No email is on file, so there is no reset link: a forgotten password is recovered on the server with{" "}
-      <span className="code-inline">pnpm users reset-password {bootstrap.username}</span> (§12). Changing it here needs
+      <span className={CODE_INLINE}>pnpm users reset-password {bootstrap.username}</span> (§12). Changing it here needs
       the current one.
     </p>
   );
@@ -394,67 +452,66 @@ function TwoFactorPane({ enabled }: { enabled: boolean }): ReactNode {
           }
         />
       ) : !enabled ? (
-        <div className="card card--pad">
+        <Card>
           <div>
-            <div className="card-title">Two-factor authentication</div>
-            <div className="card-desc">Add a second factor from an authenticator app.</div>
+            <CardTitle>Two-factor authentication</CardTitle>
+            <CardDescription>Add a second factor from an authenticator app.</CardDescription>
           </div>
           {/* ponytail: the password sits inline rather than behind a dialog like Disable's —
               enabling destroys nothing (settings.tsx's own note). */}
-          <form className="form" onSubmit={enable}>
+          <FieldGroup render={<form onSubmit={enable} />}>
             <ConfirmPasswordField />
-            <div className="actions actions--start">
-              <button type="submit" className="btn btn--primary" disabled={write.pending}>
+            <div className={ACTIONS}>
+              <Button type="submit" className={GROW} disabled={write.pending}>
                 Enable two-factor
-              </button>
+              </Button>
             </div>
-          </form>
-        </div>
+          </FieldGroup>
+        </Card>
       ) : (
-        <div className="card card--pad">
-          <div className="card-head">
+        <Card>
+          <CardHeader>
             <div>
-              <div className="card-title">Two-factor authentication</div>
-              <div className="card-desc">TOTP via an authenticator app.</div>
+              <CardTitle>Two-factor authentication</CardTitle>
+              <CardDescription>TOTP via an authenticator app.</CardDescription>
             </div>
-            <span className="badge badge--success">
-              <span className="dot" />
+            <Badge variant="success">
+              <BadgeDot />
               enabled
-            </span>
-          </div>
-          {/* Two rows, not one flexing row: the two long labels overflow the narrow
-              `.actions .btn{flex:1}` rule, so the phone stacks them full width. Bottom-aligned
-              wide, so Disable sits beside the Regenerate BUTTON and not beside its field. */}
-          <div className="actions actions--start actions--bottom wide-only">
-            <form className="form" onSubmit={regenerate}>
+            </Badge>
+          </CardHeader>
+          {/* Two layouts, not one flexing row: the two long labels overflow a phone's
+              half-width buttons, so the phone stacks them full width. Bottom-aligned wide, so
+              Disable sits beside the Regenerate BUTTON and not beside its field. */}
+          <div className={cn(ACTIONS, "items-end max-md:hidden")}>
+            <FieldGroup render={<form onSubmit={regenerate} />}>
               <ConfirmPasswordField />
-              <button type="submit" className="btn btn--outline btn--sm" disabled={write.pending}>
+              <Button type="submit" variant="outline" size="sm" disabled={write.pending}>
                 Regenerate backup codes
-              </button>
-            </form>
-            <Link className="btn btn--danger-outline btn--sm" to={paths.settingsConfirm("two-factor", "disable-two-factor")}>
+              </Button>
+            </FieldGroup>
+            <Link
+              className={buttonVariants({ variant: "danger-outline", size: "sm" })}
+              to={paths.settingsConfirm("two-factor", "disable-two-factor")}
+            >
               Disable two-factor
             </Link>
           </div>
-          {/* The layout lives on a nested div: an inline `display` on the `narrow-only`
-              element itself would beat the class's `display: none` at wide widths. */}
-          <div className="narrow-only">
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
-              <form className="form" onSubmit={regenerate}>
-                <ConfirmPasswordField />
-                <button type="submit" className="btn btn--outline btn--block" disabled={write.pending}>
-                  Regenerate backup codes
-                </button>
-              </form>
-              <Link
-                className="btn btn--danger-outline btn--block"
-                to={paths.settingsConfirm("two-factor", "disable-two-factor")}
-              >
-                Disable two-factor
-              </Link>
-            </div>
+          <div className="hidden flex-col gap-2.5 max-md:flex">
+            <FieldGroup render={<form onSubmit={regenerate} />}>
+              <ConfirmPasswordField />
+              <Button type="submit" variant="outline" className="w-full" disabled={write.pending}>
+                Regenerate backup codes
+              </Button>
+            </FieldGroup>
+            <Link
+              className={`${buttonVariants({ variant: "danger-outline" })} w-full`}
+              to={paths.settingsConfirm("two-factor", "disable-two-factor")}
+            >
+              Disable two-factor
+            </Link>
           </div>
-        </div>
+        </Card>
       )}
       {codes === null ? null : <BackupCodesCard codes={codes} onDone={forget} />}
     </>
@@ -475,69 +532,79 @@ function EnrollmentCard({
   onVerify: (code: string) => void;
 }): ReactNode {
   return (
-    <div className="card card--pad">
+    <Card>
       <div>
-        <div className="card-title">Set up two-factor</div>
-        <div className="card-desc">Scan the QR code, then enter the 6-digit code.</div>
+        <CardTitle>Set up two-factor</CardTitle>
+        <CardDescription>Scan the QR code, then enter the 6-digit code.</CardDescription>
       </div>
       <img
         src={enrollment.qrDataUri}
         width={140}
         height={140}
         alt="Scan this code with your authenticator app"
-        style={{ alignSelf: "center", borderRadius: "var(--radius-lg)" }}
+        className="self-center rounded-lg"
       />
-      <div className="secret">{enrollment.secret}</div>
-      <form
-        className="form"
-        data-otp-form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onVerify(String(new FormData(event.currentTarget).get("code") ?? ""));
-        }}
+      {/* Spaced out and centred under the QR, so the owner can copy it by eye. */}
+      <div className="text-center font-mono text-sm tracking-[0.08em]">{enrollment.secret}</div>
+      <FieldGroup
+        render={
+          <form
+            data-otp-form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onVerify(String(new FormData(event.currentTarget).get("code") ?? ""));
+            }}
+          />
+        }
       >
         <OtpBoxes invalid={enrollment.error !== null} />
-        {enrollment.error === null ? null : <p className="field-error center">{enrollment.error}</p>}
-        <div className="actions actions--start">
-          <button type="submit" className="btn btn--primary" disabled={pending}>
+        {enrollment.error === null ? null : (
+          <FieldError render={<p />} className="text-center">
+            {enrollment.error}
+          </FieldError>
+        )}
+        <div className={ACTIONS}>
+          <Button type="submit" className={GROW} disabled={pending}>
             Verify
-          </button>
-          <Link className="btn btn--ghost" to={paths.settingsPane("two-factor")} onClick={onCancel}>
+          </Button>
+          <Link
+            className={`${buttonVariants({ variant: "ghost" })} ${GROW}`}
+            to={paths.settingsPane("two-factor")}
+            onClick={onCancel}
+          >
             Cancel
           </Link>
         </div>
-      </form>
-    </div>
+      </FieldGroup>
+    </Card>
   );
 }
 
 /** SettingsStates "Backup codes" — the one render that ever shows the plaintext set. */
 function BackupCodesCard({ codes, onDone }: { codes: string[]; onDone: () => void }): ReactNode {
   return (
-    <div className="card card--pad">
-      <div className="card-title">Backup codes</div>
-      <div className="code-grid">
+    <Card>
+      <CardTitle>Backup codes</CardTitle>
+      <div className="grid grid-cols-2 gap-2">
         {codes.map((code) => (
-          <div className="code-chip" data-code key={code}>
+          <div className="flex h-code-chip items-center justify-center rounded-sm bg-muted font-mono text-sm" data-code key={code}>
             {code}
           </div>
         ))}
       </div>
-      {/* No warning-coloured text utility exists outside the boxed `.alert`: the hint's
-          sizing with the token's colour. */}
-      <p className="field-hint" style={{ color: "var(--warning)" }}>
+      <FieldDescription render={<p />} className="text-warning">
         Store these somewhere safe — they are shown only once.
-      </p>
-      <div className="actions actions--start">
+      </FieldDescription>
+      <div className={ACTIONS}>
         {/* Newline-joined, the reveal's own shape, so the pasted set matches the screen. */}
-        <button type="button" className="btn btn--outline" onClick={() => void navigator.clipboard.writeText(codes.join("\n"))}>
+        <Button variant="outline" className={GROW} onClick={() => void navigator.clipboard.writeText(codes.join("\n"))}>
           Copy codes
-        </button>
-        <Link className="btn btn--primary" to={paths.settingsPane("two-factor")} onClick={onDone}>
+        </Button>
+        <Link className={`${buttonVariants()} ${GROW}`} to={paths.settingsPane("two-factor")} onClick={onDone}>
           Done
         </Link>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -561,50 +628,42 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
     );
   };
   const addButton = (
-    <button type="button" className="btn btn--outline btn--sm" onClick={add}>
+    <Button type="button" variant="outline" size="sm" className={GROW} onClick={add}>
       <PlusIcon />
       <span>Add passkey</span>
-    </button>
+    </Button>
   );
 
   return (
-    <div className="card card--pad">
+    <Card>
       <div>
-        <div className="card-title">Passkeys</div>
-        <div className="card-desc">Sign in with a security key or platform authenticator.</div>
+        <CardTitle>Passkeys</CardTitle>
+        <CardDescription>Sign in with a security key or platform authenticator.</CardDescription>
       </div>
       {passkeys.length === 0 ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "var(--space-6)",
-            padding: "var(--space-4) 0",
-          }}
-        >
-          <p className="muted center" style={{ maxWidth: 280 }}>
+        <div className="flex flex-col items-center gap-3 py-2">
+          <p className="max-w-[280px] text-center text-sm text-muted-foreground">
             No passkeys yet. Add one to sign in without a password.
           </p>
-          <div className="actions actions--start">{addButton}</div>
+          <div className={ACTIONS}>{addButton}</div>
         </div>
       ) : (
         <>
-          <div className="list">
+          <div className="flex flex-col">
             {passkeys.map((pk) => (
-              <div className="list-item" key={pk.id}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-6)" }}>
+              <div className={LIST_ITEM} key={pk.id}>
+                <div className="flex items-center gap-3">
                   <KeyIcon />
                   <div>
-                    <div className="list-title">{pk.name}</div>
-                    <div className="list-meta">
+                    <div className={LIST_TITLE}>{pk.name}</div>
+                    <div className={LIST_META}>
                       Added {formatDate(pk.addedAt)} ·{" "}
                       {pk.lastUsedAt === null ? "never used" : `last used ${formatRelative(pk.lastUsedAt, now)}`}
                     </div>
                   </div>
                 </div>
                 <Link
-                  className="btn btn--danger-ghost btn--sm"
+                  className={buttonVariants({ variant: "danger-ghost", size: "sm" })}
                   to={paths.settingsConfirm("passkeys", "remove-passkey", pk.id)}
                 >
                   Remove
@@ -612,12 +671,20 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
               </div>
             ))}
           </div>
-          <div className="actions actions--start">{addButton}</div>
+          <div className={ACTIONS}>{addButton}</div>
         </>
       )}
-    </div>
+    </Card>
   );
 }
+
+/** `.list-item`: a plain row inside a padded card — the thing on the left, its control on the
+ *  right — ruled from the next, the last unruled against the card's edge. */
+const LIST_ITEM = "flex items-center justify-between gap-3 border-b border-row-border py-3 last:border-b-0";
+
+/** `.list-title` and `.list-meta`: a row's name, and the muted line under it. */
+const LIST_TITLE = "text-base font-medium";
+const LIST_META = "text-xs text-muted-foreground";
 
 /**
  * One WebAuthn registration against better-auth's two endpoints. Base64url is the only wire
@@ -684,7 +751,10 @@ function encode(buffer: ArrayBuffer): string {
 /** §13's **Revoke all others** — the one destructive control that names no row. */
 function RevokeAllOthers(): ReactNode {
   return (
-    <Link className="btn btn--danger-outline btn--sm" to={paths.settingsConfirm("sessions", "revoke-other-sessions")}>
+    <Link
+      className={buttonVariants({ variant: "danger-outline", size: "sm" })}
+      to={paths.settingsConfirm("sessions", "revoke-other-sessions")}
+    >
       Revoke all others
     </Link>
   );
@@ -695,72 +765,74 @@ function RevokeAllOthers(): ReactNode {
 function SessionsCard({ sessions }: { sessions: SessionRow[] }): ReactNode {
   const now = Date.now();
   return (
-    <div className="card">
-      <div className="card-head wide-only" style={{ padding: "var(--space-10) var(--space-10) var(--space-8)" }}>
+    <Card size="flush">
+      <CardHeader className={cn(TABLE_CARD_HEAD, "max-md:hidden")}>
         <div>
-          <div className="card-title">Active sessions</div>
-          <div className="card-desc">Web and CLI sessions currently signed in.</div>
+          <CardTitle>Active sessions</CardTitle>
+          <CardDescription>Web and CLI sessions currently signed in.</CardDescription>
         </div>
         <RevokeAllOthers />
-      </div>
-      <table className="table wide-only">
-        <thead>
-          <tr>
-            <th>Client</th>
-            <th>Created</th>
-            <th>Last active</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
+      </CardHeader>
+      <Table className="max-md:hidden">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Client</TableHead>
+            <TableHead>Created</TableHead>
+            <TableHead>Last active</TableHead>
+            <TableHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {sessions.map((session) => (
-            <tr key={session.id}>
-              <td>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
+            <TableRow key={session.id}>
+              <TableCell>
+                <div className="flex items-center gap-2">
                   <span>{sessionLabel(session)}</span>
-                  {session.current ? <span className="badge badge--outline">current</span> : null}
+                  {session.current ? <Badge variant="outline">current</Badge> : null}
                 </div>
-              </td>
-              <td className="cell-muted">{formatDate(session.createdAt)}</td>
-              <td className="cell-muted">{formatRelative(session.lastActiveAt, now)}</td>
-              <td className="cell-actions">
+              </TableCell>
+              <TableCell className={CELL.muted}>{formatDate(session.createdAt)}</TableCell>
+              <TableCell className={CELL.muted}>{formatRelative(session.lastActiveAt, now)}</TableCell>
+              <TableCell className={CELL.actions}>
                 {session.current ? null : (
                   <Link
-                    className="btn btn--danger-ghost btn--sm"
+                    className={cn(buttonVariants({ variant: "danger-ghost", size: "sm" }), CELL.button)}
                     to={paths.settingsConfirm("sessions", "revoke-session", session.id)}
                   >
                     Revoke
                   </Link>
                 )}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
 
-      <div className="card--pad narrow-only" style={{ gap: "var(--space-3)" }}>
-        <div className="card-head">
+      {/* A BLOCK on a phone, not the padded card's flex column: legacy.css's `.narrow-only`
+          showed it with `display: revert`, so its head and list stack with no gap between. */}
+      <CardContent className="hidden max-md:block">
+        <CardHeader>
           <div>
-            <div className="card-title">Active sessions</div>
-            <div className="card-desc">Web and CLI sessions currently signed in.</div>
+            <CardTitle>Active sessions</CardTitle>
+            <CardDescription>Web and CLI sessions currently signed in.</CardDescription>
           </div>
           <RevokeAllOthers />
-        </div>
-        <div className="list">
+        </CardHeader>
+        <div className="flex flex-col">
           {sessions.map((session) => (
-            <div className="list-item" key={session.id}>
-              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-                  <span className="list-title">{sessionLabel(session)}</span>
-                  {session.current ? <span className="badge badge--outline">current</span> : null}
+            <div className={LIST_ITEM} key={session.id}>
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className={LIST_TITLE}>{sessionLabel(session)}</span>
+                  {session.current ? <Badge variant="outline">current</Badge> : null}
                 </div>
-                <div className="list-meta">
+                <div className={LIST_META}>
                   Created {formatDate(session.createdAt)} · active {formatRelative(session.lastActiveAt, now)}
                 </div>
               </div>
               {session.current ? null : (
                 <Link
-                  className="btn btn--danger-ghost btn--sm"
+                  className={buttonVariants({ variant: "danger-ghost", size: "sm" })}
                   to={paths.settingsConfirm("sessions", "revoke-session", session.id)}
                 >
                   Revoke
@@ -769,8 +841,8 @@ function SessionsCard({ sessions }: { sessions: SessionRow[] }): ReactNode {
             </div>
           ))}
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -793,16 +865,19 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
   const write = useSettingsWrite("tokens");
   const listed = listedTokens(tokens, kind);
   return (
-    <div className="card">
-      <div className="card-head" style={{ padding: "var(--space-10) var(--space-10) var(--space-8)" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-          <div className="card-title">Tokens</div>
-          <div className="card-desc">Every key issued in this namespace. Issue new keys from an app or agent page.</div>
+    <Card size="flush">
+      <CardHeader className={TABLE_CARD_HEAD}>
+        <div className="flex flex-col gap-0.5">
+          <CardTitle>Tokens</CardTitle>
+          <CardDescription>Every key issued in this namespace. Issue new keys from an app or agent page.</CardDescription>
         </div>
-        <div className="segmented" style={{ flexShrink: 0 }}>
+        {/* Drawn as the segmented control, but LINKS with `aria-current`, not tabs: each
+            arm is a URL, so there is no in-page view for a tab to own (pass 2 ruling 1.5). */}
+        <div className={cn(tabsListVariants(), "shrink-0")}>
           {TOKEN_KINDS.map((option) => (
             <Link
               key={option.label}
+              className={tabsTriggerVariants()}
               to={paths.settingsPane("tokens")}
               search={option.kind === null ? {} : { kind: option.kind }}
               // The query IS this control's state, so the router's own "current" judgement
@@ -814,61 +889,63 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
             </Link>
           ))}
         </div>
-      </div>
+      </CardHeader>
       {listed.length === 0 ? (
-        <div className="empty empty--inline">
+        <Empty variant="inline">
           {/* Two empty states for two facts: nothing was ever issued, or the FILTER hides
               what was — and under a filter an empty namespace is still the first fact. */}
           {kind === null || tokens.length === 0 ? (
-            <div className="empty-text">No keys issued yet.</div>
+            <EmptyDescription>No keys issued yet.</EmptyDescription>
           ) : (
-            <div className="empty-text">
+            <EmptyDescription>
               No {kind} keys. <Link to={paths.settingsPane("tokens")}>Show all {tokens.length}</Link>.
-            </div>
+            </EmptyDescription>
           )}
-        </div>
+        </Empty>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Token</th>
-              <th>Kind</th>
-              <th>Bound to</th>
-              <th>Created</th>
-              <th>Expires</th>
-              <th>Last used</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Token</TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead>Bound to</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead>Last used</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {listed.map((token) => (
-              /* An expired row recedes behind the live ones; the amber badge is the one thing
-                 in it still at full contrast. */
-              <tr key={token.id} className={token.expired ? "row--dim" : undefined}>
-                <td className="cell-mono">{token.prefix}</td>
-                <td>
-                  <span className="badge badge--mono">{token.kind}</span>
-                </td>
-                <td className="cell-mono">
+              /* An expired row recedes behind the live ones — every cell and link, over their
+                 own colours; the amber badge is the one thing in it still at full contrast. */
+              <TableRow key={token.id} className={token.expired ? "[&>td]:text-ring [&>td_a]:text-ring" : undefined}>
+                <TableCell className={CELL.mono}>{token.prefix}</TableCell>
+                <TableCell>
+                  <Badge variant="mono">{token.kind}</Badge>
+                </TableCell>
+                <TableCell className={CELL.mono}>
                   <Link to={token.kind === "app" ? paths.appDetail(token.boundTo) : paths.agentDetail(token.boundTo)}>
                     {token.boundTo}
                   </Link>
-                </td>
-                <td className="cell-muted">{formatStamp(token.createdAt)}</td>
-                <td className="cell-muted">
+                </TableCell>
+                <TableCell className={CELL.muted}>{formatStamp(token.createdAt)}</TableCell>
+                <TableCell className={CELL.muted}>
                   {token.expired ? (
-                    <span className="badge badge--warning">expired</span>
+                    <Badge variant="warning">expired</Badge>
                   ) : token.expiresAt === null ? (
                     "never"
                   ) : (
                     formatStamp(token.expiresAt)
                   )}
-                </td>
-                <td className="cell-muted">{token.lastUsedAt === null ? "never" : formatStamp(token.lastUsedAt)}</td>
-                <td className="cell-actions">
+                </TableCell>
+                <TableCell className={CELL.muted}>
+                  {token.lastUsedAt === null ? "never" : formatStamp(token.lastUsedAt)}
+                </TableCell>
+                <TableCell className={CELL.actions}>
                   {/* Still a <form> around the button, as the server drew it — and that is
                       layout, not habit: the form is the cell's flex item, so the phone's
-                      `.cell-actions .btn { flex: 1 }` does not stretch the button across. */}
+                      `flex-1` on a cell's button does not stretch this one across. */}
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -878,17 +955,23 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
                       });
                     }}
                   >
-                    <button type="submit" className="btn btn--danger-outline btn--sm" disabled={write.pending}>
+                    <Button
+                      type="submit"
+                      variant="danger-outline"
+                      size="sm"
+                      className={CELL.button}
+                      disabled={write.pending}
+                    >
                       {token.expired ? "Remove" : "Revoke"}
-                    </button>
+                    </Button>
                   </form>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -898,69 +981,71 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
  *  because re-consent revives the same row (§19.4). */
 function ClientsCard({ connections }: { connections: ConnectionRow[] }): ReactNode {
   return (
-    <div className="card">
-      <div className="card--pad" style={{ gap: "var(--space-1)" }}>
-        <div className="card-title">Connected clients</div>
-        <div className="card-desc">Outside software you approved to reach this hub, and the agent each one acts as.</div>
-      </div>
+    <Card size="flush">
+      <CardContent className="gap-0.5">
+        <CardTitle>Connected clients</CardTitle>
+        <CardDescription>Outside software you approved to reach this hub, and the agent each one acts as.</CardDescription>
+      </CardContent>
       {connections.length === 0 ? (
-        <div className="empty empty--inline">
-          <div className="empty-text">A client that completes the consent screen appears here.</div>
-        </div>
+        <Empty variant="inline">
+          <EmptyDescription>A client that completes the consent screen appears here.</EmptyDescription>
+        </Empty>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Client</th>
-              <th>Acts as</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Client</TableHead>
+              <TableHead>Acts as</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Last used</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {connections.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-                    <span className="cell-name">{row.clientName ?? row.clientId}</span>
+              <TableRow key={row.id}>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-medium">{row.clientName ?? row.clientId}</span>
                     {/* Nobody vouched for this name but the client that chose it (§19.5). */}
-                    {row.selfRegistered ? <span className="badge badge--warning">unverified</span> : null}
+                    {row.selfRegistered ? <Badge variant="warning">unverified</Badge> : null}
                   </div>
-                  <div className="cell-slug">{row.redirectOrigin}</div>
-                </td>
-                <td className="cell-mono">
+                  <div className="font-mono text-xs text-muted-foreground">{row.redirectOrigin}</div>
+                </TableCell>
+                <TableCell className={CELL.mono}>
                   <Link to={paths.agentDetail(row.agentSlug)}>{row.agentSlug}</Link>
-                </td>
-                <td className="cell-muted">{formatStamp(row.createdAt)}</td>
-                <td className="cell-muted">{row.lastUsedAt === null ? "never" : formatStamp(row.lastUsedAt)}</td>
-                <td>
+                </TableCell>
+                <TableCell className={CELL.muted}>{formatStamp(row.createdAt)}</TableCell>
+                <TableCell className={CELL.muted}>
+                  {row.lastUsedAt === null ? "never" : formatStamp(row.lastUsedAt)}
+                </TableCell>
+                <TableCell>
                   {row.revokedAt === null ? (
-                    <span className="badge badge--success">
-                      <span className="dot" />
+                    <Badge variant="success">
+                      <BadgeDot />
                       active
-                    </span>
+                    </Badge>
                   ) : (
-                    <span className="badge badge--muted">revoked</span>
+                    <Badge variant="muted">revoked</Badge>
                   )}
-                </td>
-                <td className="cell-actions">
+                </TableCell>
+                <TableCell className={CELL.actions}>
                   {row.revokedAt === null ? (
                     <Link
-                      className="btn btn--danger-outline btn--sm"
+                      className={cn(buttonVariants({ variant: "danger-outline", size: "sm" }), CELL.button)}
                       to={paths.settingsConfirm("clients", "revoke-connection", row.id)}
                     >
                       Revoke
                     </Link>
                   ) : null}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -1010,25 +1095,25 @@ function ExecutionCard({ read }: { read: SettingsRead }): ReactNode {
   };
 
   return (
-    <div className="card card--pad">
+    <Card>
       <div>
-        <div className="card-title">Execution</div>
-        <div className="card-desc">
+        <CardTitle>Execution</CardTitle>
+        <CardDescription>
           How long a program run through this namespace's hub endpoint may take. Owner-wide, and measured in
           milliseconds.
-        </div>
+        </CardDescription>
       </div>
 
-      <form className="form" onSubmit={(event) => void save(event)}>
+      <FieldGroup render={<form onSubmit={(event) => void save(event)} />}>
         {errors.form === undefined ? null : (
-          <div className="alert alert--danger" role="alert">
-            <div className="alert-text">{errors.form}</div>
-          </div>
+          <Alert variant="danger" role="alert">
+            <AlertDescription>{errors.form}</AlertDescription>
+          </Alert>
         )}
 
-        <label className="field">
-          <span className="label">Default timeout</span>
-          <input
+        <Field render={<label />}>
+          <Label render={<span />}>Default timeout</Label>
+          <Input
             type="number"
             name="default_timeout_ms"
             value={shown.defaults}
@@ -1039,15 +1124,15 @@ function ExecutionCard({ read }: { read: SettingsRead }): ReactNode {
             onChange={(event) => setDraft({ ...shown, defaults: event.target.value })}
           />
           {errors.defaults === undefined ? (
-            <span className="field-hint">Used when a program sends no timeout of its own.</span>
+            <FieldDescription render={<span />}>Used when a program sends no timeout of its own.</FieldDescription>
           ) : (
-            <span className="field-error">{errors.defaults}</span>
+            <FieldError render={<span />}>{errors.defaults}</FieldError>
           )}
-        </label>
+        </Field>
 
-        <label className="field">
-          <span className="label">Maximum timeout</span>
-          <input
+        <Field render={<label />}>
+          <Label render={<span />}>Maximum timeout</Label>
+          <Input
             type="number"
             name="max_timeout_ms"
             value={shown.maximum}
@@ -1058,26 +1143,26 @@ function ExecutionCard({ read }: { read: SettingsRead }): ReactNode {
             onChange={(event) => setDraft({ ...shown, maximum: event.target.value })}
           />
           {errors.maximum === undefined ? (
-            <span className="field-hint">
+            <FieldDescription render={<span />}>
               The largest a program may request — never below the default, and never above {timeoutLabel(maxTimeoutMs)}.
-            </span>
+            </FieldDescription>
           ) : (
-            <span className="field-error">{errors.maximum}</span>
+            <FieldError render={<span />}>{errors.maximum}</FieldError>
           )}
-        </label>
+        </Field>
 
-        <div className="actions actions--start">
-          <button type="submit" className="btn btn--primary" disabled={write.pending}>
+        <div className={ACTIONS}>
+          <Button type="submit" className={GROW} disabled={write.pending}>
             Save
-          </button>
+          </Button>
         </div>
-      </form>
+      </FieldGroup>
 
-      <p className="note">
+      <p className={NOTE}>
         Each execution snapshots this pair when it is admitted, so a change governs new runs only — one already going
         keeps the deadline it started with.
       </p>
-    </div>
+    </Card>
   );
 }
 
@@ -1093,7 +1178,7 @@ function SettingsDialog({ confirm }: { confirm: SettingsConfirm }): ReactNode {
   const owner = SETTINGS_CONFIRM_PANE[confirm.kind];
   const write = useSettingsWrite(owner);
   const cancel = (
-    <Link className="btn btn--ghost" to={paths.settingsPane(owner)}>
+    <Link className={buttonVariants({ variant: "ghost" })} to={paths.settingsPane(owner)}>
       Cancel
     </Link>
   );
@@ -1106,16 +1191,17 @@ function SettingsDialog({ confirm }: { confirm: SettingsConfirm }): ReactNode {
   ): ReactNode => (
     <ConfirmDialog title={title} text={text} onClose={() => drop(["confirm", "id"])}>
       <form
-        className="actions"
         onSubmit={(event) => {
           event.preventDefault();
           run();
         }}
       >
-        {cancel}
-        <button type="submit" className="btn btn--danger" disabled={write.pending}>
-          {word}
-        </button>
+        <DialogFooter>
+          {cancel}
+          <Button type="submit" variant="danger" disabled={write.pending}>
+            {word}
+          </Button>
+        </DialogFooter>
       </form>
     </ConfirmDialog>
   );
@@ -1128,22 +1214,25 @@ function SettingsDialog({ confirm }: { confirm: SettingsConfirm }): ReactNode {
           text="You'll no longer need a code from your authenticator app to sign in. Enter your password to confirm."
           onClose={() => drop(["confirm", "id"])}
         >
-          <form
-            className="form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const password = String(new FormData(event.currentTarget).get("password") ?? "");
-              void write.send(settingsApi.totpDisable, { password }, "two_factor_disable");
-            }}
+          <FieldGroup
+            render={
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const password = String(new FormData(event.currentTarget).get("password") ?? "");
+                  void write.send(settingsApi.totpDisable, { password }, "two_factor_disable");
+                }}
+              />
+            }
           >
             <ConfirmPasswordField autoFocus />
-            <div className="actions">
+            <DialogFooter>
               {cancel}
-              <button type="submit" className="btn btn--danger" disabled={write.pending}>
+              <Button type="submit" variant="danger" disabled={write.pending}>
                 Disable
-              </button>
-            </div>
-          </form>
+              </Button>
+            </DialogFooter>
+          </FieldGroup>
         </ConfirmDialog>
       );
     case "remove-passkey":
@@ -1270,7 +1359,7 @@ function KeyIcon(): ReactNode {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      style={{ color: "var(--muted-fg)", flexShrink: 0 }}
+      className="shrink-0 text-muted-foreground"
       aria-hidden="true"
     >
       <circle cx="7.5" cy="15.5" r="3.5" />

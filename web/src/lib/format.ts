@@ -69,19 +69,3 @@ export function formatStamp(at: number): string {
 
 /** A flash's tone, as the shell and every pane spell it. */
 export type NoticeTone = "success" | "warning" | "danger";
-
-/**
- * legacy.css's `.alert` classes per tone. Its last reader is /settings' own banner
- * (`SettingsNotice`), which should draw `<Alert variant={notice.tone}>` (`components/ui/alert`,
- * whose variants are these tones) and delete this with it, in the settings family's pass-2
- * conversion. Every other banner already does.
- */
-const ALERT_CLASS: Record<NoticeTone, string> = {
-  success: "alert alert--success",
-  warning: "alert alert--warning",
-  danger: "alert alert--danger",
-};
-
-export function alertClass(tone: NoticeTone): string {
-  return ALERT_CLASS[tone];
-}

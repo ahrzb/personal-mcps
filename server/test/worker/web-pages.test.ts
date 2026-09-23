@@ -1099,6 +1099,32 @@ describe("§13 · the client bundle's two assets", () => {
     expect(shell).toContain(`src="${paths.clientScript}"`);
     expect(shell).toContain(`href="${paths.clientStylesheet}"`);
   });
+
+  // Pass 2's P0 (ruling 1.1): the shared sheet moved into the bundle, layered beneath the
+  // utilities, so the Worker serves one stylesheet and the shell links one.
+  it(`§13 · the shell links exactly one stylesheet of the hub's own, /app.css — signed in and at /login alike — and /styles.css is no longer served: it answers exactly what an unclaimed top-level path answers, status, headers and body, with a session or without one`, async () => {
+    for (const shell of [await page(paths.apps), await anonymousPage(paths.login)]) {
+      // The webfont's sheet is Google's, not the hub's, so only same-origin hrefs count.
+      const own = [...shell.matchAll(/<link rel="stylesheet" href="([^"]*)"/g)]
+        .map((link) => link[1])
+        .filter((href) => href.startsWith("/"));
+      expect(own).toEqual([paths.clientStylesheet]);
+    }
+
+    // The twin is a dotted name nothing ever served, so "unclaimed" is measured, not assumed.
+    const answerOf = async (path: string, cookie?: string): Promise<string> => {
+      const response = await call(new Request(`${ORIGIN}${path}`, cookie === undefined ? {} : { headers: { Cookie: cookie } }));
+      const headers: [string, string][] = [];
+      response.headers.forEach((value, name) => headers.push([name, value]));
+      headers.sort(([a], [b]) => a.localeCompare(b));
+      return JSON.stringify({ status: response.status, headers, body: await response.text() });
+    };
+    for (const cookie of [undefined, world.session.cookie]) {
+      const gone = await answerOf("/styles.css", cookie);
+      expect(JSON.parse(gone).status).toBe(404);
+      expect(gone).toBe(await answerOf("/never-served.css", cookie));
+    }
+  });
 });
 
 describe("§13 · /api/hub — the write gate, in the order it is written", () => {
@@ -2419,7 +2445,7 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on /login's anonymous shell, /apps shelled under the owner's cookie, /apps/new, and the shell at /approvals, /approvals/<id>, /settings, /device and /oauth/consent (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on /login's anonymous shell, /apps shelled under the owner's cookie, /apps/new, and the shell at /approvals, /approvals/<id>, /settings, /device and /oauth/consent (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, the shell's stylesheet /app.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
       // Every page family is the shell now (decision 38), so this is every URL a browser
@@ -2450,8 +2476,9 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
 
       // The twin, and the reason it is worth having: these two prove the headers ride the
       // PAGE renderer rather than a blanket middleware over every response — the shell's
-      // static assets stay cacheable.
-      const css = await call(new Request(`${ORIGIN}${paths.stylesheet}`));
+      // static assets stay cacheable. The sheet is /app.css since pass 2's P0, the shell's
+      // one stylesheet: /styles.css, which this leg read until then, is no longer served.
+      const css = await call(new Request(`${ORIGIN}${paths.clientStylesheet}`));
       expect(css.status).toBe(200);
       expect(css.headers.get("Content-Type")).toContain("text/css");
       expect(css.headers.get("Content-Security-Policy")).toBeNull();

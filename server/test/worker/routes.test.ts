@@ -312,6 +312,18 @@ describe("§2 · usernames may not collide with routes", () => {
     }
   });
 
+  // Pass 2's P0 freed `styles.css` (the shared sheet moved into the client bundle). Freeing
+  // a reserved segment is only safe if no username could claim it afterwards — this one
+  // never could, since the dot is outside §2's charset, so no username rule changes.
+  it("9b. §2 · styles.css is no longer a served segment and no longer reserved — and still unclaimable, because the dot was always outside the username charset: GET /styles.css and a namespace-shaped /styles.css/mcp both answer the unrouted bytes, never a namespace's 401 · app.css, the sheet that took its place, is served (the twin)", async () => {
+    expect((ROUTES as readonly string[]).includes("styles.css")).toBe(false);
+    expect(RESERVED_ROUTES.has("styles.css")).toBe(false);
+    expect(USERNAME_CHARSET.test("styles.css")).toBe(false);
+    expect(await probeSegment("styles.css")).toBe("not-found");
+    // The twin: the same probe tells a served dotted segment apart.
+    expect(await probeSegment("app.css")).toBe("served");
+  });
+
   // Decision 30 reversed (2026-09-03): the agents pages are deferred, but the word is
   // reserved ahead of them, because a username `agents` registered first would shadow the
   // route for good. The reservation has to be SERVED for the §2 walk (case 2) to see it,

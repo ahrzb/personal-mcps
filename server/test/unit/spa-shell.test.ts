@@ -32,8 +32,7 @@ async function rendered(island: SpaShellProps["island"]): Promise<string> {
   const node = SpaShell({
     title: "Approvals",
     island,
-    stylesheet: "/styles.css",
-    appStylesheet: "/app.css",
+    stylesheet: "/app.css",
     script: "/app.js",
   }) as { toString(): string | Promise<string> };
   return node.toString();

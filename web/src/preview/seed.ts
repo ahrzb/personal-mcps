@@ -53,9 +53,16 @@ export type Seed = {
    * searching was never rendered here before it reached the owner.
    *
    * Returns null for a path this state does not answer, which then falls through to `hanging`
-   * and finally to the throw, so an incomplete seed still fails loudly.
+   * and finally to the throw, so an incomplete seed still fails loudly. An `error` answer
+   * REFUSES the read as `/api/hub` would (an `ApiError` with that status and body) — the one
+   * way to show a page whose first read is refused, since a `queries` error seed never reaches
+   * a query the cache has not built (/device's expired code is the case).
    */
-  respond?: (path: string) => { delayMs: number; data: unknown } | null;
+  respond?: (
+    path: string,
+    /** A write's body, so a seed can answer a decision the way the server would. */
+    body?: unknown,
+  ) => { delayMs: number; data: unknown } | { delayMs: number; error: { status: number; body: unknown } } | null;
 };
 
 /**
@@ -78,6 +85,7 @@ export const PREVIEW_PAGES = [
   "approvals",
   "approval-detail",
   "settings",
+  "device",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];

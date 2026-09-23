@@ -44,14 +44,12 @@ import { Registry } from "./registry";
 import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
 import { ConsentPage } from "./pages/consent";
-import { Device } from "./pages/device";
 import { Login } from "./pages/login";
 import { SpaShell } from "./pages/spa";
 import {
   approvalOf,
   auditExportQuery,
   consentProps,
-  deviceProps,
   hubRelative,
   loginProps,
   loginUrl,
@@ -97,9 +95,9 @@ type PageRouter = unknown;
  * The pages (all templates are Hono JSX, an implementation detail of this module):
  * - /login — username + password, TOTP challenge, passkey button; forms post to
  *   better-auth's endpoints.
- * - /device — the phishing-defense page (RFC 8628 §5.4): shows what the hub knows about
- *   the requesting client and states plainly that approval grants full admin CLI control
- *   of the namespace; the approval POST is CSRF-checked.
+ * - /device — the SPA shell (decision 38) behind the ordinary owner session: the
+ *   phishing-defense page (RFC 8628 §5.4), whose card and CSRF-checked verdict are
+ *   api.ts's `/api/hub/device` routes.
  * - /settings — the SPA shell at seven pane URLs (decision 38), behind the recent-auth
  *   prefix (§4). Its read and its eleven writes are api.ts's `/api/hub/settings/*`;
  *   nothing under this prefix is posted to.
@@ -192,29 +190,12 @@ export function pageRoutes(): PageRouter {
   });
 
   /* ---------------------------------- /device --------------------------------- */
-
-  app.get(paths.device, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(Device(await deviceProps(ctx, c.req.raw)));
-  });
-
-  // §13: approving grants full admin CLI control of the namespace, so the decision is a
-  // CSRF-checked POST — into better-auth's own device endpoints, which own the code's
-  // whole lifecycle (§4). No ops handler fronts them and none should: the credential
-  // family is pinned outside the parity invariant (§8).
-  app.post(
-    paths.deviceDecide,
-    mutation(async (c, _session, form) => {
-      const approved = field(form, "decision") === "approve";
-      const answered = await callAuth(c.req.raw, approved ? "/device/approve" : "/device/deny", {
-        userCode: field(form, "user_code") ?? "",
-      });
-      if (answered === null) {
-        return c.redirect(`${paths.device}?error=${encodeURIComponent("That code could not be decided.")}`, 303);
-      }
-      return c.redirect(`${paths.device}?decided=${approved ? "approved" : "denied"}`, 303);
-    }),
-  );
+  //
+  // The SPA shell behind the ORDINARY owner session (decision 38, the third family), which
+  // is also what carries the CLI's printed `?user_code=` through a sign-in: the gate's 302
+  // names the whole URL as `next=`. The card's read and the verdict are api.ts's
+  // `/api/hub/device` routes; nothing under this prefix is posted to any more.
+  app.get(paths.device, shell("Approve device"));
 
   /* --------------------------------- /settings --------------------------------- */
   //

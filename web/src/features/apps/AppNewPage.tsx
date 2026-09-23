@@ -26,8 +26,8 @@ const NOTE_PROXY_HEADERS = "Tokens are stored encrypted; your config file only r
  *
  * CHROMELESS, like `/login` and `/device`: no header, no nav. The page draws its own
  * `.auth`/`.auth-card` wrapper, which is what `styles.css` calls "auth pages … login,
- * device, two-factor, add-app". It and `/approvals/<id>` are the SPA routes that render no
- * `Shell`.
+ * device, two-factor, add-app". It, `/approvals/<id>` and `/device` are the SPA routes that
+ * render no `Shell`.
  *
  * The four steps the server rendered as four separate responses — the empty form, the form
  * redrawn with the owner's values and a field-scoped refusal, the created receipt, and §13's

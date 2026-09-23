@@ -80,6 +80,9 @@ export const paths = {
   audit: (search: Record<string, string | string[]> = {}): string => `/audit${query(search)}`,
   approvals: "/approvals",
   settings: "/settings",
+  /** The device-flow verdict page the CLI prints (`verification_uri`), and its
+   *  `?user_code=` deep link (`verification_uri_complete`). */
+  device: "/device",
   /** The sign-out target — a real form POST, because the answer is Set-Cookie plus a 303 to
    *  /login. The WORKER's translating route, not better-auth's `/api/auth/sign-out`: that one
    *  refuses a control-less form body with 415 and answers JSON, which is what this form
@@ -164,6 +167,15 @@ export const settingsApi = {
   tokenRevoke: "/settings/tokens/token_revoke",
   connectionRevoke: "/settings/clients/connection_revoke",
   executionUpdate: "/settings/execution/hub_settings_update",
+} as const;
+
+/**
+ * /device's JSON surface, relative to `/api/hub` (routes design §3): the read that claims and
+ * describes a code, and the decision. The read is `read` plus `?user_code=`.
+ */
+export const deviceApi = {
+  read: "/device",
+  decide: "/device/decide",
 } as const;
 
 /**

@@ -30,7 +30,7 @@
 //       noticeUrl) · admin.ops · gateway.ownerCatalog ·
 //       catalog-view · registry (Registry, effectiveRoles, writeOnlyPaths) · tunnel.capabilities ·
 //       upstream.beginConnect · pages/model (the composers, auditFilters/auditQueryOf,
-//       approvalOf, settingsRead, enrollmentOf/revealedCodesOf) ·
+//       approvalOf, deviceRequestOf, settingsRead, enrollmentOf/revealedCodesOf) ·
 //       wiring.approvalsFromEnv (subscribePush) · errors.HubError
 
 import { env } from "cloudflare:workers";
@@ -67,6 +67,7 @@ import {
   composeRedaction,
   composeRoles,
   composeTypescriptAliases,
+  deviceRequestOf,
   enrollmentOf,
   eventRow,
   grantChoicesOf,
@@ -78,6 +79,7 @@ import {
 import type {
   AuditEventRow,
   DetailApproval,
+  DeviceRequest,
   PasswordField,
   SettingsRead,
   TotpEnrollment,
@@ -183,6 +185,25 @@ export type ChangePasswordBody = {
  *  turned into the op's number here; anything else reaches the op as typed, for it to
  *  refuse in its own words under the field it names (§23.3). */
 export type ExecutionUpdateBody = { default_timeout_ms: string; max_timeout_ms: string };
+
+/* ------------------------------------------------------------------ *
+ * The device routes (§13, decision 38)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/hub/device?user_code=` — the confirm card's five facts and nothing else (no
+ * scope, no status, no device code): pages/model's `DeviceRequest`, every field but
+ * `userCode` attacker-influenced or a stated ceiling — `ip` is always "unknown", `client`
+ * is "unknown" to anyone but the claimant, `requestedAt` is the read's own instant and
+ * `expiresAt` the window's bound. A code better-auth does not know, or one past its
+ * expiry, is the one 404 `{ reason: "That code is not valid. Check it and try again." }`.
+ */
+export type DeviceRead = { request: DeviceRequest };
+
+/** `POST /api/hub/device/decide`'s body — anything else is a 400 and decides nothing.
+ *  Answers `Redirected` with `reload: false`: `/device?decided=approved|denied`, or
+ *  `/device?error=…` when better-auth refused the verdict. */
+export type DeviceDecideBody = { userCode: string; decision: "approve" | "deny" };
 
 /* ------------------------------------------------------------------ *
  * The drafts a typed route takes
@@ -608,6 +629,51 @@ export function hubApiRoutes(): unknown {
       // No push transport wired: subscribing sends nothing (wiring.approvalsFromEnv).
       await approvalsFromEnv().subscribePush(session.user.userId, subscription);
       return new Response(null, { status: 204 });
+    }),
+  );
+
+  /* ------------------------------- device ------------------------------- */
+  //
+  // /device's confirm card and its verdict (decision 38). Both ride better-auth's own
+  // device endpoints, which own the code's whole lifecycle (§4); no op fronts them and none
+  // should — the credential family is pinned outside the parity invariant (§8). The
+  // ORDINARY session gates both, as it gated the page: recency was never asked of /device,
+  // and decision 39 leaves approve/deny unguarded by it on purpose.
+
+  // The read CLAIMS — as rendering `/device?user_code=` always did (`deviceRequestOf`). A
+  // cross-site `fetch` carries no cookie and so claims nothing, and a claim grants nothing
+  // without the owner's CSRF-checked verdict below.
+  app.get(
+    "/hub/device",
+    reader(async (_session, c) => {
+      const userCode = new URL(c.req.url).searchParams.get("user_code") ?? "";
+      if (userCode === "") return refuse(400, "user_code is required.");
+      const request = await deviceRequestOf(c.req.raw, userCode);
+      if (request === null) return refuse(404, DEVICE_CODE_INVALID);
+      return json({ request } satisfies DeviceRead);
+    }),
+  );
+
+  // §13: approving grants full admin CLI control of the namespace, so the verdict passes
+  // the write gate's CSRF header — better-auth's own approve gate is origin-only. It
+  // answers where the form's 303 did; better-auth sets no cookie here, so it never
+  // reloads. The `auth.device_approved` row is written at better-auth's mount, as before.
+  app.post(
+    "/hub/device/decide",
+    writer(async (_session, c, body) => {
+      const userCode = stringOf(body, "userCode");
+      if (userCode === null) return refuse(400, "userCode must be a string.");
+      const decision = body.decision;
+      if (decision !== "approve" && decision !== "deny") return refuse(400, "decision must be approve or deny.");
+      const answered = await callAuth(c.req.raw, decision === "approve" ? "/device/approve" : "/device/deny", {
+        userCode,
+      });
+      // One sentence for every refusal better-auth makes (not the claimant, decided,
+      // expired): the page's own, as the form's 303 carried it.
+      if (answered === null) {
+        return redirected(`${paths.device}?error=${encodeURIComponent("That code could not be decided.")}`, null);
+      }
+      return redirected(`${paths.device}?decided=${decision === "approve" ? "approved" : "denied"}`, null);
     }),
   );
 
@@ -1271,6 +1337,10 @@ async function otherSessionCount(req: Request): Promise<number> {
   const listed = await callAuth<unknown[]>(req, "/list-sessions");
   return Array.isArray(listed) ? Math.max(0, listed.length - 1) : 0;
 }
+
+/** The device read's one refusal sentence — unknown and expired codes alike, the recovery
+ *  being the same either way: type another code. */
+const DEVICE_CODE_INVALID = "That code is not valid. Check it and try again.";
 
 /** The op key **Update password** reports its outcome under — spelled once, because the
  *  client reads the same key back to choose §13's success copy. */

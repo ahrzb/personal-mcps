@@ -152,15 +152,20 @@ function refusingClient(
   hanging: string[],
   respond: Seed["respond"],
 ): ApiClient {
-  const answer = <T,>(path: string): Promise<T> => {
+  const answer = <T,>(path: string, body?: unknown): Promise<T> => {
     // Every call this client handles, recorded for a browser walk to count. The gallery's reads
     // never reach the network — `respond` answers them in-page — so `page.on("request")` sees
     // nothing, and "how many times did that burst of typing read the window?" has no other
     // answer. Dev-only, like everything in this module.
     ((globalThis as unknown as { __pmcpReads?: string[] }).__pmcpReads ??= []).push(path);
-    const answered = respond?.(path) ?? null;
+    const answered = respond?.(path, body) ?? null;
     if (answered !== null) {
-      return new Promise<T>((resolve) => setTimeout(() => resolve(answered.data as T), answered.delayMs));
+      return new Promise<T>((resolve, reject) =>
+        setTimeout(
+          () => ("error" in answered ? reject(refusalOf(answered.error)) : resolve(answered.data as T)),
+          answered.delayMs,
+        ),
+      );
     }
     return hanging.some((prefix) => path.startsWith(prefix))
       ? new Promise<T>(() => undefined)

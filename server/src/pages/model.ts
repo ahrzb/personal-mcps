@@ -313,7 +313,9 @@ export const paths = {
   /* --- mutations posted by the pages --- */
 
   /** Approve/deny the device code; the decision rides a submit button's value.
-   *  better-auth's endpoint underneath, so this target names no op. */
+   *  better-auth's endpoint underneath, so this target names no op.
+   *  NO ROUTE since decision 38's family 3: only the retained device template draws it,
+   *  for the states preview; the client posts `POST /api/hub/device/decide`. */
   deviceDecide: "/device/decide",
   /** approval_decide (§8) for one request; approve and reject share the form,
    *  which submits the `decision` field the op's schema names.
@@ -1960,57 +1962,33 @@ function loginStep(query: URLSearchParams): LoginStep {
 }
 
 /**
- * /device — the one loader whose read is not the ops table's: the user code's whole
- * lifecycle is better-auth's (§4), so this asks identity's door about it rather than
- * any table. `req` is here for exactly that: `callAuth` carries the caller's cookie.
+ * `GET /api/hub/device`'s answer (decision 38) — the confirm card's facts for one user code,
+ * or null when better-auth does not know the code or it is past its expiry. The code's whole
+ * lifecycle is better-auth's (§4), so this asks identity's door rather than any table, and
+ * the ASKING is the point: better-auth's verify, carrying this caller's cookie, CLAIMS a
+ * pending unclaimed code for the caller and names its client only to the claimant — the
+ * binding the page render always made (routes §3's "Binding, reviewed"). Nothing else the
+ * verify answers (the status, the scope) reaches the card.
  */
-export async function deviceProps(ctx: PageContext, req: Request): Promise<DeviceProps> {
+export async function deviceRequestOf(req: Request, userCode: string): Promise<DeviceRequest | null> {
+  // deps: identity.callAuth
+  const verified = await callAuth<{ client_id?: string }>(req, `/device?user_code=${encodeURIComponent(userCode)}`);
+  if (verified === null) return null;
+  const now = new Date().toISOString();
   return {
-    now: ctx.now,
-    username: ctx.username,
-    csrfToken: ctx.csrfToken,
-    step: await deviceStep(ctx, req),
-  };
-}
-
-/**
- * /device's three moments (§13). A code arrives on the query string — the CLI prints a
- * deep link — and better-auth's own verify endpoint is what says whether it is live and
- * whose it is; an unknown or expired code comes back as `enter-code` with the error, which
- * is the same recovery either way: type another code.
- */
-async function deviceStep(ctx: PageContext, req: Request): Promise<DeviceStep> {
-  const decided = ctx.query.get("decided");
-  if (decided === "approved" || decided === "denied") {
-    return { kind: "decided", decision: decided };
-  }
-  const userCode = ctx.query.get("user_code");
-  if (userCode === null || userCode === "") {
-    return { kind: "enter-code", userCode: "", error: ctx.query.get("error") };
-  }
-  const verified = await callAuth<{ client_id?: string }>(
-    req,
-    `/device?user_code=${encodeURIComponent(userCode)}`,
-  );
-  if (verified === null) {
-    return { kind: "enter-code", userCode, error: "That code is not valid. Check it and try again." };
-  }
-  return {
-    kind: "confirm",
-    request: {
-      userCode,
-      // KNOWN CEILING, and the reason it is spelled rather than guessed: RFC 8628 §5.4
-      // wants the REQUESTING device's address and client, and better-auth's deviceCode
-      // record carries neither (its columns are code, user, status, expiry, client_id,
-      // scope). Rendering this browser's own IP would be worse than saying nothing: it
-      // would look like corroboration while corroborating nothing.
-      ip: "unknown",
-      client: verified.client_id ?? "unknown",
-      requestedAt: ctx.now,
-      // The record's own expiry is not returned either, so this is the window's upper
-      // bound (§13's shortened device-code lifetime), which is what the page says.
-      expiresAt: new Date(Date.parse(ctx.now) + DEVICE_CODE_TTL_MS).toISOString(),
-    },
+    userCode,
+    // KNOWN CEILING, and the reason it is spelled rather than guessed: RFC 8628 §5.4
+    // wants the REQUESTING device's address and client, and better-auth's deviceCode
+    // record carries neither (its columns are code, user, status, expiry, client_id,
+    // scope). Answering this browser's own IP would be worse than saying nothing: it
+    // would look like corroboration while corroborating nothing.
+    ip: "unknown",
+    // Named to the claimant alone — a code another owner already claimed answers none.
+    client: verified.client_id ?? "unknown",
+    requestedAt: now,
+    // The record's own expiry is not returned either, so this is the window's upper
+    // bound (§13's shortened device-code lifetime), which is what the card says.
+    expiresAt: new Date(Date.parse(now) + DEVICE_CODE_TTL_MS).toISOString(),
   };
 }
 

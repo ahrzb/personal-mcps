@@ -14,6 +14,7 @@ import type {
   AuditWindowResponse,
   ApprovalDetailRead,
   ApprovalsResponse,
+  DeviceRead,
   SettingsRead,
   CapabilitiesResponse,
   CatalogFamily,
@@ -24,7 +25,7 @@ import type {
   TokensResponse,
 } from "./types";
 import type { ApiClient } from "./http";
-import { settingsApi } from "./paths";
+import { deviceApi, settingsApi } from "./paths";
 
 /**
  * Every query key this client uses, array-shaped and MOST GENERAL FIRST so a prefix
@@ -56,6 +57,7 @@ export const keys = {
    *  detail page holds as well as both lists. */
   approval: (id: string) => ["approvals", "one", id] as const,
   settings: () => ["settings"] as const,
+  device: (userCode: string) => ["device", userCode] as const,
 } as const;
 
 /**
@@ -275,6 +277,21 @@ export function settingsQuery(api: ApiClient) {
     queryKey: keys.settings(),
     queryFn: () => api.get<SettingsRead>(settingsApi.read),
     staleTime: STALE.other,
+  });
+}
+
+/**
+ * /device's confirm card: better-auth's verify call, which CLAIMS a pending code for this
+ * owner exactly as rendering `/device?user_code=` did. Read once per page view — never stale,
+ * never retried: the card's facts do not change, and the one refusal (404, the code is not
+ * live) is an answer the card shows rather than a failure to try again.
+ */
+export function deviceQuery(api: ApiClient, userCode: string) {
+  return queryOptions({
+    queryKey: keys.device(userCode),
+    queryFn: () => api.get<DeviceRead>(`${deviceApi.read}?user_code=${encodeURIComponent(userCode)}`),
+    staleTime: Infinity,
+    retry: false,
   });
 }
 

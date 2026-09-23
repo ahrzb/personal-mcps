@@ -630,6 +630,36 @@ export type ChangePasswordBody = {
  *  the field it names rather than a second validator saying it in other words. */
 export type ExecutionUpdateBody = { default_timeout_ms: string; max_timeout_ms: string };
 
+/* -------------------------------------------------------------------- /device ---- */
+
+/**
+ * The confirm card's facts (`pages/model.ts`'s `DeviceRequest`). Every field but `userCode`
+ * is attacker-influenced or a stated ceiling — the device-flow channel is unauthenticated
+ * (§7) — so the page renders each one as TEXT, never markup or a link.
+ */
+export type DeviceRequest = {
+  /** The code as the owner asked for it: "BDWJ-KTQP". */
+  userCode: string;
+  /** KNOWN CEILING: better-auth records no requesting IP, so this is "unknown" rather than a
+   *  guess that would look like corroboration while corroborating nothing. */
+  ip: string;
+  /** The requesting client's `client_id`, or "unknown" when this owner is not the claimant. */
+  client: string;
+  /** ISO-8601 — the read's own instant, which is what "Just now" is relative to. */
+  requestedAt: string;
+  /** ISO-8601 — `requestedAt` plus the device-code lifetime: the window's bound. */
+  expiresAt: string;
+};
+
+/** `GET /api/hub/device?user_code=` — `api.ts`'s `DeviceRead`: the five facts and nothing
+ *  else (no scope, no status, no device code). A code that is not live is 404 `{ reason }`,
+ *  whose sentence the enter-code card shows under the field. */
+export type DeviceRead = { request: DeviceRequest };
+
+/** `POST /api/hub/device/decide`'s body; the answer is a `Redirected` landing on
+ *  `/device?decided=approved|denied`, or `/device?error=…` when the code could not be decided. */
+export type DeviceDecideBody = { userCode: string; decision: "approve" | "deny" };
+
 /** The four shapes `POST /api/hub/apps` answers with, discriminated by which keys are
  *  present — one route, because two of the three arms carry something the client cannot ask
  *  for twice: a plaintext key shown once (§15), and an authorize URL bound to a single-use

@@ -4,6 +4,7 @@ import { agentDetailSeeds, agentNewSeeds, agentsSeeds } from "./fixtures/agents"
 import { auditSeeds } from "./fixtures/audit";
 import { approvalDetailSeeds, approvalsSeeds } from "./fixtures/approvals";
 import { settingsSeeds } from "./fixtures/settings";
+import { deviceSeeds } from "./fixtures/device";
 import type { PreviewSeeds } from "./seed";
 
 /**
@@ -28,4 +29,5 @@ export const seeds: PreviewSeeds = {
   approvals: approvalsSeeds,
   "approval-detail": approvalDetailSeeds,
   settings: settingsSeeds,
+  device: deviceSeeds,
 };

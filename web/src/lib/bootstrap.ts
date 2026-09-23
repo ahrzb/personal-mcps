@@ -1,9 +1,10 @@
 /**
- * The three facts the SPA cannot read from an API and must not compute: the CSRF token
- * minted for this cookie session, the signed-in owner's username, and the hub's canonical
- * public origin. All three are the server's to state, so the Worker's shell document carries
- * them in a `<script type="application/json">` block — a JSON island rather than an
- * executable one, which is why the page needs no `script-src` relaxation in the existing CSP.
+ * The four facts the SPA cannot read from an API and must not compute: the CSRF token
+ * minted for this cookie session, the signed-in owner's username, the hub's canonical
+ * public origin, and the Web Push public key. All four are the server's to state, so the
+ * Worker's shell document carries them in a `<script type="application/json">` block — a
+ * JSON island rather than an executable one, which is why the page needs no `script-src`
+ * relaxation in the existing CSP.
  *
  * Read ONCE at module load rather than per use: the document never changes under a running
  * client, and a second read would suggest it might.
@@ -25,6 +26,13 @@ export type Bootstrap = {
    * otherwise be handed an endpoint naming that host.
    */
   origin: string;
+  /**
+   * `env.VAPID_PUBLIC_KEY`, base64url — what `/approvals`' notifications control hands to
+   * `PushManager.subscribe` (§13). Configuration like `origin`, and reported by no API.
+   * `""` where the deployment has no key configured: the control still renders, and a
+   * subscribe against it fails and says so.
+   */
+  vapidPublicKey: string;
 };
 
 /**
@@ -42,11 +50,18 @@ export function readBootstrap(): Bootstrap {
     !("csrf" in parsed) ||
     !("username" in parsed) ||
     !("origin" in parsed) ||
+    !("vapidPublicKey" in parsed) ||
     typeof parsed.csrf !== "string" ||
     typeof parsed.username !== "string" ||
-    typeof parsed.origin !== "string"
+    typeof parsed.origin !== "string" ||
+    typeof parsed.vapidPublicKey !== "string"
   ) {
-    throw new Error("pmcp: #pmcp-bootstrap is not {csrf, username, origin}");
+    throw new Error("pmcp: #pmcp-bootstrap is not {csrf, username, origin, vapidPublicKey}");
   }
-  return { csrf: parsed.csrf, username: parsed.username, origin: parsed.origin };
+  return {
+    csrf: parsed.csrf,
+    username: parsed.username,
+    origin: parsed.origin,
+    vapidPublicKey: parsed.vapidPublicKey,
+  };
 }

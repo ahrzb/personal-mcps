@@ -37,7 +37,6 @@ import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AdminOp } from "./admin";
 import { AGENT_PANES, APP_PANES } from "./app-routes";
-import type { PushSubscriptionJson } from "./approvals";
 import { exportJsonl, record } from "./audit";
 import { HubError } from "./errors";
 import { callAuth, callAuthResponse, formatPrincipal, requireOwnerSession } from "./identity";
@@ -46,18 +45,14 @@ import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
 import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
-import { approvalsFromEnv } from "./wiring";
 import { SettingsPage } from "./pages/settings";
-import { ApprovalDetail } from "./pages/approval-detail";
-import { ApprovalsPage } from "./pages/approvals";
 import { ConsentPage } from "./pages/consent";
 import { Device } from "./pages/device";
 import { Login } from "./pages/login";
 import { SpaShell } from "./pages/spa";
 import {
   settingsProps,
-  approvalDetailProps,
-  approvalsProps,
+  approvalOf,
   auditExportQuery,
   consentProps,
   deviceProps,
@@ -124,10 +119,9 @@ type PageRouter = unknown;
  *   explorer itself reads `/api/hub/audit/window` and `/api/hub/audit/<id>`. What survives
  *   here is `/audit/export.jsonl`, which streams via streamAuditJsonl and is a download
  *   rather than a page. No mutations, no CSRF.
- * - /approvals, /approvals/<id> — pending requests and decision history; approve and
- *   reject POST into the approval_decide admin op; the per-browser "Enable
- *   notifications" control POSTs the browser's push subscription to
- *   approvals.subscribePush (approvals owns Web Push; this module only subscribes).
+ * - /approvals, /approvals/<id> — the SPA shell (decision 38), behind the owner session
+ *   and, for an id, the same owner-scoped lookup the JSON read makes. Deciding and the
+ *   push opt-in are api.ts's routes now; nothing under this prefix is posted to.
  * - /apps, /apps/new — app management fronting the app_* admin ops;
  *   Connect/Reconnect redirect into the upstream module's OAuth initiation.
  * - /oauth/consent — §19.5's inbound-OAuth consent screen: the provider redirects an
@@ -143,8 +137,7 @@ type PageRouter = unknown;
  */
 export function pageRoutes(): PageRouter {
   // deps: hono · identity.requireOwnerSession · admin.ops · pages/model (the loaders) ·
-  // approvals.subscribePush · upstream.beginConnect · csrfTokenFor · csrfOk ·
-  // streamAuditJsonl
+  // upstream.beginConnect · csrfTokenFor · csrfOk · streamAuditJsonl
   const app = new Hono();
 
   // A path under a browser segment that no page serves. The composition root hands this
@@ -506,40 +499,18 @@ export function pageRoutes(): PageRouter {
   });
 
   /* -------------------------------- /approvals -------------------------------- */
+  //
+  // §13's approvals pages, as the SPA shell (decision 38, the first family to move). The
+  // reads are `/api/hub/approvals` and `/api/hub/approvals/<id>`; Approve and Reject are
+  // `approval_decide` through the ops allowlist and the push opt-in is
+  // `/api/hub/approvals/push` (api.ts). No POST survives under this prefix — the generic
+  // `/approvals/:op` dispatcher that admitted every op by name went with the forms.
 
-  app.get(paths.approvals, async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    return render(ApprovalsPage(await approvalsProps(ctx)));
-  });
+  app.get(paths.approvals, shell("Approvals"));
 
-  // The browser's own PushSubscription, handed to the module that owns Web Push. Not an
-  // ops handler and never a tool: what a browser subscribes is a property of THAT
-  // browser, which no CLI or agent can hold or replay (§13).
-  app.post(
-    paths.approvalsPush,
-    mutation(async (_c, session, form) => {
-      const subscription = subscriptionOf(field(form, "subscription"));
-      if (subscription === null) return new Response("Bad Request", { status: 400, headers: TEXT });
-      // No push transport wired: subscribing sends nothing (approvals.approvalsFromEnv).
-      await approvalsFromEnv().subscribePush(session.user.userId, subscription);
-      return new Response(null, { status: 204 });
-    }),
-  );
-
-  // Registered before the generic ops route below, so a decision on the id in the query
-  // is never read as an op named "push".
-  app.post("/approvals/:op", dispatch(paths.approvals));
-
-  // Last under /approvals, so the two POST targets above own their own paths: a GET here
-  // is an id, and an id that is not this owner's is not an id at all (§13).
-  app.get("/approvals/:id", async (c) => {
-    const ctx = await context(c.req.raw, await requireOwnerSession(c.req.raw));
-    const props = await approvalDetailProps(ctx, c.req.param("id"));
-    // An id in another namespace is not in this owner's listing at all, so it answers
-    // exactly like an id that never existed (§13).
-    if (props === null) return noSuchPage();
-    return render(ApprovalDetail(props));
-  });
+  // A GET here is an id, and an id that is not this owner's is not an id at all (§13): the
+  // document 404 is decided before any HTML, as `/apps/<slug>`'s is.
+  app.get("/approvals/:id", shell("Approve request · personal-mcps", approvalExists));
 
   /* -------------------------------- /apps --------------------------------- */
   //
@@ -1195,13 +1166,9 @@ function noticeOf(query: URLSearchParams): Notice | null {
   }
   const failed = query.get(NOTICE_KEYS.failed);
   if (failed === null) return null;
-  // §13 (G52, 2026-09-03): a decision that lost its race — the request was decided or
-  // expired between the render and the click — is not a failure of the owner's. The op
-  // refuses every non-decidable id with one message by design (§7's probe rule), so the
-  // tone is keyed on the op, not on prose.
-  if (failed === "approval_decide") {
-    return { tone: "warning", message: "That request is no longer pending." };
-  }
+  // §13's G52 arm — a lost `approval_decide` race is the warning, not a failure — left with
+  // the approvals pages (decision 38): no server-rendered page lands that flash any more, and
+  // the client's `web/src/lib/notice.ts` keys the same tone on the same op.
   return {
     tone: "danger",
     title: `${humanize(failed)} failed`,
@@ -1419,27 +1386,6 @@ function executionErrors(violations: readonly Violation[]): SettingsExecutionFor
   return errors;
 }
 
-/** The browser's PushSubscription JSON, as the control POSTs it. Shape-checked here
- *  because it is a browser's word: approvals stores it verbatim and must not store junk. */
-function subscriptionOf(raw: string | null): PushSubscriptionJson | null {
-  if (raw === null) return null;
-  const parsed = jsonOrNull(raw) as PushSubscriptionJson | null;
-  if (parsed === null || typeof parsed.endpoint !== "string") return null;
-  const keys = parsed.keys as { p256dh?: unknown; auth?: unknown } | undefined;
-  if (typeof keys?.p256dh !== "string" || typeof keys.auth !== "string") return null;
-  return { endpoint: parsed.endpoint, keys: { p256dh: keys.p256dh, auth: keys.auth } };
-}
-
-/** Parsed, or null — a browser's field is a caller's input, and malformed JSON in it is
- *  a 400 rather than a 500. */
-function jsonOrNull(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 /** A rendered page. Hono JSX components are functions of their props, so a page is its
  *  own document — the shelled ones wrap themselves in Layout, the chromeless ones draw
  *  their own — and rendering is stringifying what the component returned.
@@ -1470,9 +1416,10 @@ async function render(node: unknown, status = 200): Promise<Response> {
 }
 
 /**
- * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18), and
- * `/audit` since decision 36. That third family passes no `exists`: a window, not a row, is
- * what it addresses, and the record id in `?expand=` is the client's own read to 404.
+ * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18),
+ * `/audit` since decision 36, and each page family decision 38 moves (`/approvals*` first).
+ * `/audit` and `/approvals` pass no `exists`: a window or a list, not a row, is what each
+ * addresses, and the record id in `?expand=` is the client's own read to 404.
  *
  * It is a gate and a head, in that order, and the order is the whole point:
  *
@@ -1487,7 +1434,8 @@ async function render(node: unknown, status = 200): Promise<Response> {
  *
  * The body is three elements. `<div id="root">` is where the client mounts; the bootstrap is
  * a `<script type="application/json">` carrying the session's CSRF token and the owner's
- * username, which are the two facts no API can report; and the module script is the client.
+ * username — the two facts no API can report — beside two pieces of configuration no API
+ * reports either (below); and the module script is the client.
  * A JSON island rather than an executable one, deliberately — no page-generated JavaScript
  * runs, so the existing CSP needs no `script-src` relaxation.
  *
@@ -1503,7 +1451,7 @@ function shell(
   return async (c) => {
     const session = await requireOwnerSession(c.req.raw);
     if (exists !== undefined && !(await exists(c, session))) return noSuchPage();
-    const bootstrap = JSON.stringify({
+    const bootstrap = {
       csrf: await csrfTokenFor(session.sessionId),
       username: session.user.username,
       // The CANONICAL origin, not whatever host this request arrived on: a scoped endpoint
@@ -1511,7 +1459,13 @@ function shell(
       // the hub puts on the wire everywhere else (§7's approvalUrl, the CIMD document, the
       // `wss://` the clients derive). So the client never reads `location.origin`.
       origin: env.PUBLIC_ORIGIN,
-    });
+      // Configuration no API reports, which the approvals page's push control subscribes
+      // with (decision 38). "" where the secret is unset (a local `wrangler dev` with no
+      // .dev.vars): the client requires the field on every shell, so an absent secret must
+      // still be a string — the push control then fails on click, as the server page did
+      // with no key, instead of the whole client refusing to mount.
+      vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
+    };
     return render(
       SpaShell({ title, bootstrap, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
     );
@@ -1525,6 +1479,12 @@ function shell(
  */
 async function appExists(c: Context, session: OwnerSession): Promise<boolean> {
   return (await new Registry(env.DB).getApp(session.user.userId, c.req.param("slug") ?? "")) !== null;
+}
+
+/** The same for `/approvals/<id>`: `approvalOf`'s owner-scoped lookup, the one
+ *  `GET /api/hub/approvals/<id>` makes too, so the document and the read 404 alike. */
+async function approvalExists(c: Context, session: OwnerSession): Promise<boolean> {
+  return (await approvalOf(session.user.userId, c.req.param("id") ?? "")) !== null;
 }
 
 /** The same for `/agents/<slug>`. The agent listing is the namespace's whole agent set, so a

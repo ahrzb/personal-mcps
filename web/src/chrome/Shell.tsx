@@ -59,7 +59,7 @@ export function Shell({
 }
 
 /** The five nav destinations, in the order §13 renders them. `routed` marks the ones this
- *  client owns — the three route families — and therefore the ones that are `Link`s. */
+ *  client owns — every family but `/settings` — and therefore the ones that are `Link`s. */
 const NAV: {
   key: "apps" | "agents" | "audit" | "approvals" | "settings";
   label: string;
@@ -69,15 +69,15 @@ const NAV: {
   { key: "apps", label: "Apps", href: paths.apps, routed: true },
   { key: "agents", label: "Agents", href: paths.agents, routed: true },
   { key: "audit", label: "Audit", href: paths.audit(), routed: true },
-  { key: "approvals", label: "Approvals", href: paths.approvals, routed: false },
+  { key: "approvals", label: "Approvals", href: paths.approvals, routed: true },
   { key: "settings", label: "Settings", href: paths.settings, routed: false },
 ];
 
 /**
- * One nav entry. `/apps`, `/agents` and `/audit` are this client's own routes and stay
- * client-side links; `/approvals` and `/settings` are still server-rendered pages, so they are
- * plain anchors — a client-side navigation to a route this router does not own would render
- * nothing at all.
+ * One nav entry. `/apps`, `/agents`, `/audit` and `/approvals` are this client's own routes
+ * and stay client-side links; `/settings` is still a server-rendered page, so it is a plain
+ * anchor — a client-side navigation to a route this router does not own would render nothing
+ * at all.
  *
  * `onNavigate` fires on activation, before the navigation: the drawer passes its own close
  * so a tapped entry dismisses it. The header's nav bar passes nothing, having nothing to
@@ -134,9 +134,10 @@ function PendingBadge(): ReactNode {
 }
 
 /**
- * Sign out — a real form POST to better-auth's own route, which answers with Set-Cookie and
- * a redirect. A `fetch` could not apply either, so this is one of the three places the SPA
- * still submits a form rather than calling the API.
+ * Sign out — a real form POST to the Worker's `/login/sign-out` (`paths.signOut` says why
+ * not better-auth's own route), which answers with Set-Cookie and a 303 to /login. A `fetch`
+ * could not apply the navigation, so this is one of the places the SPA still submits a form
+ * rather than calling the API.
  */
 function SignOutForm(): ReactNode {
   return (

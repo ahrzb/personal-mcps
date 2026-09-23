@@ -3,10 +3,9 @@
  * alert class a notice's tone earns.
  *
  * A COPY of `server/src/pages/format.ts`, for `web/src/lib/types.ts`'s reason — and the
- * copy is EXACT on purpose. `/audit`, `/approvals` and `/settings` are still server
- * rendered and still read the original, so a "12m ago" that drifted between the two
- * renderings would be read as meaning: /apps's Last seen column and /audit's stamps state
- * the same kind of fact.
+ * copy is EXACT on purpose. `/settings` is still server rendered and still reads the
+ * original, so a stamp that drifted between the two renderings would be read as meaning:
+ * /apps's Last seen column and /settings's token stamps state the same kind of fact.
  *
  * The one behavioural difference from the server's copy is the clock, and it is not a
  * choice: the server formatted against a render instant carried in props, and the client

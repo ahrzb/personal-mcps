@@ -13,10 +13,10 @@ import type { ApiClient } from "@/lib/http";
 import { parseSearch, routeTree, stringifySearch } from "@/router";
 
 /**
- * The React state gallery — the living demo of every screen and component STATE of the six
+ * The React state gallery — the living demo of every screen and component STATE of the
  * migrated pages, read beside the design boards as the reference for what a state looks
- * like. It replaces `server/dev/preview.ts`'s six entries, which the cutover removes, and it
- * is what `scripts/visual-compare.mts` screenshots.
+ * like. It takes over `server/dev/preview.ts`'s entries page by page as each page moves
+ * (decision 38), and it is what `scripts/visual-compare.mts` screenshots.
  *
  *   GET /__preview                   — an index linking every page × state pair
  *   GET /__preview/<page>/<state>    — that page, rendered against that state's seed
@@ -131,6 +131,9 @@ const BOOTSTRAP = {
   csrf: "csrf_FAKE0000d41d8cd98f00b204e9800998",
   username: "ahrzb",
   origin: "https://hub.example",
+  // `server/dev/fixtures.ts`' own obviously-fake key. Never drawn — the push control only
+  // hands it to `PushManager.subscribe` on a click no gallery render makes.
+  vapidPublicKey: "BFAKE0000pmcpFAKEvapidPUBLICkeyFAKE0000pmcpFAKEvapid0000",
 } as const;
 
 /**

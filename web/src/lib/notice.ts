@@ -3,11 +3,13 @@ import type { NoticeTone } from "./format";
 /**
  * The redirect-back flash, still read by the client.
  *
- * The SPA does not redirect after its own writes — a mutation's answer is in hand, so it
- * renders the outcome directly — but three retained server redirects still land on SPA
- * routes carrying these keys: `POST /apps/connect`'s refusal arm, the upstream OAuth
- * callback, and `/login`'s `signedOut`. So the keys are read on every search change rather
- * than only at first mount, and stripped with a replacing navigation once shown.
+ * The SPA mostly does not redirect after its own writes — a mutation's answer is in hand, so
+ * it renders the outcome directly — but these keys still arrive two ways: three retained
+ * server redirects land on SPA routes carrying them (`POST /apps/connect`'s refusal arm, the
+ * upstream OAuth callback, and `/login`'s `signedOut`), and an approval decision lands on
+ * `/approvals` with them from either approvals page, exactly as its 303 did
+ * (`features/approvals/derive.decisionLanding`). So the keys are read on every search change
+ * rather than only at first mount, and stripped with a replacing navigation once shown.
  *
  * A COPY of `pages/model.ts`'s `NOTICE_KEYS` and `web.ts`'s `noticeOf`, spelled here for
  * `web/src/lib/types.ts`'s reason. The server still WRITES them, so the two spellings must
@@ -38,8 +40,8 @@ export function noticeOf(search: URLSearchParams): Notice | null {
   if (failed === null) return null;
   // §13 (G52): a decision that lost its race — decided or expired between the render and
   // the click — is not a failure of the owner's, so the tone is keyed on the op rather
-  // than on prose. Retained here because `/approvals` can redirect into an agent's
-  // Activity pane.
+  // than on prose. Both approvals pages land here after a decision, so this is the copy a
+  // lost race reads (pinned in `server/test/unit/approvals-derive.test.ts`).
   if (failed === "approval_decide") return { tone: "warning", message: "That request is no longer pending." };
   return {
     tone: "danger",

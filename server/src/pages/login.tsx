@@ -17,6 +17,10 @@ import type { FC } from "hono/jsx";
 import type { LoginProps, LoginStep } from "./model";
 import { loginUrl, paths } from "./model";
 import { OtpBoxes } from "./layout";
+// Every embed in this file's inline script goes through it, the compile-time constants
+// included, so the rule is "a script literal is `jsLiteral`" rather than "this one variable".
+// It lives in ./spa since decision 38, where every JSON island is serialized the same way.
+import { jsLiteral } from "./spa";
 
 /** Not exported by ./layout — the same mark, redrawn here for this chromeless page. */
 const BrandMark: FC = () => (
@@ -60,27 +64,6 @@ function switchMethod(method: "totp" | "backup-code", redirectTo: string | null)
 /** The always-present redirect target, spelled out even when `redirectTo` is null. */
 function landingUrl(redirectTo: string | null): string {
   return redirectTo ?? paths.apps;
-}
-
-/**
- * One value as a JavaScript literal inside an inline `<script>` — a JSON literal is one,
- * with the three characters an HTML parser or a JS parser reads differently escaped:
- *
- *  - `<` → `\u003c`, which is what closes the `</script>` and `<!--` doors. `/` buys
- *    nothing once `<` is gone and is deliberately left alone.
- *  - U+2028 / U+2029, legal in JSON strings and line TERMINATORS in JavaScript source,
- *    which would otherwise end the statement mid-literal.
- *
- * Every embed in this file's scripts goes through it, the compile-time constants included,
- * so the rule is "a script literal is `jsLiteral`" rather than "this one variable". It
- * lives here rather than in ./format because no other page embeds a non-constant value:
- * layout.tsx's `id`, settings.tsx's two paths and apps.tsx's dialog id are all constants.
- */
-function jsLiteral(value: string): string {
-  return JSON.stringify(value)
-    .replace(/</g, "\\u003c")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
 }
 
 const CredentialsCard: FC<{ step: Extract<LoginStep, { kind: "credentials" }>; redirectTo: string | null }> = ({

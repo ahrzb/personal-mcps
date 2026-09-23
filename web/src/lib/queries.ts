@@ -12,6 +12,7 @@ import type {
   AuditRecordResponse,
   AuditResponse,
   AuditWindowResponse,
+  ApprovalDetailRead,
   ApprovalsResponse,
   CapabilitiesResponse,
   CatalogFamily,
@@ -49,6 +50,9 @@ export const keys = {
   auditRecord: (id: string) => ["audit", "record", id] as const,
   approvalsPending: () => ["approvals", "pending"] as const,
   approvalsHistory: (limit: number) => ["approvals", "history", { limit }] as const,
+  /** Under `["approvals"]`, so `approval_decide`'s prefix invalidation reaches the one row a
+   *  detail page holds as well as both lists. */
+  approval: (id: string) => ["approvals", "one", id] as const,
 } as const;
 
 /**
@@ -63,7 +67,7 @@ const STALE = {
   other: 30_000,
 } as const;
 
-/* ------------------------------ the ten reads ----------------------------- */
+/* --------------------------------- the reads ------------------------------- */
 
 export function appsQuery(api: ApiClient) {
   return queryOptions({
@@ -242,6 +246,20 @@ export function approvalHistoryQuery(api: ApiClient, limit: number) {
     queryKey: keys.approvalsHistory(limit),
     queryFn: () => api.get<ApprovalsResponse>(`/approvals?limit=${limit}`),
     staleTime: STALE.other,
+  });
+}
+
+/**
+ * One approval, by id — `/approvals/<id>`'s read. `retry: false` for `auditRecordQuery`'s
+ * reason: the one refusal it makes is a 404 (unknown ≡ foreign), which is an answer rather
+ * than a transient failure.
+ */
+export function approvalQuery(api: ApiClient, id: string) {
+  return queryOptions({
+    queryKey: keys.approval(id),
+    queryFn: () => api.get<ApprovalDetailRead>(`/approvals/${encodeURIComponent(id)}`),
+    staleTime: STALE.other,
+    retry: false,
   });
 }
 

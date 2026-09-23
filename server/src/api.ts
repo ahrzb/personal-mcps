@@ -1,7 +1,8 @@
 // api.ts — the browser client's JSON surface, mounted at /api/hub by the composition root.
 //
-// WHAT THIS IS. §13's `/apps/*` and `/agents/*` are a browser SPA, and this is the only way
-// it reads or writes. Every route is cookie-authenticated exactly as the pages were — the
+// WHAT THIS IS. §13's `/apps/*` and `/agents/*` are a browser SPA — `/audit` since decision
+// 36, and every other page as decision 38 moves it — and this is the only way it reads or
+// writes. Every route is cookie-authenticated exactly as the pages were — the
 // same `resolveOwnerSession`, so a bearer is not a credential here either — and every write
 // goes through the same three barriers a page POST went through (session, origin, CSRF),
 // written once in `writer` below for `mutation`'s own reason: a fourth write cannot forget
@@ -23,14 +24,15 @@
 //
 // deps: hono · identity.resolveOwnerSession · web.csrfOk · admin.ops · gateway.ownerCatalog ·
 //       catalog-view · registry (Registry, effectiveRoles, writeOnlyPaths) · tunnel.capabilities ·
-//       upstream.beginConnect · pages/model (the composers, auditFilters/auditQueryOf) ·
-//       errors.HubError
+//       upstream.beginConnect · pages/model (the composers, auditFilters/auditQueryOf,
+//       approvalOf) · wiring.approvalsFromEnv (subscribePush) · errors.HubError
 
 import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { ops } from "./admin";
 import type { AppRow as OpsAppRow } from "./admin";
+import type { PushSubscriptionJson } from "./approvals";
 import { config as auditConfig } from "./audit";
 import type { AuditRow, AuditSlimRow } from "./audit";
 import { DEFAULT_APP_CAPABILITIES } from "./capabilities";
@@ -48,9 +50,11 @@ import { effectiveRoles, Registry, writeOnlyPaths } from "./registry";
 import type { AppCapability, ListKind, RoleDeclaration, RoleFamily } from "./registry";
 import { capabilities as tunnelCapabilities } from "./tunnel";
 import { beginConnect } from "./upstream";
+import { approvalsFromEnv } from "./wiring";
 import { inlineMarkdown, plainText, renderMarkdown } from "./pages/markdown";
 import { csrfOk } from "./web";
 import {
+  approvalOf,
   auditFilters,
   auditQueryOf,
   composeOwnerRoles,
@@ -61,7 +65,7 @@ import {
   grantChoicesOf,
   noBodiesReason,
 } from "./pages/model";
-import type { AuditEventRow } from "./pages/model";
+import type { AuditEventRow, DetailApproval } from "./pages/model";
 import { AUDIT_EXPLORER_PAGE, AUDIT_EXPLORER_ROWS } from "./limits";
 
 /* ------------------------------------------------------------------ *
@@ -103,6 +107,26 @@ export type AuditWindow = {
  *  wrapper object rather than the bare row, like every other answer on this surface: a
  *  field can be added beside it without changing what the client parses. */
 export type AuditRecord = { row: AuditEventRow };
+
+/* ------------------------------------------------------------------ *
+ * The approvals routes (§13, decision 38)
+ * ------------------------------------------------------------------ */
+
+/**
+ * `GET /api/hub/approvals/:id` — one approval of the caller's, as `/approvals/<id>` draws it.
+ * `DetailApproval` is `approvals.ApprovalRow` (ISO-8601 timestamps, post-redaction `args`)
+ * narrowed so a `rejected` or `used` row always carries its `decidedAt`. An id outside the
+ * caller's namespace and one that never existed are the same 404 `{ reason: "No such
+ * approval." }`.
+ */
+export type ApprovalDetailRead = { approval: DetailApproval };
+
+/**
+ * `POST /api/hub/approvals/push`'s body: the browser's own `PushSubscription.toJSON()` under
+ * one key. Answers 204 with no body when stored, and 400 `{ reason }` when the subscription
+ * is not this shape — a string, a missing key or a non-string field alike.
+ */
+export type PushSubscribeBody = { subscription: PushSubscriptionJson };
 
 /* ------------------------------------------------------------------ *
  * The drafts a typed route takes
@@ -193,7 +217,7 @@ export type GrantDraft = {
  *    them; the CLI is their caller.
  *  - the four Save targets and `app_create` are excluded because they are not reachable as
  *    their own keys at all — they have typed routes below.
- *  - the read ops are excluded because a read is a GET, and the ten resources above are it.
+ *  - the read ops are excluded because a read is a GET, and the resources below are it.
  *
  * `token_issue` and `token_revoke` keep the ORDINARY gate, which is exactly their current
  * reachability from `/apps/<slug>/token` and `/agents/<slug>/credentials`: no tightening
@@ -469,6 +493,17 @@ export function hubApiRoutes(): unknown {
     }),
   );
 
+  // The detail page's read: the lookup the shell's document 404 makes (web.ts's
+  // `approvalExists`), so a URL that answers a shell always has a row to show.
+  app.get(
+    "/hub/approvals/:id",
+    reader(async (session, c) => {
+      const approval = await approvalOf(session.user.userId, c.req.param("id") ?? "");
+      if (approval === null) return refuse(404, "No such approval.");
+      return json({ approval } satisfies ApprovalDetailRead);
+    }),
+  );
+
   /* ------------------------------- writes ------------------------------- */
 
   app.post(
@@ -483,6 +518,23 @@ export function hubApiRoutes(): unknown {
       // declared one, and a JSON body can carry the real booleans and integers `coerce`
       // demands — which is the one thing a form's all-strings input never could.
       return outcome(await attempt(() => op.handler(session.user.userId, body)));
+    }),
+  );
+
+  // The browser's own PushSubscription, handed to the module that owns Web Push. Not an op
+  // and never a tool: what a browser subscribes is a property of THAT browser, which no CLI
+  // or agent can hold or replay (§13) — so it is a typed route beside the allowlist, not a
+  // name on it.
+  app.post(
+    "/hub/approvals/push",
+    writer(async (session, _c, body) => {
+      const subscription = subscriptionOf(body.subscription);
+      if (subscription === null) {
+        return refuse(400, "subscription must be a PushSubscription: an endpoint and keys.p256dh and keys.auth strings.");
+      }
+      // No push transport wired: subscribing sends nothing (wiring.approvalsFromEnv).
+      await approvalsFromEnv().subscribePush(session.user.userId, subscription);
+      return new Response(null, { status: 204 });
     }),
   );
 
@@ -1148,6 +1200,16 @@ function rolesOf(draft: GrantDraft): string[] {
   const fields: Record<string, string> = {};
   for (const [entry, mode] of Object.entries(draft.entries)) fields[`e.${entry}`] = mode;
   return composeRoles(grantChoicesOf(fields));
+}
+
+/** The browser's PushSubscription, as the push control posts it. Shape-checked here because
+ *  it is a browser's word: approvals stores it verbatim and must not store junk. Only the
+ *  three fields are kept, so nothing else the body carried reaches the table. */
+function subscriptionOf(value: unknown): PushSubscriptionJson | null {
+  if (!isRecord(value) || typeof value.endpoint !== "string" || !isRecord(value.keys)) return null;
+  const { p256dh, auth } = value.keys;
+  if (typeof p256dh !== "string" || typeof auth !== "string") return null;
+  return { endpoint: value.endpoint, keys: { p256dh, auth } };
 }
 
 /** The plaintext out of a `token_issue` answer. Structural, because the op's result shape

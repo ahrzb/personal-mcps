@@ -1,9 +1,12 @@
 /**
  * The SPA shell document: the whole server-rendered part of `/apps/*` and `/agents/*`
- * (§13, 2026-09-18).
+ * (§13, 2026-09-18), `/audit` (decision 36) and, as each page family moves (decision 38),
+ * every other browser page.
  *
  * Pure, like every other template here — props in, JSX out. The gate, the existence checks
- * and the CSRF minting are web.ts's; this file only draws what they decided.
+ * and the CSRF minting are web.ts's; this file only draws what they decided — and it is the
+ * one place an island is SERIALIZED, so the escaping below is the shell's rule rather than
+ * each caller's.
  *
  * The HEAD is `layout.tsx`'s verbatim, plus `/app.css` after `/styles.css`. That is not
  * copy-paste convenience: the shell and the server-rendered pages must present the same
@@ -15,10 +18,10 @@
  * The BODY is three elements and no more:
  *
  *  - `<div id="root">`, where the client mounts;
- *  - a `<script type="application/json" id="pmcp-bootstrap">` carrying `{csrf, username}` —
- *    the two facts no API can report, because both are the session's. A JSON island rather
- *    than an executable one, so no page-generated JavaScript runs and the existing CSP needs
- *    no `script-src` relaxation;
+ *  - a `<script type="application/json" id="pmcp-bootstrap">` carrying what no API reports:
+ *    the session's two facts and the configuration the client needs (web.ts's `shell` says
+ *    which). A JSON island rather than an executable one, so no page-generated JavaScript
+ *    runs and the existing CSP needs no `script-src` relaxation;
  *  - the module script.
  *
  * There is no `<noscript>`. The pages this replaces worked with scripting off and these do
@@ -33,9 +36,10 @@ export type SpaShellProps = {
   /** The tab title, matching what the page this replaces rendered. The client sets it again
    *  on every client-side navigation, because a client navigation changes no head. */
   title: string;
-  /** `{csrf, username}` as a JSON string, already serialized by the caller — which is what
-   *  keeps this template from knowing what a session is. */
-  bootstrap: string;
+  /** The `#pmcp-bootstrap` island's value, UNserialized: this template serializes it, which
+   *  is what makes the escaping unskippable. What its fields mean is the caller's business,
+   *  which keeps this template from knowing what a session is. */
+  bootstrap: Record<string, string>;
   /** The shared sheet every page reads: the design language, and the source of truth for
    *  every token and page-chrome class. */
   stylesheet: string;
@@ -50,6 +54,26 @@ export type SpaShellProps = {
  *  contract, and the icon is the 192 because iOS's `apple-touch-icon` wants a raster. */
 const MANIFEST = "/manifest.webmanifest";
 const ICON = "/icon-192.png";
+
+/**
+ * One value as a literal inside a `<script>` element — JSON, with the three characters an
+ * HTML parser or a JavaScript parser reads differently escaped (§13, decision 38):
+ *
+ *  - `<` → `\u003c`, which is what closes the `</script>` and `<!--` doors. `/` buys
+ *    nothing once `<` is gone and is deliberately left alone.
+ *  - U+2028 / U+2029, legal in JSON strings and line TERMINATORS in JavaScript source,
+ *    which would otherwise end a statement mid-literal in an executable script.
+ *
+ * Each escape is a JSON escape too, so `JSON.parse` reads the value back unchanged. Every
+ * island this template draws goes through it, and so does every embed in login.tsx's inline
+ * script, whose rule this was before it moved here.
+ */
+export function jsLiteral(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
 
 export const SpaShell: FC<SpaShellProps> = ({ title, bootstrap, stylesheet, appStylesheet, script }) => (
   <>
@@ -72,11 +96,10 @@ export const SpaShell: FC<SpaShellProps> = ({ title, bootstrap, stylesheet, appS
       <body>
         <div id="root"></div>
         {/* `raw`, because the content is JSON and hono would otherwise escape its quotes
-            into entities — which `JSON.parse` cannot read. Safe because the caller built it
-            with `JSON.stringify`, whose output cannot contain a raw `<`: the only two values
-            in it are a hex CSRF digest and a username from the charset §2 pins. */}
+            into entities — which `JSON.parse` cannot read. Safe because `jsLiteral` leaves
+            no raw `<` to end the element, whatever the values are. */}
         <script type="application/json" id="pmcp-bootstrap">
-          {raw(bootstrap)}
+          {raw(jsLiteral(bootstrap))}
         </script>
         <script type="module" src={script}></script>
       </body>

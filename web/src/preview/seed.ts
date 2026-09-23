@@ -59,7 +59,7 @@ export type Seed = {
 };
 
 /**
- * The seven migrated pages, keyed exactly as `server/dev/preview.ts` keys them — so a state
+ * The migrated pages, keyed exactly as `server/dev/preview.ts` keys them — so a state
  * name in this gallery and a fixture name in that one are the same string, which is what
  * lets `visual-compare.mts` pair a screenshot with its baseline by filename.
  *
@@ -75,6 +75,8 @@ export const PREVIEW_PAGES = [
   "agent-detail",
   "agent-new",
   "audit",
+  "approvals",
+  "approval-detail",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];

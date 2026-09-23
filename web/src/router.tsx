@@ -14,17 +14,20 @@ import { AgentNewPage } from "@/features/agents/AgentNewPage";
 import { AgentDetailPage } from "@/features/agents/AgentDetailPage";
 import { AgentAppPage } from "@/features/agents/AgentAppPage";
 import { AuditPage } from "@/features/audit/AuditPage";
+import { ApprovalsPage } from "@/features/approvals/ApprovalsPage";
+import { ApprovalDetailPage } from "@/features/approvals/ApprovalDetailPage";
 import { APP_PANES, AGENT_PANES, paths } from "@/lib/paths";
 import type { AppPane, AgentPane } from "@/lib/paths";
 
 /**
- * The three route families this client owns, and nothing else. `/approvals`, `/settings`,
- * `/login`, `/device` and `/oauth/consent` are still server-rendered pages — the router never
- * sees one, and the shell's nav links to them are plain anchors.
+ * The route families this client owns, and nothing else. `/settings`, `/login`, `/device` and
+ * `/oauth/consent` are still server-rendered pages — the router never sees one, and the
+ * shell's nav link to `/settings` is a plain anchor.
  *
- * The three families are all this router owns: adding a fourth would be adding a page, and a
- * page the Worker does not serve a shell for is unreachable. `/audit` became the third on
- * 2026-09-21 (decision 36) when the server-rendered table became the explorer.
+ * Adding a family here is adding a page, and a page the Worker does not serve a shell for is
+ * unreachable — so each one arrives with its shell route. `/audit` became the third on
+ * 2026-09-21 (decision 36); `/approvals` and `/approvals/<id>` the fourth on 2026-09-23, the
+ * first of decision 38's move of every page onto the SPA.
  */
 
 /**
@@ -205,6 +208,29 @@ const agentAppRoute = createRoute({
   component: AgentAppPage,
 });
 
+/**
+ * `/approvals` — pending requests, history, and the push opt-in. `?limit=` is the one key it
+ * reads (the history cap, `derive.historyLimitOf`), plus the decision flash.
+ */
+const approvalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/approvals",
+  validateSearch: passThroughSearch,
+  component: ApprovalsPage,
+});
+
+/**
+ * `/approvals/<id>` — the chromeless page every -32003's `data.approvalUrl` and every push
+ * notification link to. The Worker 404s the document for an id outside this owner's listing
+ * before any of this loads, so the route itself checks nothing.
+ */
+const approvalDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/approvals/$id",
+  validateSearch: passThroughSearch,
+  component: ApprovalDetailPage,
+});
+
 /** The tree both mounts share: `main.tsx` builds a browser-history router over it, and the
  *  preview gallery a memory-history one — which is what lets the gallery show a ROUTE
  *  rather than a component. */
@@ -219,6 +245,8 @@ export const routeTree = rootRoute.addChildren([
   agentDetailRoute,
   agentsRoute,
   auditRoute,
+  approvalsRoute,
+  approvalDetailRoute,
 ]);
 
 /** The router, built once. No lazy routes: the build is one file by configuration (the

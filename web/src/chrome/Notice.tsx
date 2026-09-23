@@ -14,13 +14,26 @@ import type { NoticeTone } from "@/lib/format";
  * page's `<main>`, so a banner hoisted into the chrome would sit outside the page's gutters
  * and above its title. The shell owns the header; the page owns its own first line.
  */
-export function NoticeBanner({ notice }: { notice: Notice }): ReactNode {
+export function NoticeBanner({
+  notice,
+  flushUntitled = false,
+}: {
+  notice: Notice;
+  /**
+   * Leave an UNTITLED message off `.alert-text`, whose 2px top margin only exists to part a
+   * message from its title — so the text sits level with the icon. `/approvals` and
+   * `/settings` spelled their banner that way; `/apps` always spaced it, and its baselines
+   * hold that, so the default keeps it.
+   */
+  flushUntitled?: boolean;
+}): ReactNode {
+  const spaced = notice.title !== undefined || !flushUntitled;
   return (
     <div className={alertClass(notice.tone)} role={notice.tone === "danger" ? "alert" : "status"}>
       <NoticeIcon tone={notice.tone} />
       <div>
         {notice.title === undefined ? null : <div className="alert-title">{notice.title}</div>}
-        <div className="alert-text">{notice.message}</div>
+        <div className={spaced ? "alert-text" : undefined}>{notice.message}</div>
       </div>
     </div>
   );

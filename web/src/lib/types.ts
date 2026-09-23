@@ -495,6 +495,31 @@ export type AgentResponse = {
 export type TokensResponse = { tokens: TokenInfo[] };
 export type ApprovalsResponse = { approvals: ApprovalRow[] };
 
+/**
+ * One row as `/approvals/<id>` reads it — `api.ts`'s `DetailApproval`. `decidedAt` is
+ * nullable on the wire because null is honest for a pending row, but `rejected` and `used`
+ * are exactly the two statuses a decision writes, and the writer stamps `decided_at` in the
+ * same statement — so on those two it is always a string, and the "Decided" line has
+ * nothing else to render. The server makes the narrowing true before it answers.
+ */
+export type DetailApproval =
+  | (ApprovalRow & { status: Exclude<ApprovalStatus, "rejected" | "used"> })
+  | (ApprovalRow & { status: "rejected" | "used"; decidedAt: string });
+
+/** `GET /api/hub/approvals/:id` — `api.ts`'s `ApprovalDetailRead`. A foreign id and an
+ *  unknown one are ONE 404 (`{ reason: "No such approval." }`), so a probe learns nothing
+ *  about another namespace (§7). */
+export type ApprovalDetailRead = { approval: DetailApproval };
+
+/**
+ * `POST /api/hub/approvals/push`'s body — `api.ts`'s `PushSubscribeBody`: the browser's own
+ * `PushSubscription.toJSON()`, of which the server keeps exactly these three strings and
+ * refuses (400) anything missing one. Answers 204 with no body.
+ */
+export type PushSubscribeBody = {
+  subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
+};
+
 /** The four shapes `POST /api/hub/apps` answers with, discriminated by which keys are
  *  present — one route, because two of the three arms carry something the client cannot ask
  *  for twice: a plaintext key shown once (§15), and an authorize URL bound to a single-use

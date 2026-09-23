@@ -317,11 +317,15 @@ export const paths = {
    *  better-auth's endpoint underneath, so this target names no op. */
   deviceDecide: "/device/decide",
   /** approval_decide (§8) for one request; approve and reject share the form,
-   *  which submits the `decision` field the op's schema names. */
+   *  which submits the `decision` field the op's schema names.
+   *  NO ROUTE since decision 38: only the retained approvals templates draw it, for the
+   *  states preview; the client decides through `POST /api/hub/ops/approval_decide`. */
   approvalDecide(id: string): string {
     return `/approvals/approval_decide${query({ id })}`;
   },
-  /** Where the browser's PushSubscription JSON is registered (approvals.subscribePush). */
+  /** Where the browser's PushSubscription JSON was registered (approvals.subscribePush).
+   *  NO ROUTE since decision 38, for `approvalDecide`'s reason; the client posts
+   *  `POST /api/hub/approvals/push`. */
   approvalsPush: "/approvals/push",
   /**
    * Connect and Reconnect are the same target: both start upstream.beginConnect
@@ -925,7 +929,8 @@ export type ApprovalDetailProps = PageProps & {
  * honest for a pending row (approvals.ts owns that wire shape) — but "rejected" and
  * "used" are exactly the two statuses a decision writes, and both writers stamp
  * `decided_at` in the same statement, so on those two the page reads a string and the
- * "Decided —" arm has nothing to render. `approvalDetailProps` makes the narrowing true.
+ * "Decided —" arm has nothing to render. `approvalOf` makes the narrowing true, and
+ * `GET /api/hub/approvals/<id>` answers this shape (api.ts's `ApprovalDetailRead`).
  */
 export type DetailApproval =
   | (ApprovalRow & { status: Exclude<ApprovalStatus, "rejected" | "used"> })
@@ -1122,17 +1127,12 @@ async function read<T>(
 
 /** The shell every signed-in page renders inside; the badge count is the number
  *  of rows /approvals would show as pending, read the same way that page reads it. */
-async function shell<S extends NavSection>(
-  ctx: PageContext,
-  section: S,
-  pending?: ApprovalRow[],
-): Promise<ShellProps & { section: S }> {
-  const rows = pending ?? (await pendingOf(ctx));
+async function shell<S extends NavSection>(ctx: PageContext, section: S): Promise<ShellProps & { section: S }> {
   return {
     now: ctx.now,
     username: ctx.username,
     section,
-    pendingApprovals: rows.length,
+    pendingApprovals: (await pendingOf(ctx)).length,
     notice: ctx.notice,
   };
 }
@@ -1467,54 +1467,24 @@ export function composeTypescriptAliases(
 }
 
 /* -------------------------------- /approvals ---------------------------------- */
-
-/** How many decided rows /approvals shows before "Older →" widens the limit. */
-const HISTORY_LIMIT = 20;
-
-/**
- * /approvals from `approval_list`: the pending rows (which are also the shell's
- * badge) and the decided ones. History is capped, not paged — the tool takes
- * `limit` and no offset (§8) — so "Older →" asks for a bigger limit and this
- * reads one row past it to know whether the link is worth rendering.
- */
-export async function approvalsProps(ctx: PageContext): Promise<ApprovalsProps> {
-  const historyLimit = positive(ctx.query.get("limit")) ?? HISTORY_LIMIT;
-  const pending = await pendingOf(ctx);
-  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
-    // The limit caps the WHOLE list, pending rows included, so the pending ones
-    // are paid for here — otherwise a namespace with many open requests would
-    // show no history at all.
-    limit: historyLimit + pending.length + 1,
-  });
-  const decided = listed.approvals.filter((row) => row.status !== "pending");
-  return {
-    ...(await shell(ctx, "approvals", pending)),
-    csrfToken: ctx.csrfToken,
-    pending,
-    history: decided.slice(0, historyLimit),
-    historyLimit,
-    hasMoreHistory: decided.length > historyLimit,
-    // Configuration, not a read: the browser needs the public half to subscribe,
-    // and approvals owns everything that happens after (§13).
-    vapidPublicKey: env.VAPID_PUBLIC_KEY,
-  };
-}
+//
+// The list page's read — the pending rows, then the history asked one past its limit plus
+// the pending count so "Older →" knows whether to render — is the client's since decision
+// 38, over the two `GET /api/hub/approvals` resources (§13 `/approvals`). What stays here is
+// the detail's lookup, which both the shell's document 404 and the JSON read make.
 
 /**
- * /approvals/<id> — one row of the same owner-scoped listing, found by id. A row
- * in another namespace is not in this listing at all, so a foreign id and an
- * invented one are ONE answer (null), exactly as §7 wants them to be.
+ * One approval of `ownerId`'s, by id, as `/approvals/<id>` reads it — or null. The lookup
+ * is the owner-scoped listing, so a row in another namespace is not in it at all: a foreign
+ * id and an invented one are ONE answer (null), exactly as §7 wants them to be. Throws on a
+ * broken ledger row (`decided`).
  */
-export async function approvalDetailProps(
-  ctx: PageContext,
-  id: string,
-): Promise<ApprovalDetailProps | null> {
-  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
+export async function approvalOf(ownerId: string, id: string): Promise<DetailApproval | null> {
+  const listed = await read<{ approvals: ApprovalRow[] }>({ ownerId }, "approval_list", {
     limit: APPROVAL_LOOKUP_LIMIT,
   });
   const approval = listed.approvals.find((row) => row.id === id);
-  if (approval === undefined) return null;
-  return { now: ctx.now, csrfToken: ctx.csrfToken, approval: decided(approval) };
+  return approval === undefined ? null : decided(approval);
 }
 
 /** The one boundary check behind `DetailApproval`: a rejected or used row without a
@@ -1530,7 +1500,7 @@ function decided(row: ApprovalRow): DetailApproval {
 
 /** How deep the id lookup above reads. `approval_list` takes no id filter (§8),
  *  and retention (§15, days) is what bounds the table — so this is a memory
- *  bound on one page render, not a policy about what exists. */
+ *  bound on one lookup, not a policy about what exists. */
 const APPROVAL_LOOKUP_LIMIT = 1000;
 
 /* ---------------------------------- /audit ------------------------------------ */

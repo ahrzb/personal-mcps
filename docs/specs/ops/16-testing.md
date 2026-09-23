@@ -161,6 +161,33 @@
   statuses plus `GET /api/hub/settings`, the bearer-only change-password post expects `401`
   at its JSON route, `/login`'s `callbackURL` is read from `#pmcp-login`, and the consent
   walk takes `csrf` from `#pmcp-bootstrap` and `oauth_query` from the consent read.
+- **fresh authentication at better-auth's mount** *(2026-09-23, decision 39)* — one worker
+  file, `server/test/worker/fresh-auth.test.ts`, whose **table of guarded endpoints is the
+  endpoint list** decision 39 names by category. Per row: a cookie session aged past
+  `freshAge`, posting straight at `/api/auth/<endpoint>` with the hub's `Origin` and no
+  `Authorization` (so the bearer allowlist is not what refuses it), is answered `403
+  SESSION_NOT_FRESH` **and changes nothing** — the old password still signs in, the factor's
+  state, the passkey row and every session are as they were — beside its twin, the same body
+  from a session signed in moments ago, which succeeds. Beside the table, the flows the
+  decision leaves unguarded, each walked with a stale session present and completing as
+  before: sign-in by password and by passkey, the second-factor verify that completes a
+  sign-in, sign-out, the device flow's code, claim, approve and token legs, and the OAuth
+  provider's authorize, consent and token legs; and the hub's own `/api/hub/settings/*`
+  writes, which a fresh session still completes through both checks. The `web-pages.test.ts`
+  row that pinned the gap ("better-auth's own /change-password mount enforces no freshness")
+  flips: its direct leg is now the refusal, and it moves here. *(2026-09-23, decision 40 —
+  the same file, a separate `describe`, because the rule is an invariant and not a
+  freshness condition:)* `POST /api/auth/update-user` from a session signed in **moments
+  ago** — the session decision 39 would admit — carrying a new `username` is answered `404
+  Not Found`, byte-identical to an endpoint better-auth lists in `disabledPaths`, and the
+  username is unchanged afterwards: the owner still signs in under it, `/api/whoami` still
+  answers `user:<username>`, and `/<username>/mcp` still resolves; the same post carrying
+  only `name`, and only `image`, is refused the same way, so no field is a way in; a stale
+  session is refused identically, so the answer says nothing about freshness. The second
+  barrier is pinned on its own, since the first hides it from any HTTP caller: better-auth's
+  `updateUser` called in-process, past the mount, with a username that differs from the
+  session's is refused `USERNAME_IS_IMMUTABLE`, beside its twin carrying the session's own
+  username, which is not.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
   callback carrying a valid code but a missing, consumed, expired, or other-session

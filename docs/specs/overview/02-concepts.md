@@ -18,6 +18,14 @@
   `mcp`. Adding a top-level route extends this set; the
   implementation must derive the reserved list from the route table (or enforce the
   equivalence with a test that walks the router), so the two can never drift.
+  *(2026-09-23, decision 40:)* **A username is fixed once chosen.** `pnpm users create`
+  (§12) chooses it and nothing renames it, because three things are keyed on the string
+  itself: it is the first path segment of every MCP URL an agent or a connector is
+  configured with (`/<username>/mcp`, `/<username>/mcp/<slug>`) and of every §19 token's
+  audience; it is the `user:<username>` principal the audit trail records; and the
+  reserved-segment rule above judges it only when it is created. A rename would break every
+  configured URL and every issued token, split the ledger's history across two principals,
+  and could claim a segment the rule withholds. A different name is a different user.
 - **App** — a registered MCP app. Identified by immutable `id` and current `(owner,
   slug)` — slugs are `[a-z0-9-]`, with `hub` and `pmcp` reserved virtual slugs and
   `_` still excluded for canonical compatibility. Two kinds:

@@ -267,7 +267,7 @@ it today), `timeoutLabel`, `executionErrors`.
 | 3602, 3644 · tokens survive; unticked flag | **ported** |
 | 3684 · no CSRF field → 403 | **ported** to no `X-Pmcp-Csrf` → 403 (+ twin) |
 | 3719 · no credential → bounced | **ported** → 401 JSON (+ twin) |
-| 3746 · better-auth's mount enforces no freshness; the hub gate is the only one | **ported** (leg B at `/api/hub/settings/change-password`, stale → 401) |
+| 3746 · better-auth's mount enforces no freshness; the hub gate is the only one | **flipped by decision 39** (leg A: the mount refuses 403 `SESSION_NOT_FRESH`, password untouched) and **ported** (leg B at `/api/hub/settings/change-password`, stale → 401) |
 | 3797 · day-old cookie posts no credential target | **ported** |
 | 3857, 3894, 3918, 3938, 4053, 4086 · passkey/session rows | **ported** to the read's rows; 4086's sign-in leg stays (the `/login` form is kept) |
 | 3959, 4153, 4184, 4231 · Remove / Revoke / Revoke all others / CLI row, end to end | **ported** (the confirm-link leg web-side) |
@@ -527,7 +527,7 @@ baselines are already on disk either way.
    **at the better-auth mount** (`identity.ts:1406-1429`), which every hub wrapper
    (`callAuthResponse` → `authRoutes().fetch`) and every direct browser call both pass
    through. They survive any rewiring of who calls better-auth; nothing needs porting.
-3. **"`/api/hub/*` … already carry the cookie session, the same-origin check and
+3. *(The mount half is superseded 2026-09-23 by decision 39: better-auth's own credential endpoints now refuse a stale session at the mount — `server/test/worker/fresh-auth.test.ts`. The `/api/hub/settings/*` prefix stands.)* **"`/api/hub/*` … already carry the cookie session, the same-origin check and
    `X-Pmcp-Csrf`" (brief §4).** True for writes; no `/api/hub` route asks for **recent**
    authentication (`api.ts:198-200`), so nothing existing can serve `/settings`, and
    better-auth's own endpoints cannot either: `/two-factor/*`, `/passkey/delete-passkey`,
@@ -546,7 +546,7 @@ baselines are already on disk either way.
 
 ## 8 · Checks with no complete home
 
-1. **Recent authentication on credential management is enforced only at the hub's own routes.**
+1. *(Superseded 2026-09-23 by decision 39: the owner ruled the mount guards it too — `server/test/worker/fresh-auth.test.ts`.)* ~~**Recent authentication on credential management is enforced only at the hub's own routes.**~~
    A day-old cookie can post JSON straight at `/api/auth/change-password` (and the other
    endpoints in §7.3) with an `Origin` header and succeed — row 3746 pins that as a known fact.
    The design keeps the browser's path gated (`/api/hub/settings/*`); it does not close the

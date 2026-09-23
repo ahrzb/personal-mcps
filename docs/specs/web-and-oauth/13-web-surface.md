@@ -103,8 +103,10 @@ Deliberately tiny — ~~server-rendered pages (Hono JSX)~~ browser pages *(2026-
     not belt-and-braces: in 1.7.1 `/change-password` sits behind
     `sensitiveSessionMiddleware`, which proves an authoritative session and nothing about
     its age (`freshSessionMiddleware` is the one that reads `freshAge`, and this endpoint
-    does not use it), so the hub's own recent-auth check is the only freshness check the
-    change has. Pinned:
+    does not use it), so the hub's own recent-auth check is ~~the only freshness check the
+    change has~~ the check the change depends on *(2026-09-23, decision 39: no longer the only
+    one — better-auth's mount now refuses a stale session at `/change-password` as well, with
+    the same window)*. Pinned:
     - **Change is not reset.** This pane needs the current password. A *forgotten*
       password is recovered only by `pnpm users reset-password <username>` (§12), and the
       pane says so in its own footer, verbatim: "No email is on file, so there is no reset

@@ -19,7 +19,11 @@
   containing any stuck cookie-signing state to that request without paying the full
   `jwt()` + `oauthProvider()` construction cost on ordinary page and MCP traffic. Plugins:
   - `username()` — login is username + password; email is a synthesized placeholder
-    (`<username>@users.local`), never used.
+    (`<username>@users.local`), never used. *(2026-09-23, decision 40: configured with
+    `immutableUsername: true` — verified in `better-auth@1.7.1`, where it refuses an
+    `/update-user` carrying a username that differs from the session's with
+    `USERNAME_IS_IMMUTABLE` — because §2 fixes a username once chosen. It is the second
+    barrier; the mount refusing `/update-user` outright, below, is the first.)*
   - `twoFactor()` — optional TOTP + backup codes.
   - `@better-auth/passkey` — optional WebAuthn.
   - `deviceAuthorization()` — RFC 8628 device flow issuing **session tokens** for the CLI
@@ -58,14 +62,38 @@
   never keeps a second window. *(2026-09-23, decision 38: with `/settings` in the client, the
   gate stands at two prefixes that are one rule — the `/settings/*` shell document and
   `/api/hub/settings/*`, every read and write the panes make — so the browser's only way to
-  reach credential management is through the hub's recent-authentication check. better-auth's
+  reach credential management is through the hub's recent-authentication check. ~~better-auth's
   own mount still serves those endpoints to any cookie session without a freshness check
   (only `/list-sessions` and passkey *registration* read `freshAge`; §13's Password pane and
   its row pin that for `/change-password`), so the check guards the browser's path, not the
-  mount.)* Session
+  mount.~~)* *(2026-09-23, decision 39: and at better-auth's own mount. A change made straight
+  at `/api/auth/*` under a cookie session to the password, the second factor, a passkey or a
+  session is refused there too when the session is not recent — better-auth's own `403
+  SESSION_NOT_FRESH`, before the endpoint runs — with the same `freshAge` window, so the
+  `/settings/*` shell, `/api/hub/settings/*` and the mount are three places of one rule and a
+  stale cookie reaches credential management by none of them. Sign-in and the second-factor
+  verify that completes it, sign-out, the device-flow legs and the OAuth provider's legs are
+  deliberately outside it; the endpoint list is `server/test/worker/fresh-auth.test.ts`'s
+  table.)* Session
   lifetime config is shared between web and CLI sessions (better-auth default 7 d
   sliding) — a conscious coupling; don't tune it up for CLI convenience without
   accepting the browser exposure.
+- **What the public `/api/auth` mount refuses** *(gathered 2026-09-23, so one place lists
+  them; each is pinned where its reason is)*. Every better-auth endpoint the plugins above
+  mount is live on it unless something here says otherwise:
+  - **sign-up** — `disableSignUp`: §12's `POST /internal/users` is the only way a user comes
+    to exist;
+  - **an `Authorization` header anywhere but `/sign-out` and `/device/*`** — the fail-closed
+    allowlist (§19.7, decision 25);
+  - **a credential change under a session that is not recent** — the password, the second
+    factor, passkeys, sessions — refused `403 SESSION_NOT_FRESH` (decision 39; the endpoint
+    list is `server/test/worker/fresh-auth.test.ts`'s table);
+  - **`/update-user`, outright** — every field, from any session, fresh or stale — answered
+    `404 Not Found`, exactly what better-auth answers for an endpoint in its own
+    `disabledPaths` (decision 40). Nothing in the hub, the client or the CLI calls it, and
+    its one field that matters, `username`, is fixed once chosen (§2); `name` and `image`
+    are display fields this hub never reads, so refusing them costs nothing and keeps the
+    rule one sentence.
 - **Password change vs. password reset** *(added 2026-09-02, decision 30 — until then
   the bullet above read "there is no self-serve password change, the users script (§12)
   is the only password path": **reversed for the change half, kept for the reset
@@ -73,8 +101,10 @@
   `/settings` (§13's Password pane): core better-auth's `POST /change-password` —
   `{ currentPassword, newPassword, revokeOtherSessions? }`, verified in
   `better-auth@1.7.1`, no plugin — which requires the current password and which the hub
-  gates as above. That gate is the only freshness check the change has: in 1.7.1 the
-  endpoint sits behind `sensitiveSessionMiddleware`, which proves an authoritative
+  gates as above. That gate is ~~the only freshness check the change has~~ load-bearing
+  *(2026-09-23, decision 39: it is no longer the only one — the mount now refuses a stale
+  session at `/change-password` too, and the 1.7.1 fact that follows is why it had to)*: in
+  1.7.1 the endpoint sits behind `sensitiveSessionMiddleware`, which proves an authoritative
   session and nothing about its age (`freshSessionMiddleware` is the one that reads
   `freshAge`, and `/change-password` does not use it). An owner who has **forgotten** it
   is reset only by `pnpm users reset-password <username>` (§12) — structural, not an

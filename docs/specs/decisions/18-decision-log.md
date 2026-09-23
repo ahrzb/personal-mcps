@@ -648,3 +648,94 @@
     shared chrome element (the shell, the rail, the notices, the dialogs) would keep a server
     and a client spelling to hold in step. The trust argument is answered by keeping every check
     server-side (above), not by keeping the markup there.
+
+39. **Credential management demands recent authentication at better-auth's own mount, not
+    only on the hub's routes** *(2026-09-23, §4/§16; reverses the "known fact" recorded in
+    decision 38's route inventory, §8.1, and pinned by the `web-pages.test.ts` row "better-auth's
+    own /change-password mount enforces no freshness")*. §4 put recent authentication on
+    credential management and the hub enforced it on its **own** routes — `/settings/*`, and
+    since decision 38 `/api/hub/settings/*`. But the same endpoints are live on better-auth's
+    public `/api/auth` mount, and in `better-auth@1.7.1` only `/list-sessions` and passkey
+    *registration* run `freshSessionMiddleware`: `/change-password`, `/two-factor/disable` and
+    the three session revocations sit behind `sensitiveSessionMiddleware`, the other two-factor
+    endpoints and passkey removal behind `sessionMiddleware`, and none of them reads the
+    session's age. So a day-old cookie posting
+    JSON straight at the mount with an `Origin` header could change the password — the hub's
+    check guarded the browser's path, not the mount.
+
+    **The owner's ruling**, on being asked: "I think yes, it's a good idea to require a fresh
+    sign in for sensitive actions. It's good hygiene" — with the caveat, in the owner's own
+    words, "I'm not a security expert / I don't have hard data". Recorded as given: this rests on
+    a published standard and the library's own precedent, not on an observed attack or a
+    measured risk. The grounding is **OWASP ASVS 4.0 V3.7.1** — re-authentication (or an
+    equivalent full, valid login session) before sensitive transactions or account
+    modifications — and **better-auth's own rule**: it already demands a fresh session for
+    `/list-sessions` and for registering a passkey, and this extends that rule to their
+    siblings with the same window rather than inventing a second one.
+
+    **What is guarded**, by category: a change made at `/api/auth/*` under a cookie session to
+    the owner's **password**, **second factor** (enabling, disabling, regenerating backup codes,
+    and a TOTP verify acting on a signed-in session), **passkeys** (registering, as already;
+    removing; renaming) or **sessions** (revoking one, the others, or all). The exact endpoint list is the
+    table in `server/test/worker/fresh-auth.test.ts`; an endpoint in these four categories that
+    the table misses is a gap in the table, not an exemption. **The window** is better-auth's
+    `session.freshAge` — the same value `identity.isRecentAuth` reads for the hub's own gate,
+    the same boundary, and `freshAge: 0` disables both — so "fresh enough" still has one answer.
+    **The refusal** is `freshSessionMiddleware`'s own: `403` with better-auth's
+    `SESSION_NOT_FRESH` code and message, answered at the mount (`identity.authRoutes`, the seam
+    §4's bearer allowlist already stands at) **before** the endpoint's handler runs, so a refused
+    request changes nothing, and a caller that already handles the library's refusal from
+    passkey registration handles this one. Every caller meets the one check: a direct post, and
+    the hub's own routes through `callAuthResponse`, which pass it because they ask for the same
+    freshness first.
+
+    **What is deliberately not guarded**, because none of it changes a credential the owner
+    already holds: **sign-in**, by password or passkey, and the **second-factor verify that
+    completes a sign-in** — both run before any session exists, so there is no age to judge
+    (where one endpoint serves both a sign-in challenge and a signed-in change, only the
+    signed-in arm is guarded); **sign-out**, since ending a session is never refused; the
+    **device-flow legs** — the anonymous code and token legs, and the claim and approve/deny that
+    authorize a CLI session under the owner's own CSRF-checked click on an ordinary-session page
+    (§13); and the **OAuth provider's legs** — authorize, consent, token and registration, §19's
+    flow, whose consent step carries its own gate. Reads keep better-auth's own posture.
+
+    What changes for the owner: nothing on any path a browser takes, since every one of them
+    already went through the hub's recent-authentication gate first. What changes is a direct
+    call to the mount with a stale cookie — a script, or someone holding a stolen cookie — which
+    is now refused instead of obeyed. The §4 and §13 sentences calling the hub's gate "the only
+    freshness check the change has" stop being true and are struck. *(The inventory behind this
+    decision also found `/update-user` renaming the owner under any session. That is not a
+    freshness question — no session, however fresh, should rename a namespace — so it is
+    decision 40, not a row of this one's table.)*
+
+40. **A username is fixed once chosen, and the mount refuses `/update-user` outright**
+    *(2026-09-23, §2/§4/§16; found by decision 39's endpoint inventory; the orchestrator's
+    ruling — an obvious fix, not an owner question)*. `POST /api/auth/update-user
+    {"username": …}` renamed the owner under **any** cookie session: probed, it answered 200
+    and the username changed. better-auth's `username()` plugin allows that by default, and
+    nothing on the hub's side ever said otherwise, because nothing on the hub's side calls the
+    endpoint — not a page, not the client, not the CLI. But the username is not a display
+    name here: it is the first path segment of every MCP URL an agent is configured with and
+    of every §19 token's audience, the `user:<username>` principal every audit row records,
+    and a string §2's reserved-segment rule judges only at creation. One rename breaks every
+    agent's configuration and every issued token, splits the ledger's history across two
+    principals, and walks around the reserved list.
+
+    **Decided:** §2 now says a username is fixed once chosen, and two barriers hold it. The
+    **mount refuses `/update-user` outright** — every field, from every session, fresh or
+    stale — answering exactly as a better-auth endpoint listed in its own `disabledPaths`
+    does, `404 Not Found`, so the endpoint reads as absent rather than as forbidden; its other
+    fields (`name`, `image`) are display data this hub never reads, and refusing them keeps the
+    rule one sentence instead of a field filter to maintain. And `username({
+    immutableUsername: true })`, verified in `better-auth@1.7.1`, refuses a differing username
+    with `USERNAME_IS_IMMUTABLE` on any path that reaches the plugin's hook — the second
+    barrier, for the day the first is loosened or a new caller reaches the endpoint past the
+    mount.
+
+    Why this is a decision of its own rather than a paragraph of 39: 39 is a **condition** on
+    changes the owner is entitled to make (prove you signed in recently), and its answer is
+    `SESSION_NOT_FRESH`; this is an **invariant** — no session may make the change at all —
+    and its answer is the absent endpoint. Folding it into 39's table would put a rename
+    behind a fresh sign-in, which is exactly the wrong fix. A rename, if one is ever wanted,
+    is a new user plus a migration of everything keyed on the old name, and a decision of its
+    own.

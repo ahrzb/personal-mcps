@@ -13,6 +13,14 @@
 // stands in their place is the boundary: the shell on `/audit`, the two `/api/hub` audit
 // reads, and the export route (which was never the page's and keeps its own describe).
 //
+// SINCE 2026-09-23 (decision 38) every page moves into the client, one family per ship, and
+// a row that pinned a check on a page is PORTED to the route that replaces it rather than
+// deleted (`docs/superpowers/plans/2026-09-23-everything-spa-routes.md` names each row's
+// fate). Family 1, `/approvals` and `/approvals/<id>`: both are the shell (row 8 keeps the
+// document 404, 8b ports it to `GET /api/hub/approvals/<id>`), Approve/Reject is
+// `approval_decide` through the ops allowlist (G52 and 19 ported), and the push opt-in is
+// `POST /api/hub/approvals/push`; 16 and 17 retired, saying where their guarantees went.
+//
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
 // `#pmcp-bootstrap` JSON island and a module script, and every read and write they used to
@@ -429,13 +437,21 @@ function csrfOf(html: string): string {
  * `raw()` exists around.
  */
 function bootstrapCsrfOf(html: string): string {
+  const csrf = bootstrapOf(html).csrf;
+  if (typeof csrf !== "string") throw new Error("the bootstrap island carried no csrf");
+  return csrf;
+}
+
+/** The whole `#pmcp-bootstrap` island, parsed as the client parses it — for the rows that
+ *  pin its field set rather than one field. */
+function bootstrapOf(html: string): Record<string, unknown> {
   const island = /<script type="application\/json" id="pmcp-bootstrap">([\s\S]*?)<\/script>/.exec(html);
   if (island === null) throw new Error("the document carried no #pmcp-bootstrap island");
   const parsed: unknown = JSON.parse(island[1]);
-  if (typeof parsed !== "object" || parsed === null || !("csrf" in parsed) || typeof parsed.csrf !== "string") {
-    throw new Error("the bootstrap island carried no csrf");
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("the bootstrap island is not a JSON object");
   }
-  return parsed.csrf;
+  return parsed as Record<string, unknown>;
 }
 
 /**
@@ -1053,6 +1069,28 @@ describe("§13 · the SPA shell document", () => {
     );
   });
 
+  it("§13 · /approvals and /approvals/<id> answer the same shell (decision 38) — 200, `no-store`, and a `#pmcp-bootstrap` island that is exactly `{csrf, username, origin, vapidPublicKey}`, the key being the configured VAPID public one the push control subscribes with — while with no cookie each is the 302 to /login carrying its own path as next=, so the `-32003` link and a push tap still land after a sign-in", async () => {
+    const expected = bootstrapOf(await page(paths.apps));
+    for (const url of [paths.approvals, paths.approval(world.approvalId)]) {
+      const answered = await get(url);
+      expect(answered.status, `GET ${url}`).toBe(200);
+      expect(answered.headers.get("Cache-Control"), `GET ${url}`).toBe("no-store");
+      const html = await answered.text();
+      expect(html, url).toContain('src="/app.js"');
+      const bootstrap = bootstrapOf(html);
+      expect(Object.keys(bootstrap).sort(), url).toEqual(["csrf", "origin", "username", "vapidPublicKey"]);
+      expect(bootstrap.vapidPublicKey, url).toBe((env as unknown as Env).VAPID_PUBLIC_KEY);
+      expect(bootstrap.username, url).toBe(world.ns.owner.username);
+      expect(bootstrap.origin, url).toBe(ORIGIN);
+      // The island is the session's, not the route's: every shell carries the same one.
+      expect(bootstrap, url).toEqual(expected);
+
+      const anonymous = await call(new Request(`${ORIGIN}${url}`));
+      expect(anonymous.status, `GET ${url} with no cookie`).toBe(302);
+      expect(anonymous.headers.get("Location"), url).toBe(`/login?next=${encodeURIComponent(url)}`);
+    }
+  });
+
   it("§13 · the existence check runs before the document too: an unknown slug, ANOTHER namespace's real slug, the builtin pmcp and an (agent × app) pair the agent may not edit are one 404 apiece, byte-identical — a probe learns nothing about another namespace, and a 200 followed by a client-rendered \"not found\" would leak exactly that", async () => {
     const foreign = await seedNamespace(env.DB, {
       apps: [{ slug: uniqueSlug("foreign"), kind: "tunnel" }],
@@ -1396,16 +1434,40 @@ describe("§4/§13 · cookie sessions are the only page credential", () => {
     }
   });
 
-  it("8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id renders (owner-only, and indistinguishable from a nonexistent id)", async () => {
+  it("8. §13 · /approvals/<id> for another namespace's approval refuses · the owner's own id answers the shell (owner-only, and indistinguishable from a nonexistent id)", async () => {
+    // Since decision 38 the owner's own id is the SPA shell, and the check that used to
+    // decide what to render now decides whether a document exists at all — before any HTML,
+    // as `/apps/<slug>` decides. The row's other half, the RECORD a probe could read, is 8b.
     const own = await get(paths.approval(world.approvalId));
     expect(own.status).toBe(200);
-    expect(await own.text()).toContain(world.approvalId);
+    expect(await own.text()).toContain('id="pmcp-bootstrap"');
     const foreign = await get(paths.approval(world.foreign.approvalId));
     const invented = await get(paths.approval("apr_this-id-never-existed"));
     expect(foreign.status).toBe(404);
     // The two refusals are ONE answer: a probe cannot learn that the id exists elsewhere.
     expect(await foreign.text()).toEqual(await invented.text());
     expect(foreign.status).toBe(invented.status);
+  });
+
+  it("8b. §13 · GET /api/hub/approvals/<id> answers the owner's own row as `{ approval }` · another namespace's id and an invented one are one 404 `{ reason: \"No such approval.\" }`, byte-identical · no cookie is the reader's 401 (the JSON half of row 8, ported with decision 38)", async () => {
+    const own = await hub("GET", `/api/hub/approvals/${world.approvalId}`);
+    expect(own.status).toBe(200);
+    expect(own.headers.get("Cache-Control")).toBe("no-store");
+    const approval = (await jsonOf(own)).approval as Record<string, unknown>;
+    expect(approval.id).toBe(world.approvalId);
+    expect(approval.status).toBe("pending");
+
+    const foreign = await hub("GET", `/api/hub/approvals/${world.foreign.approvalId}`);
+    const invented = await hub("GET", "/api/hub/approvals/apr_this-id-never-existed");
+    expect(foreign.status).toBe(404);
+    expect(invented.status).toBe(404);
+    const refused = await foreign.text();
+    expect(refused).toBe(await invented.text());
+    expect(JSON.parse(refused)).toEqual({ reason: "No such approval." });
+
+    const anonymous = await hub("GET", `/api/hub/approvals/${world.approvalId}`, undefined, { cookie: null });
+    expect(anonymous.status).toBe(401);
+    expect(await reasonOf(anonymous)).toBe("Sign in again.");
   });
 
   it("9. §13 · /manifest.webmanifest and /sw.js are served without a session — installability is not gated, and the PWA shell holds nothing to gate", async () => {
@@ -1719,7 +1781,13 @@ describe("§13 · /approvals — deciding a request that is no longer pending", 
   // render and the click — landed as a red "Approval decide failed" through the generic
   // dispatch. §13 now pins the calm answer. approval_decide refuses every non-decidable
   // id with one message on purpose (§7's probe rule), so the tone is keyed on the op.
-  it(`§13 · deciding an approval that is no longer pending lands back on /approvals with the warning "That request is no longer pending." — never a red "failed" notice — · deciding a pending one lands with the success notice (the twin)`, async () => {
+  //
+  // Ported with decision 38: both pages decide through `POST /api/hub/ops/approval_decide`
+  // (the `/approvals/:op` form target is gone), so what the server owes is the 422 that a
+  // lost race answers — the op's one message, keyed by the op's name. The WARNING it lands
+  // as is the client's: `web/src/lib/notice.ts` keys the tone on `approval_decide`, pinned
+  // by the web unit row over that file.
+  it(`§13 · deciding an approval that is no longer pending through the JSON surface is a 422 carrying the op's one refusal — byte-identical to an id that never existed, so the lost race tells a prober nothing — · deciding a pending one is a 200 and the detail read then shows it rejected with its decision instant (the twin)`, async () => {
     // A namespace of its own: the shared world's pending approval is other rows' fixture.
     const ns = await seedNamespace(env.DB, {
       apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "news" }] }],
@@ -1727,28 +1795,133 @@ describe("§13 · /approvals — deciding a request that is no longer pending", 
     });
     const session = await seedOwnerSession(ns.owner);
     const id = await openApproval(ns, "news");
-    const csrf = csrfOf(await page(paths.approvals, session.cookie));
+    const csrf = bootstrapCsrfOf(await page(paths.approvals, session.cookie));
+    const decide = (approvalId: string): Promise<Response> =>
+      hub("POST", "/api/hub/ops/approval_decide", { id: approvalId, decision: "reject" }, {
+        cookie: session.cookie,
+        csrf,
+      });
 
     // The twin first, because it is what makes the second decision a lost race.
-    const decided = await formPost(paths.approvalDecide(id), { csrf, decision: "reject" }, session.cookie);
-    expect(decided.status).toBe(303);
-    const done = new URL(decided.headers.get("Location") ?? "", ORIGIN);
-    expect(done.pathname).toBe(paths.approvals);
-    expect(done.searchParams.get("done")).toBe("approval_decide");
-    expect(await page(`${done.pathname}${done.search}`, session.cookie)).toContain("alert--success");
+    const decided = await decide(id);
+    expect(decided.status, await decided.clone().text()).toBe(200);
+    expect((await jsonOf(decided)).value).toEqual({ id, decision: "reject" });
+    // And the detail read reports it the way the page draws it: `decided()` narrowing holds,
+    // a rejected row carries the instant its decision was stamped.
+    const read = await hub("GET", `/api/hub/approvals/${id}`, undefined, { cookie: session.cookie });
+    const approval = (await jsonOf(read)).approval as Record<string, unknown>;
+    expect(approval.status).toBe("rejected");
+    expect(typeof approval.decidedAt).toBe("string");
 
     // The lost race: the same decision again, after the row stopped being pending.
-    const lost = await formPost(paths.approvalDecide(id), { csrf, decision: "reject" }, session.cookie);
-    expect(lost.status).toBe(303);
-    const landing = new URL(lost.headers.get("Location") ?? "", ORIGIN);
-    expect(landing.pathname).toBe(paths.approvals);
-    const landed = await page(`${landing.pathname}${landing.search}`, session.cookie);
-    expect(textOf(landed)).toContain("That request is no longer pending.");
-    expect(landed).toContain("alert--warning");
-    expect(landed).not.toContain("alert--danger");
-    expect(textOf(landed)).not.toContain("failed");
+    const lost = await decide(id);
+    expect(lost.status).toBe(422);
+    const lostBody = await lost.text();
+    expect(typeof (JSON.parse(lostBody) as { reason?: unknown }).reason).toBe("string");
+    const invented = await decide("apr_this-id-never-existed");
+    expect(invented.status).toBe(422);
+    expect(lostBody, "a lost race is distinguishable from an id that never existed").toBe(await invented.text());
+  });
+
+  it("§13 · the two form targets /approvals posted are gone (decision 38): every admin op named at POST /approvals/<op> — the generic dispatcher that admitted ANY op by name — reaches its handler zero times and answers no redirect, even carrying the session's own CSRF field, and POST /approvals/push stores no subscription; what the pages post now is the nine-name allowlist (row 18) and the push route below", async () => {
+    const csrf = bootstrapCsrfOf(await page(paths.approvals));
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      for (const name of Object.keys(ops)) {
+        // Spelled literally on purpose: this is the path that must no longer route, so it
+        // cannot come from `paths`.
+        const gone = await post(`/approvals/${name}?id=${world.approvalId}`, { decision: "approve" }, { csrf });
+        expect(gone.status, `POST /approvals/${name}`).toBe(404);
+        expect(gone.headers.get("Location"), `POST /approvals/${name}`).toBeNull();
+        expect(times(invocations, name), `POST /approvals/${name} reached ${name}`).toBe(0);
+      }
+    });
+    const before = await pushRowsOf(world.ns.owner.userId);
+    const push = await post(
+      "/approvals/push",
+      { subscription: JSON.stringify(pushSubscription(uniqueSlug("gone"))) },
+      { csrf },
+    );
+    expect(push.status).toBe(404);
+    expect(await pushRowsOf(world.ns.owner.userId)).toBe(before);
   });
 });
+
+describe("§13 · POST /api/hub/approvals/push — the browser's push subscription, through the write gate", () => {
+  // The first route-level rows this subscription has ever had: the form target it replaces
+  // had none, and approvals.test.ts covers `subscribePush` alone. A namespace of its own, so
+  // "no row" and "exactly one row" are counts over an owner nothing else subscribes.
+  let owner: { userId: string; cookie: string; csrf: string } | null = null;
+  const subscriber = async (): Promise<{ userId: string; cookie: string; csrf: string }> => {
+    if (owner !== null) return owner;
+    const ns = await seedNamespace(env.DB, {});
+    const session = await seedOwnerSession(ns.owner);
+    owner = {
+      userId: ns.owner.userId,
+      cookie: session.cookie,
+      csrf: bootstrapCsrfOf(await page(paths.approvals, session.cookie)),
+    };
+    return owner;
+  };
+
+  it("§13 · a malformed subscription is 400 with a reason and stores no row — no subscription, the old form's JSON-string wire, a non-string endpoint, no keys, a missing auth key — · the well-formed twin is 204 and stores exactly one row, under this owner", async () => {
+    const { userId, cookie, csrf } = await subscriber();
+    const endpoint = `https://push.invalid/${uniqueSlug("sub")}`;
+    const whole = pushSubscription(endpoint);
+    for (const body of [
+      {},
+      { subscription: JSON.stringify(whole) },
+      { subscription: { ...whole, endpoint: 7 } },
+      { subscription: { endpoint } },
+      { subscription: { endpoint, keys: { p256dh: whole.keys.p256dh } } },
+    ]) {
+      const refused = await hub("POST", "/api/hub/approvals/push", body, { cookie, csrf });
+      expect(refused.status, JSON.stringify(body)).toBe(400);
+      expect(await reasonOf(refused), JSON.stringify(body)).not.toBe("");
+      expect(await pushRowsOf(userId), JSON.stringify(body)).toBe(0);
+    }
+
+    const accepted = await hub("POST", "/api/hub/approvals/push", { subscription: whole }, { cookie, csrf });
+    expect(accepted.status, await accepted.clone().text()).toBe(204);
+    expect(await accepted.text()).toBe("");
+    expect(await pushRowsOf(userId)).toBe(1);
+    const stored = await (env.DB as D1Like)
+      .prepare(`SELECT user_id, keys_json FROM push_subscription WHERE endpoint = ?`)
+      .bind(endpoint)
+      .first<{ user_id: string; keys_json: string }>();
+    expect(stored?.user_id).toBe(userId);
+    expect(JSON.parse(stored?.keys_json ?? "null")).toEqual(whole.keys);
+  });
+
+  it("§13 · without `X-Pmcp-Csrf` the subscription is 403 and stores nothing — a cross-site page cannot register its own endpoint for the owner's approval pushes · the same body with the session's token is 204 (the twin)", async () => {
+    const { userId, cookie, csrf } = await subscriber();
+    const body = { subscription: pushSubscription(`https://push.invalid/${uniqueSlug("nocsrf")}`) };
+    const before = await pushRowsOf(userId);
+
+    const refused = await hub("POST", "/api/hub/approvals/push", body, { cookie, origin: ORIGIN });
+    expect(refused.status).toBe(403);
+    expect(await reasonOf(refused)).toBe("Forbidden");
+    expect(await pushRowsOf(userId)).toBe(before);
+
+    const accepted = await hub("POST", "/api/hub/approvals/push", body, { cookie, csrf, origin: ORIGIN });
+    expect(accepted.status).toBe(204);
+    expect(await pushRowsOf(userId)).toBe(before + 1);
+  });
+});
+
+/** A browser's `PushSubscription.toJSON()` in shape, with obviously fake keys: the route
+ *  checks the shape and stores it, and nothing here sends a push to it. */
+function pushSubscription(endpoint: string): { endpoint: string; keys: { p256dh: string; auth: string } } {
+  return { endpoint, keys: { p256dh: "FAKE0000-p256dh", auth: "FAKE0000-auth" } };
+}
+
+/** How many push subscriptions one owner holds, read off the table the route writes. */
+async function pushRowsOf(userId: string): Promise<number> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT COUNT(*) AS n FROM push_subscription WHERE user_id = ?`)
+    .bind(userId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
 
 describe("§8 · parity direction B — forms and schemas are one source", () => {
   // `/apps` left every walk in this describe with the SPA cutover (2026-09-18): it renders
@@ -1756,24 +1929,15 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
   // second form walk but the surface that took the forms' place — `POST /api/hub/ops/:op`,
   // whose allowlist is the new answer to "what can a browser reach", checked below in both
   // directions with nothing transcribed that is not itself asserted.
-  it("16. §8 · every form rendered on /approvals names an ops key that exists in admin.ops (no form fronts a tool that is gone)", async () => {
-    const forms = formsRenderedOn(await page(paths.approvals));
-    expect(forms.length, `${paths.approvals} rendered no form`).toBeGreaterThan(0);
-    for (const form of forms) {
-      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-      expect(Object.prototype.hasOwnProperty.call(ops, form.op), `/approvals fronts "${form.op}"`).toBe(true);
-    }
-  });
-
-  it("17. §8 · each form's field set equals schemaKeysOf(ops[name]) — both sides derived, so a schema change with no form change fails here rather than at a user's keyboard", async () => {
-    let checked = 0;
-    for (const form of formsRenderedOn(await page(paths.approvals))) {
-      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-      expect(form.fields, `/approvals → ${form.op}`).toEqual(schemaKeysOf(ops[form.op]));
-      checked += 1;
-    }
-    expect(checked, "no ops-backed form was checked").toBeGreaterThan(0);
-  });
+  // 16 and 17 walked /approvals' forms — "every form names an ops key that exists" and "each
+  // form's fields are schemaKeysOf(ops[name])". Retired with decision 38: /approvals is the
+  // shell and renders no form. Where each guarantee went:
+  //  - 16's "the page fronts only ops that exist" is 18 below — the allowlist the JSON
+  //    surface admits, measured against `admin.ops` in both directions, and it admits
+  //    `approval_decide`.
+  //  - 17's SERVER half is 18b — `parseInput` refuses a body carrying a field the op does not
+  //    declare, so a client body that drifted from the schema is a 422, not a silent drop.
+  //    Its CLIENT half (the body Approve/Reject builds is `{ id, decision }`) is web-side.
 
   // 18 was "/settings renders no ops-backed form at all", true only while /settings was one
   // page. §13's Tokens and Connected clients panes front `token_revoke` and
@@ -1847,27 +2011,29 @@ describe("§8 · parity direction B — forms and schemas are one source", () =>
     expect(row?.archived ?? true).toBe(false);
   });
 
-  it("19. §8 · every page mutation reaches an ops handler (or better-auth): no page route mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts", async () => {
-    // Everything the page has to SAY is read first, while the ops table is still real:
-    // the targets it renders, and the token it rendered them with. The substitution
-    // below replaces the read handlers too, so a page cannot be rendered under it — which
-    // is itself the parity invariant showing through (a page has no other source).
-    const targets = new Map<string, string>();
-    const html = await page(paths.approvals);
-    const csrf = csrfOf(html);
-    for (const form of formsRenderedOn(html)) {
-      if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-      targets.set(form.op, actionFor(html, form.op));
-    }
-    expect(targets.size).toBeGreaterThan(0);
+  it("19. §8 · every page mutation reaches an ops handler (or better-auth): no route a moved page writes through mutates D1 on its own — the no-web-only-capability invariant, checked by substituting handlers across the ops table rather than by reading web.ts or api.ts", async () => {
+    // Ported with decision 38. The walk used to DISCOVER its targets in /approvals' rendered
+    // forms; the moved pages render none, so the ops-backed JSON writes they make are listed
+    // instead — each family adds its own as it moves (family 2: token_revoke,
+    // connection_revoke, hub_settings_update). The token is read first, while the ops table
+    // is still real: the substitution below replaces the read handlers too.
+    const writes: { op: string; path: string; body: Record<string, unknown> }[] = [
+      {
+        op: "approval_decide",
+        path: "/api/hub/ops/approval_decide",
+        body: { id: world.approvalId, decision: "approve" },
+      },
+    ];
+    const csrf = bootstrapCsrfOf(await page(paths.apps));
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
       const before = await namespaceShape();
-      for (const [op, target] of targets) {
-        const answered = await post(target, { decision: "approve" }, { csrf });
-        expect(answered.status, `POST ${target}`).toBe(303);
-        expect(times(invocations, op), `POST ${target} reached ${op}`).toBe(1);
+      for (const { op, path, body } of writes) {
+        const answered = await hub("POST", path, body, { csrf });
+        expect(answered.status, `POST ${path}`).toBe(200);
+        expect(times(invocations, op), `POST ${path} reached ${op}`).toBe(1);
+        expect(invocations.get(op)?.[0], `POST ${path} handed ${op} its body`).toEqual(body);
       }
-      // Substituted handlers changed nothing, so if the page layer had written to D1 on
+      // Substituted handlers changed nothing, so if the route layer had written to D1 on
       // its own the namespace would have moved anyway. It did not.
       expect(await namespaceShape()).toEqual(before);
     });
@@ -2228,13 +2394,17 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals and /approvals/<id> (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
+      // Each page family joins this list as it becomes the shell (decision 38), until all
+      // six URLs are carriers.
       const carriers = [
         await call(new Request(`${ORIGIN}${paths.login}`)),
         await get(paths.apps),
         await get(paths.appNew),
+        await get(paths.approvals),
+        await get(paths.approval(world.approvalId)),
       ];
       for (const carrier of carriers) {
         expect(carrier.status).toBe(200);
@@ -5773,13 +5943,17 @@ const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
  * retained `/apps/connect` form's CSRF field, now drawn client-side where no server-HTML
  * walk can see it — is owed to the behavioural case beside case 4, which posts that target
  * with no field and reads the refusal.
+ *
+ * `/approvals` and `/approvals/<id>` left with decision 38's first family, and nothing is
+ * owed for them: the two targets their forms posted (`/approvals/:op`, `/approvals/push`)
+ * are deleted, and the JSON routes that replaced them are `X-Pmcp-Csrf`-gated — pinned by
+ * the write-gate describe and by the push rows' own 403. The list shrinks with each family
+ * and the walk retires with the last.
  */
 async function sessionPages(): Promise<Record<string, string>> {
   const { userCode } = await requestDeviceCodes();
   const rendered: Record<string, string> = {};
   for (const path of [
-    paths.approvals,
-    paths.approval(world.approvalId),
     // All seven panes, not just the landing one: a pane is a route, and a form that forgot
     // its CSRF field on /settings/tokens is as unposted as one that forgot it on /settings.
     ...PANES,

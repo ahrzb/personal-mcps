@@ -15,7 +15,11 @@ import { cn } from "@/lib/cn"
  * `relative cursor-pointer hover:bg-muted` beside the stretched link inside it. A selected row
  * is `data-state="selected"`.
  *
- * The container scrolls sideways rather than letting a too-wide table clip at the card's edge.
+ * The container neither scrolls nor positions, because legacy's `.table` had no wrapper and
+ * each property alone moves pixels: `relative` drops Chrome to greyscale antialiasing on the
+ * head text (/audit's events at 1280, found by p3-audit), and `overflow-x-auto` shifts
+ * antialiased corners inside it (app-detail's Overview at 390, found by p3-app-detail). So a
+ * stretched row link measures against its own row's `relative`, never the container.
  */
 function Table({
   className,
@@ -28,7 +32,7 @@ function Table({
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="w-full"
     >
       <table
         data-slot="table"

@@ -80,9 +80,11 @@ export const paths = {
   audit: (search: Record<string, string | string[]> = {}): string => `/audit${query(search)}`,
   approvals: "/approvals",
   settings: "/settings",
-  /** The SSR sign-out target — a real form POST, because it is better-auth's own route and
-   *  answers with Set-Cookie and a redirect. */
-  signOut: "/api/auth/sign-out",
+  /** The sign-out target — a real form POST, because the answer is Set-Cookie plus a 303 to
+   *  /login. The WORKER's translating route, not better-auth's `/api/auth/sign-out`: that one
+   *  refuses a control-less form body with 415 and answers JSON, which is what this form
+   *  posted until 2026-09-23 — sign-out on every SPA page failed (web.ts, paths.auth.signOut). */
+  signOut: "/login/sign-out",
   /** §8's one browser-only interaction, kept as a server route: it answers a 303 to a
    *  third-party authorize URL, and a `fetch` cannot follow a cross-origin redirect into
    *  the address bar — so the client renders a real `<form method="post">` at it. */

@@ -3929,9 +3929,8 @@ describe(`§4/§13 · the Password pane`, () => {
     expect(accepted.headers.get("Location") ?? "").toContain(paths.settings);
   });
 
-  it(`§4 · better-auth's own /change-password mount enforces no freshness, so the hub's recent-auth gate is the only one the change has: a day-old cookie posting JSON straight at /api/auth/change-password is judged on the password it named, while the same cookie at /settings/change-password never reaches it`, async () => {
-    // §4's "That gate is load-bearing, not belt-and-braces" made falsifiable: without this
-    // pair, "the only freshness check" is indistinguishable from better-auth having one.
+  it(`§4 · decision 39 · a day-old cookie is refused at both doors to a password change: straight at /api/auth/change-password it meets the mount's freshness guard (403 SESSION_NOT_FRESH, password untouched), and at /settings/change-password the hub's recent-auth gate never lets it reach better-auth`, async () => {
+    // Both doors refuse the same stale session.
     // One app, because /apps is where a session with no recency left can still read its
     // own CSRF token and a namespace with no rows draws no form to read one off.
     const ns = await seedNamespace(env.DB, { apps: [{ slug: uniqueSlug("pwgate"), kind: "tunnel" }] });
@@ -3941,7 +3940,8 @@ describe(`§4/§13 · the Password pane`, () => {
     const wanted = fakePassword(20);
 
     // LEG A: straight at better-auth's own mount, no Authorization header (so the
-    // BEARER_ADMITTED guard never fires) — judged on the password, not on the age.
+    // BEARER_ADMITTED guard never fires) — refused on the session's age (decision 39); the
+    // per-endpoint list is fresh-auth.test.ts.
     const direct = await call(
       new Request(`${ORIGIN}${AUTH_BASE_PATH}/change-password`, {
         method: "POST",
@@ -3949,11 +3949,9 @@ describe(`§4/§13 · the Password pane`, () => {
         body: JSON.stringify({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted }),
       }),
     );
-    expect(direct.status, await direct.text()).toBe(200);
-    expect(await signsIn(ns.owner.username, wanted)).toBe(true);
-
-    // Reseeded so neither leg's success can mask the other's.
-    await seedOwnerCredential(ns.owner.userId);
+    expect(direct.status, await direct.clone().text()).toBe(403);
+    expect(((await direct.json()) as { code?: string }).code).toBe("SESSION_NOT_FRESH");
+    expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
 
     // LEG B: the same cookie at the hub's own route, carrying its own real CSRF token
     // (read off /apps, which has no recency gate) — it never reaches better-auth.

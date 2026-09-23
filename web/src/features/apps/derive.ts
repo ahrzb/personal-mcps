@@ -215,9 +215,10 @@ function aliasRowsOf(search: SearchBag): AliasRow[] {
   return found.map((entry) => entry.row);
 }
 
-/** `rows` padded with spares, measured against `known` so a redraw cannot grow the form —
- *  `pages/model.ts`'s `aliasRowsFor`. */
-function withSpareRows(rows: readonly AliasRow[], known: number): AliasRow[] {
+/** `rows` copied and padded with spares up to `known` + `ALIAS_SPARE_ROWS` — `pages/model.ts`'s
+ *  `aliasRowsFor`. `known` is the PREFILLED count, not `rows.length`, so padding a redraw
+ *  of an already-padded draft cannot grow the form. Both alias editors draw through this. */
+export function withSpareRows(rows: readonly AliasRow[], known: number): AliasRow[] {
   const padded = rows.map((row) => ({ canonicalName: row.canonicalName, alias: row.alias }));
   while (padded.length < known + ALIAS_SPARE_ROWS) padded.push({ canonicalName: "", alias: "" });
   return padded;

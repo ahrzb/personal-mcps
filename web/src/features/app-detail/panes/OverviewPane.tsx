@@ -30,6 +30,9 @@ import { ApiError } from "@/lib/http";
 import { formatLastSeen, formatStamp } from "@/lib/format";
 import type { AliasDiagnostic, AppRow, Violation } from "@/lib/types";
 import { usePreviewTransient } from "@/preview/transient";
+import { AliasRows } from "@/features/apps/AliasRows";
+import { withSpareRows } from "@/features/apps/derive";
+import type { AliasRow } from "@/features/apps/derive";
 import { subjectsOf } from "../derive";
 import type { AppPaneProps } from "../derive";
 
@@ -38,16 +41,6 @@ import type { AppPaneProps } from "../derive";
  *  state gallery can seed it — a refusal is the result of a submit a static render cannot
  *  perform. */
 type Refusal = { reason: string; violations?: Violation[] };
-
-/** One editable alias pair, as the form draws it and `composeTypescriptAliases` reads it.
- *  A row's canonical name is an INPUT rather than a label: naming a member the hub has not
- *  listed yet is how the owner reserves its name in advance. */
-type AliasRow = { canonicalName: string; alias: string };
-
-/** How many empty rows the editor draws after the prefilled ones — the spares are how the
- *  owner names something the hub has not seen yet. A blank row composes to nothing, so
- *  drawing them is free. */
-const SPARE_ROWS = 3;
 
 export function OverviewPane(props: AppPaneProps): ReactNode {
   const { slug, app, kind, views, now, diagnostics } = props;
@@ -73,7 +66,7 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
   const save = useAppEditor<{ service: string; rows: AliasRow[] }>(slug, "aliases");
 
   const service = draft?.service ?? app.typescriptAliases.service ?? "";
-  const rows = padded(draft?.rows ?? known, known.length);
+  const rows = withSpareRows(draft?.rows ?? known, known.length);
 
   /** Every edit writes the WHOLE draft, because the body is the whole set: the composer
    *  reads rows by index and a partial draft would compose to a partial map. */
@@ -124,45 +117,7 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
               </Field>
               <Field>
                 <Label render={<span />}>Tool aliases</Label>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Canonical tool name</TableHead>
-                      <TableHead>TypeScript alias</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((row, index) => (
-                      // Index, because a row's canonical name is editable and therefore not
-                      // an identity: keying on it would remount the input being typed into.
-                      <TableRow key={index}>
-                        <TableCell>
-                          <Input
-                            type="text"
-                            value={row.canonicalName}
-                            placeholder="canonical tool name"
-                            aria-label={`Canonical tool name, row ${index + 1}`}
-                            onChange={(event) =>
-                              edit({ rows: replaced(rows, index, { ...row, canonicalName: event.target.value }) })
-                            }
-                          />
-                        </TableCell>
-                        {/* Stacked under the first on a phone, where the cells lose their padding. */}
-                        <TableCell className="max-md:mt-2">
-                          <Input
-                            type="text"
-                            value={row.alias}
-                            placeholder="alias"
-                            aria-label={`TypeScript alias, row ${index + 1}`}
-                            onChange={(event) =>
-                              edit({ rows: replaced(rows, index, { ...row, alias: event.target.value }) })
-                            }
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <AliasRows rows={rows} onRows={(next) => edit({ rows: next })} />
                 <FieldDescription render={<span />}>
                   One row per canonical tool. A name the hub has not listed yet is fine — it is reserved for when it
                   appears.
@@ -345,18 +300,4 @@ function FieldErrors({ refusal, field }: { refusal: Refusal | null; field: strin
       ))}
     </>
   );
-}
-
-/** The rows one render draws: the given set padded with spares. The padding is measured
- *  against the PREFILLED length, so a redraw of a redraw cannot grow the form. */
-function padded(rows: AliasRow[], knownLength: number): AliasRow[] {
-  const out = rows.map((row) => ({ canonicalName: row.canonicalName, alias: row.alias }));
-  while (out.length < knownLength + SPARE_ROWS) out.push({ canonicalName: "", alias: "" });
-  return out;
-}
-
-/** One row replaced, the rest untouched — the draft is a value, so an edit produces a new
- *  one rather than mutating the array React is rendering from. */
-function replaced(rows: AliasRow[], index: number, row: AliasRow): AliasRow[] {
-  return rows.map((each, at) => (at === index ? row : each));
 }

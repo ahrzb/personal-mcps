@@ -329,14 +329,22 @@ export function pageRoutes(): PageRouter {
 
   // The consent decision: §13's strictest mutation gate (session, form, CSRF, body), because
   // this POST both writes a binding and authorizes a client. It VERIFIES BEFORE IT WRITES
-  // (§19.5 step 4): the provider's own `/oauth2/consent` is called FIRST, carrying the
-  // session, and only on ITS success does anything land in `oauth_binding` or the ledger —
-  // a provider refusal (an edited `oauth_query`, an expired one) writes nothing at all.
+  // (§19.5 step 4): the provider's own `/oauth2/consent` is called before any write of the
+  // hub's, carrying the session, and only on ITS success does anything land in
+  // `oauth_binding` or the ledger — a provider refusal (an edited `oauth_query`, an expired
+  // one) writes nothing at all.
   app.post(
     paths.oauthConsent,
     mutation(async (c, session, form) => {
       const oauthQuery = field(form, "oauth_query") ?? "";
       const accept = field(form, "decision") === "accept";
+      // The chosen agent is resolved BEFORE the provider is called (brief §5.3, 2026-09-23):
+      // a read ahead of the first write, so an agent that does not resolve is refused with
+      // nothing written ANYWHERE. Refused after the provider had accepted, it left a consent
+      // there with no binding here — the next authorize skipped this screen, and the token it
+      // minted was refused at the door until the provider's consent was cleared.
+      const chosen = accept ? await consentedAgentOf(session, oauthQuery, field(form, "agent") ?? "") : null;
+      if (accept && chosen === null) return new Response("Bad Request", { status: 400, headers: TEXT });
       // The provider answers `{ redirect: true, url }` at runtime — its OpenAPI schema
       // documents `redirect_uri`, but `url` is what the endpoint actually returns (verified
       // against the running provider), so both are read and whichever it gave wins.
@@ -348,8 +356,8 @@ export function pageRoutes(): PageRouter {
       if (typeof redirectUri !== "string") {
         return new Response("Bad Request", { status: 400, headers: TEXT });
       }
-      if (accept) {
-        const refused = await bindConsentedAgent(session, oauthQuery, field(form, "agent") ?? "");
+      if (chosen !== null) {
+        const refused = await bindConsentedAgent(session, chosen);
         if (refused !== null) return refused;
       }
       // The hub performs the final browser redirect (§19.5 step 4) — the provider already
@@ -767,30 +775,41 @@ async function connectRedirect(
   return c.redirect(String(started.value), 303);
 }
 
+/** What an accepting consent POST chose: the client it is for, as the posted query names it
+ *  (only USED once the provider has verified that query), and the agent, resolved. */
+type ConsentedAgent = { clientId: string; agentId: string; agentSlug: string };
+
 /**
- * The consent POST's write half (§19.5 step 4), reached ONLY after the provider's own
- * `/oauth2/consent` has already accepted the request — this function never runs on a
- * refusal, so it never has to undo one. Resolves the CHOSEN agent by slug scoped to the
- * signed-in owner (`Registry.getAgent`, the same scoping every op uses) — a slug naming
- * no agent in THIS namespace, foreign or invented, is one refusal, and upsertBinding's own
- * ownership check is the second independent proof of the same fact. `null` means it
- * succeeded; a Response means the whole POST answers that instead, writing nothing.
+ * The agent a consent POST chose, resolved by slug scoped to the signed-in owner
+ * (`Registry.getAgent`, the same scoping every op uses) — or null for a slug naming no agent
+ * in THIS namespace, foreign or invented, which is one refusal, and for a query naming no
+ * client. A READ, made before the provider's `/oauth2/consent` is called (brief §5.3), so a
+ * refusal here writes nothing anywhere.
  */
-async function bindConsentedAgent(
+async function consentedAgentOf(
   session: OwnerSession,
   oauthQuery: string,
   agentSlug: string,
-): Promise<Response | null> {
+): Promise<ConsentedAgent | null> {
   const clientId = new URLSearchParams(oauthQuery).get("client_id") ?? "";
-  const agent =
-    clientId === "" || agentSlug === ""
-      ? null
-      : await new Registry(env.DB).getAgent(session.user.userId, agentSlug);
-  if (agent === null) return new Response("Bad Request", { status: 400, headers: TEXT });
+  if (clientId === "" || agentSlug === "") return null;
+  const agent = await new Registry(env.DB).getAgent(session.user.userId, agentSlug);
+  return agent === null ? null : { clientId, agentId: agent.id, agentSlug };
+}
+
+/**
+ * The consent POST's write half (§19.5 step 4), reached ONLY after the provider's own
+ * `/oauth2/consent` has already accepted the request, for an agent `consentedAgentOf`
+ * already resolved — this function never runs on a refusal, so it never has to undo one.
+ * upsertBinding's own ownership check is a second, independent proof of the scoping.
+ * `null` means it succeeded; a Response means the whole POST answers that instead.
+ */
+async function bindConsentedAgent(session: OwnerSession, chosen: ConsentedAgent): Promise<Response | null> {
+  const { clientId, agentSlug } = chosen;
   const bound = await upsertBinding({
     ownerId: session.user.userId,
     clientId,
-    agentId: agent.id,
+    agentId: chosen.agentId,
   });
   // Unreachable in practice — `agent` was already scoped to this owner above, which is
   // the one thing upsertBinding refuses on — but the null case is answered rather than

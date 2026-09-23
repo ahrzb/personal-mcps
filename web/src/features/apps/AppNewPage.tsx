@@ -1,8 +1,17 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { AuthFrame } from "@/chrome/AuthFrame";
 import { TokenReveal } from "@/chrome/Reveal";
 import { useDocumentTitle } from "@/chrome/Shell";
+import { Alert } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldError, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupCard } from "@/components/ui/radio-group";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAppEnv } from "@/lib/api-context";
 import { ApiError } from "@/lib/http";
 import { paths } from "@/lib/paths";
@@ -25,9 +34,8 @@ const NOTE_PROXY_HEADERS = "Tokens are stored encrypted; your config file only r
  * `/apps/new` — the add-app form and its three follow-on states.
  *
  * CHROMELESS, like `/login` and `/device`: no header, no nav. The page draws its own
- * `.auth`/`.auth-card` wrapper, which is what `styles.css` calls "auth pages … login,
- * device, two-factor, add-app". It, `/approvals/<id>`, `/device` and `/oauth/consent` are the
- * SPA routes that render no `Shell`.
+ * `AuthFrame` and one `Card size="auth"` — the auth pages' frame. It, `/approvals/<id>`,
+ * `/device` and `/oauth/consent` are the SPA routes that render no `Shell`.
  *
  * The four steps the server rendered as four separate responses — the empty form, the form
  * redrawn with the owner's values and a field-scoped refusal, the created receipt, and §13's
@@ -99,11 +107,7 @@ export function AppNewPage(): ReactNode {
   }, [created, navigate]);
 
   return (
-    <div className="auth">
-      <div className="brand">
-        <BrandMark />
-        <span>personal-mcps</span>
-      </div>
+    <AuthFrame>
       {created === null || connectFailed ? (
         <FormCard
           username={bootstrap.username}
@@ -121,9 +125,13 @@ export function AppNewPage(): ReactNode {
       ) : (
         <CreatedCard slug={created.slug} token={created.token ?? null} />
       )}
-    </div>
+    </AuthFrame>
   );
 }
+
+/** legacy.css's `.actions`: a card's closing buttons, right-aligned; below 768px each an
+ *  equal share of the row. */
+const ACTIONS = "flex flex-wrap items-center justify-end gap-3 max-md:*:flex-1";
 
 /**
  * The draft as `POST /api/hub/apps` takes it.
@@ -145,7 +153,7 @@ function createBody(draft: AppNewDraft): Record<string, unknown> {
 }
 
 /**
- * The form itself — every control of AppNew.dc.html, in its order and with its classes.
+ * The form itself — every control of AppNew.dc.html, in its order.
  *
  * `onDraft` replaces the whole draft rather than patching a field, so the controls stay
  * uncontrolled-looking and there is one state transition per keystroke; `errors` is the
@@ -174,67 +182,51 @@ function FormCard({
   const submitLabel = proxy ? "Create and connect" : "Create";
 
   return (
-    <form id="app-form" className="auth-card" onSubmit={onSubmit}>
+    <Card size="auth" render={<form id="app-form" onSubmit={onSubmit} />}>
       <div>
-        <div className="auth-title">Add app</div>
-        <div className="auth-desc">Register an MCP app in your namespace.</div>
+        <CardTitle>Add app</CardTitle>
+        <CardDescription>Register an MCP app in your namespace.</CardDescription>
       </div>
 
-      {errors.form ? <div className="alert alert--danger">{errors.form}</div> : null}
+      {errors.form ? <Alert variant="danger">{errors.form}</Alert> : null}
 
-      <div className="choice-list" role="radiogroup" aria-label="App kind">
-        <label className="choice">
-          <input
-            type="radio"
-            name="kind"
-            value="tunnel"
-            checked={draft.kind === "tunnel"}
-            onChange={() => onDraft({ ...draft, kind: "tunnel" })}
-          />
-          <div>
-            <div className="choice-title">Tunneled</div>
-            <div className="choice-desc">A bot that dials in with an app token — shown once after creating.</div>
-          </div>
-        </label>
-        <label className="choice">
-          <input
-            type="radio"
-            name="kind"
-            value="proxy"
-            checked={proxy}
-            onChange={() => onDraft({ ...draft, kind: "proxy" })}
-          />
-          <div>
-            <div className="choice-title">Proxied</div>
-            <div className="choice-desc">An existing MCP endpoint the hub forwards to.</div>
-          </div>
-        </label>
-      </div>
+      <RadioGroup
+        aria-label="App kind"
+        name="kind"
+        value={draft.kind}
+        onValueChange={(kind: AppNewDraft["kind"]) => onDraft({ ...draft, kind })}
+      >
+        <RadioGroupCard
+          value="tunnel"
+          title="Tunneled"
+          description="A bot that dials in with an app token — shown once after creating."
+        />
+        <RadioGroupCard value="proxy" title="Proxied" description="An existing MCP endpoint the hub forwards to." />
+      </RadioGroup>
 
-      <div className="form">
+      <FieldGroup>
         {/* No `required` and no error slot: §8 defaults a blank Name to the slug, so the form
             neither demands one nor can be refused over one (§13). */}
-        <div className="field">
-          <label htmlFor="app-name">Name</label>
-          <input
+        <Field>
+          <Label htmlFor="app-name">Name</Label>
+          <Input
             id="app-name"
             type="text"
             name="name"
             value={draft.name}
             onChange={(event) => onDraft({ ...draft, name: event.target.value })}
           />
-        </div>
+        </Field>
 
-        <div className="field">
-          <label htmlFor="app-slug">Slug</label>
+        <Field>
+          <Label htmlFor="app-slug">Slug</Label>
           {/* The `-` in `pattern` is ESCAPED. A `pattern` attribute is compiled with the `v`
               flag, under which a bare trailing `-` in a character class is a syntax error —
               the browser then refuses the whole expression and validates nothing. The
               server-rendered page carried the unescaped form and therefore had no
               client-side slug validation at all; `app_create` was the only judge. */}
-          <input
+          <Input
             id="app-slug"
-            className="input--mono"
             type="text"
             name="slug"
             value={draft.slug}
@@ -244,19 +236,18 @@ function FormCard({
             onChange={(event) => onDraft({ ...draft, slug: event.target.value })}
           />
           {errors.slug ? (
-            <div className="field-error">{errors.slug}</div>
+            <FieldError>{errors.slug}</FieldError>
           ) : (
-            <div className="field-hint">
+            <FieldDescription>
               Lowercase letters, digits, dashes — served at {slugPath}. pmcp is reserved.
-            </div>
+            </FieldDescription>
           )}
-        </div>
+        </Field>
 
-        <div className="field" data-proxy-only hidden={!proxy}>
-          <label htmlFor="app-endpoint">Endpoint</label>
-          <input
+        <Field data-proxy-only hidden={!proxy}>
+          <Label htmlFor="app-endpoint">Endpoint</Label>
+          <Input
             id="app-endpoint"
-            className="input--mono"
             type="url"
             name="endpoint"
             value={draft.endpoint}
@@ -265,50 +256,38 @@ function FormCard({
             aria-invalid={errors.endpoint ? "true" : undefined}
             onChange={(event) => onDraft({ ...draft, endpoint: event.target.value })}
           />
-          {errors.endpoint ? <div className="field-error">{errors.endpoint}</div> : null}
-        </div>
+          {errors.endpoint ? <FieldError>{errors.endpoint}</FieldError> : null}
+        </Field>
 
-        <div className="field" data-proxy-only hidden={!proxy}>
-          <div className="label">Authentication</div>
-          <div className="choice-list" role="radiogroup" aria-label="Authentication">
-            <label className="choice">
-              <input
-                type="radio"
-                name="authMode"
-                value="headers"
-                checked={draft.authMode === "headers"}
-                onChange={() => onDraft({ ...draft, authMode: "headers" })}
-              />
-              <div>
-                <div className="choice-title">Headers</div>
-                <div className="choice-desc">Static headers — an API key or bearer token, stored encrypted.</div>
-              </div>
-            </label>
-            <label className="choice">
-              <input
-                type="radio"
-                name="authMode"
-                value="oauth"
-                checked={draft.authMode === "oauth"}
-                onChange={() => onDraft({ ...draft, authMode: "oauth" })}
-              />
-              <div>
-                <div className="choice-title">OAuth</div>
-                <div className="choice-desc">Sign in at the provider — Linear, GitHub, and similar.</div>
-              </div>
-            </label>
-          </div>
-        </div>
+        <Field data-proxy-only hidden={!proxy}>
+          <Label render={<div />}>Authentication</Label>
+          <RadioGroup
+            aria-label="Authentication"
+            name="authMode"
+            value={draft.authMode}
+            onValueChange={(authMode: AppNewDraft["authMode"]) => onDraft({ ...draft, authMode })}
+          >
+            <RadioGroupCard
+              value="headers"
+              title="Headers"
+              description="Static headers — an API key or bearer token, stored encrypted."
+            />
+            <RadioGroupCard
+              value="oauth"
+              title="OAuth"
+              description="Sign in at the provider — Linear, GitHub, and similar."
+            />
+          </RadioGroup>
+        </Field>
 
         {/* §23.6's optional hub-local TypeScript naming: the names generated programs call
             this app's tools under. The upstream keeps its canonical names — an alias never
             renames it — and a blank control keeps whatever name the hub establishes, so an
             untouched section is not a statement about anything. */}
-        <div className="field">
-          <label htmlFor="app-typescript-service">TypeScript service name</label>
-          <input
+        <Field>
+          <Label htmlFor="app-typescript-service">TypeScript service name</Label>
+          <Input
             id="app-typescript-service"
-            className="input--mono"
             type="text"
             name={ALIAS_SERVICE_FIELD}
             value={draft.aliases.service}
@@ -316,58 +295,58 @@ function FormCard({
               onDraft({ ...draft, aliases: { ...draft.aliases, service: event.target.value } })
             }
           />
-          <div className="field-hint">
-            Optional. Names this app in generated programs, e.g. mcp.<span className="mono">linear</span>.…; blank
-            derives one from the slug.
-          </div>
-        </div>
+          <FieldDescription>
+            Optional. Names this app in generated programs, e.g. mcp.<span className="font-mono">linear</span>.…;
+            blank derives one from the slug.
+          </FieldDescription>
+        </Field>
 
-        <div className="field">
-          <span className="label">Tool aliases</span>
+        <Field>
+          <Label render={<span />}>Tool aliases</Label>
           <AliasRows
             rows={draft.aliases.rows}
             onRows={(rows) => onDraft({ ...draft, aliases: { ...draft.aliases, rows } })}
           />
-          <div className="field-hint">
+          <FieldDescription>
             Optional. Canonical upstream tool names keep working unchanged; an alias only changes what generated
             programs call. Blank keeps the name already established.
-          </div>
+          </FieldDescription>
           {/* The op names `typescript_aliases` — the whole section — for a syntax refusal and
               for a collision alike, so the sentence lands here rather than under one control
               (no single input is the wrong one; the SET is). */}
-          {errors.aliases ? <div className="field-error">{errors.aliases}</div> : null}
-        </div>
-      </div>
+          {errors.aliases ? <FieldError>{errors.aliases}</FieldError> : null}
+        </Field>
+      </FieldGroup>
 
-      <div className="alert" data-note="tunnel" hidden={note !== "tunnel"}>
+      <Alert data-note="tunnel" hidden={note !== "tunnel"}>
         {NOTE_TUNNEL}
-      </div>
-      <div className="alert" data-note="proxy-headers" hidden={note !== "proxy-headers"}>
+      </Alert>
+      <Alert data-note="proxy-headers" hidden={note !== "proxy-headers"}>
         {NOTE_PROXY_HEADERS}
-      </div>
-      <div className="alert" data-note="proxy-oauth" hidden={note !== "proxy-oauth"}>
+      </Alert>
+      <Alert data-note="proxy-oauth" hidden={note !== "proxy-oauth"}>
         {NOTE_PROXY_OAUTH}
-      </div>
+      </Alert>
 
-      <div className="actions wide-only">
-        <Link className="btn" to={paths.apps}>
+      {/* The same two actions in each artboard's order: Cancel first beside the row wide,
+          the submit first and full width on a phone. */}
+      <div className={`${ACTIONS} max-md:hidden`}>
+        <Link className={buttonVariants({ variant: "ghost" })} to={paths.apps}>
           Cancel
         </Link>
-        <button type="submit" className="btn btn--primary" disabled={pending}>
+        <Button type="submit" disabled={pending}>
           <span data-submit-label>{submitLabel}</span>
-        </button>
+        </Button>
       </div>
-      <div className="narrow-only">
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}>
-          <button type="submit" className="btn btn--primary btn--block" disabled={pending}>
-            <span data-submit-label>{submitLabel}</span>
-          </button>
-          <Link className="btn btn--outline btn--block" to={paths.apps}>
-            Cancel
-          </Link>
-        </div>
+      <div className="hidden flex-col gap-2.5 max-md:flex">
+        <Button type="submit" className="w-full" disabled={pending}>
+          <span data-submit-label>{submitLabel}</span>
+        </Button>
+        <Link className={buttonVariants({ variant: "outline", className: "w-full" })} to={paths.apps}>
+          Cancel
+        </Link>
       </div>
-    </form>
+    </Card>
   );
 }
 
@@ -389,19 +368,18 @@ function AliasRows({
   onRows: (rows: AliasRow[]) => void;
 }): ReactNode {
   return (
-    <table className="table alias-table">
-      <thead>
-        <tr>
-          <th>Canonical tool name</th>
-          <th>TypeScript alias</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Canonical tool name</TableHead>
+          <TableHead>TypeScript alias</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {rows.map((row, index) => (
-          <tr key={index}>
-            <td>
-              <input
-                className="input--mono"
+          <TableRow key={index}>
+            <TableCell>
+              <Input
                 type="text"
                 value={row.canonicalName}
                 placeholder="canonical tool name"
@@ -414,10 +392,10 @@ function AliasRows({
                   )
                 }
               />
-            </td>
-            <td>
-              <input
-                className="input--mono"
+            </TableCell>
+            {/* Stacked under the first below 768px, where the cells lose their padding. */}
+            <TableCell className="max-md:mt-2">
+              <Input
                 type="text"
                 value={row.alias}
                 placeholder="alias"
@@ -426,11 +404,11 @@ function AliasRows({
                   onRows(rows.map((held, at) => (at === index ? { ...held, alias: event.target.value } : held)))
                 }
               />
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -439,24 +417,24 @@ function AliasRows({
  *  card renders one section lighter. */
 function CreatedCard({ slug, token }: { slug: string; token: string | null }): ReactNode {
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">App created</div>
-        <div className="auth-desc">
-          <span className="mono">{slug}</span> is ready for its first connection.
-        </div>
+        <CardTitle>App created</CardTitle>
+        <CardDescription>
+          <span className="font-mono">{slug}</span> is ready for its first connection.
+        </CardDescription>
       </div>
 
       {/* The same reveal the app page's Token pane draws for a rotation (§13) — one
           definition, so the two renders of one warning cannot drift apart. */}
       {token === null ? null : <TokenReveal token={token} />}
 
-      <div className="actions">
-        <Link className="btn btn--primary" to={paths.apps}>
+      <div className={ACTIONS}>
+        <Link className={buttonVariants()} to={paths.apps}>
           Done
         </Link>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -481,40 +459,20 @@ function ConnectingCard({
   authorizeUrl: string;
 }): ReactNode {
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Connecting to {name}…</div>
-        <div className="auth-desc">Finish signing in at {name} — this link expires in about 10 minutes.</div>
+        <CardTitle>Connecting to {name}…</CardTitle>
+        <CardDescription>Finish signing in at {name} — this link expires in about 10 minutes.</CardDescription>
       </div>
 
-      <div className="actions">
-        <Link className="btn" to={paths.appPane(slug, "overview")}>
+      <div className={ACTIONS}>
+        <Link className={buttonVariants({ variant: "ghost" })} to={paths.appPane(slug, "overview")}>
           Not now
         </Link>
-        <a className="btn btn--primary" href={authorizeUrl}>
+        <a className={buttonVariants()} href={authorizeUrl}>
           Continue to {name}
         </a>
       </div>
-    </div>
+    </Card>
   );
 }
-
-/** The hub mark from the artboards. Duplicated from the Shell, which does not export it and
- *  whose header this page deliberately does not render. */
-const BrandMark = (): ReactNode => (
-  <svg
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="12" cy="12" r="3.5" />
-    <path d="M12 8.5V3.5" />
-    <path d="M14.5 14.5L18.5 18.5" />
-    <path d="M9.5 14.5L5.5 18.5" />
-  </svg>
-);

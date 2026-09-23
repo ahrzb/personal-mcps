@@ -3,9 +3,17 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
+import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Refreshing, Skeleton } from "@/chrome/States";
+import { Badge, BadgeDot } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApi, useAppEnv } from "@/lib/api-context";
+import { cn } from "@/lib/cn";
 import { formatLastSeen } from "@/lib/format";
 import { paths } from "@/lib/paths";
 import { appsQuery, keys, tokensQuery, useOp } from "@/lib/queries";
@@ -27,10 +35,10 @@ import type { SearchBag } from "./derive";
  * `/apps` — active and archived apps, per-kind status, and the
  * Connect/Reconnect/Disconnect/Archive/Delete row actions of §13's app management surface.
  *
- * The port of `server/src/pages/apps.tsx`, element for element and class for class: one
- * template serves both artboards, and `.wide-only`/`.narrow-only` still pick which markup
- * shows at which breakpoint. Three things are genuinely different, and each is the point of
- * the rewrite rather than a liberty:
+ * The port of `server/src/pages/apps.tsx`, element for element: one template serves both
+ * artboards, and `max-md:hidden` / `hidden max-md:block` pick which markup shows at which
+ * breakpoint, as `.wide-only`/`.narrow-only` did. Three things are genuinely different, and
+ * each is the point of the rewrite rather than a liberty:
  *
  *   - the rows come from a query, so the page draws a skeleton, a failure and a quiet
  *     refresh indicator the server-rendered page had no way to have;
@@ -53,29 +61,29 @@ export function AppsPage(): ReactNode {
 
   return (
     <Shell active="apps">
-      <main className="page--table">
+      <Page shape="table">
         {notice === null ? null : <NoticeBanner notice={notice} />}
-        <div className="page-head">
+        <PageHead>
           <div>
-            <h1 className="page-title">Apps</h1>
-            <p className="page-subtitle wide-only">
+            <PageTitle>Apps</PageTitle>
+            <PageSubtitle className="max-md:hidden">
               MCP apps in your namespace — tunneled bots and proxied endpoints.
-            </p>
-            <p className="page-subtitle narrow-only">Tunneled bots and proxied endpoints.</p>
+            </PageSubtitle>
+            <PageSubtitle className="hidden max-md:block">Tunneled bots and proxied endpoints.</PageSubtitle>
             <Refreshing active={apps.isFetching && !apps.isPending} />
           </div>
-          <Link className="btn btn--primary" to={paths.appNew}>
+          <Link className={buttonVariants({ className: "max-md:flex-[1_1_100%]" })} to={paths.appNew}>
             <PlusIcon />
             <span>Add app</span>
           </Link>
-        </div>
+        </PageHead>
 
         <QueryState
           query={apps}
           skeleton={
-            <div className="card">
+            <Card size="flush">
               <Skeleton rows={6} />
-            </div>
+            </Card>
           }
           empty={{ when: (data) => listedApps(data.apps).length === 0, render: <EmptyApps /> }}
         >
@@ -92,7 +100,7 @@ export function AppsPage(): ReactNode {
             />
           )}
         </QueryState>
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -131,40 +139,20 @@ function Board({
 
   return (
     <>
-      {active.length > 0 ? (
-        <div className="card">
-          <table className="table">
-            <TableHead />
-            <tbody>
-              {active.map((row) => (
-                <AppTableRow key={row.slug} row={row} now={now} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : null}
+      {active.length > 0 ? <AppTable rows={active} now={now} /> : null}
 
       {archived.length > 0 && (
-        <section className="section">
-          <h2 className="section-title">Archived</h2>
-          <div className="card">
-            <table className="table">
-              <TableHead />
-              <tbody>
-                {archived.map((row) => (
-                  <AppTableRow key={row.slug} row={row} now={now} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold">Archived</h2>
+          <AppTable rows={archived} now={now} />
         </section>
       )}
 
-      <p className="note wide-only">
+      <p className={`${NOTE} max-md:hidden`}>
         Deleting an app revokes its tokens and removes its grants. Archived apps keep everything and refuse
         connections.
       </p>
-      <p className="note narrow-only center">
+      <p className={`${NOTE} hidden text-center max-md:block`}>
         Deleting revokes tokens and removes grants. Archived apps keep everything.
       </p>
 
@@ -179,18 +167,36 @@ function Board({
   );
 }
 
-const TableHead = (): ReactNode => (
-  <thead>
-    <tr>
-      <th>App</th>
-      <th className="wide-only">Kind</th>
-      <th className="wide-only">Status</th>
-      <th className="wide-only">Roles</th>
-      <th className="wide-only">Last seen</th>
-      <th></th>
-    </tr>
-  </thead>
+/** One section's rows in their card. The header row is gone below 768px, where each row
+ *  stacks into a card of its own (`components/ui/table`). */
+const AppTable = ({ rows, now }: { rows: AppRow[]; now: number }): ReactNode => (
+  <Card size="flush">
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>App</TableHead>
+          <TableHead>Kind</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Roles</TableHead>
+          <TableHead>Last seen</TableHead>
+          <TableHead />
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <AppTableRow key={row.slug} row={row} now={now} />
+        ))}
+      </TableBody>
+    </Table>
+  </Card>
 );
+
+/** legacy.css's `.note`: the 12px muted aside, capped at a readable measure. */
+const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
+
+/** A row action's size in `.cell-actions`: 32px and 13px beside the row; below 768px an
+ *  equal 44px share of the row's own action line. */
+const ROW_ACTION = "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3";
 
 /**
  * One row: the name as the row-wide link, the kind, the status badge, the declared roles,
@@ -234,47 +240,53 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
   };
 
   return (
-    <tr className="app-row">
-      <td>
-        {/* Every row IS the link to its detail page, archived rows included — the anchor
-            stretched over the row by styles.css; the row's own actions sit above it in the
-            stacking order, so they still act. */}
-        <div className="cell-name">
-          <Link className="row-link" to={paths.appDetail(row.slug)}>
+    <TableRow className="relative cursor-pointer hover:bg-muted">
+      <TableCell>
+        {/* Every row IS the link to its detail page, archived rows included — the anchor's
+            `after:` overlay fills the nearest positioned box, the row; the row's own actions
+            are raised above it, so they still act. */}
+        <div className="text-base font-medium">
+          <Link className="after:absolute after:inset-0" to={paths.appDetail(row.slug)}>
             {row.name}
           </Link>
         </div>
-        <div className="cell-slug wide-only">{row.slug}</div>
-        <div className="narrow-only">
-          <div className="badge-row">
-            <span className="badge badge--mono">{row.kind}</span>
+        <div className="font-mono text-xs text-muted-foreground max-md:hidden">{row.slug}</div>
+        <div className="hidden max-md:block">
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant="mono">{row.kind}</Badge>
             {badge}
           </div>
-          <div className="note">{metaLine(row, now)}</div>
+          <div className={NOTE}>{metaLine(row, now)}</div>
         </div>
-      </td>
-      <td className="wide-only">
-        <span className="badge badge--mono">{row.kind}</span>
-      </td>
-      <td className="wide-only">{badge ?? <span className="muted">—</span>}</td>
-      <td className="wide-only muted mono">{rolesText(roleNames)}</td>
-      <td className="wide-only muted">{formatLastSeen(lastConnectedAt(row), now)}</td>
-      <td className="cell-actions">
+      </TableCell>
+      <TableCell className="max-md:hidden">
+        <Badge variant="mono">{row.kind}</Badge>
+      </TableCell>
+      <TableCell className="max-md:hidden">{badge ?? <span className="text-muted-foreground">—</span>}</TableCell>
+      <TableCell className="font-mono text-muted-foreground max-md:hidden">{rolesText(roleNames)}</TableCell>
+      <TableCell className="text-muted-foreground max-md:hidden">
+        {formatLastSeen(lastConnectedAt(row), now)}
+      </TableCell>
+      {/* Right-aligned beside the row wide; its own line under the card on a phone. `z-1`
+          raises it over the row's link. */}
+      <TableCell className="relative z-1 text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left">
         {/* Connect and Reconnect are the one row action that is still a form: `/apps/connect`
-            answers a 303 into a third party's address bar. `.contents` lets its button sit as
-            a flex item of .cell-actions beside the others, matching both artboards' row. */}
+            answers a 303 into a third party's address bar. `contents` lets its button sit as
+            a flex item of the cell beside the others, matching both artboards' row. */}
         {connect !== null && connect.action === "connect" && (
           <form method="post" action={paths.appConnect(row.slug)} className="contents">
             <input type="hidden" name="csrf" value={bootstrap.csrf} />
-            <button type="submit" className="btn btn--outline btn--sm">
+            <Button type="submit" variant="outline" size="sm" className={ROW_ACTION}>
               {connect.label}
-            </button>
+            </Button>
           </form>
         )}
         {connect !== null && connect.action === "disconnect" && (
-          <button
+          <Button
             type="button"
-            className="btn btn--outline btn--sm"
+            variant="outline"
+            size="sm"
+            className={ROW_ACTION}
             onClick={() => {
               disconnect.mutate(
                 { slug: row.slug },
@@ -283,29 +295,31 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
             }}
           >
             {connect.label}
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
-          className={row.archived ? "btn btn--outline btn--sm" : "btn btn--ghost btn--sm"}
+          variant={row.archived ? "outline" : "ghost"}
+          size="sm"
+          className={ROW_ACTION}
           onClick={() => void toggleArchive()}
         >
           {row.archived ? "Unarchive" : "Archive"}
-        </button>
+        </Button>
         {/* Delete never mutates directly — it opens the same page with the confirm dialog,
             which is a URL and therefore shareable and previewable. */}
         <Link
-          className="btn btn--danger-outline btn--sm"
+          className={cn(buttonVariants({ variant: "danger-outline", size: "sm" }), ROW_ACTION)}
           to={paths.apps}
           search={{ confirm: "delete", slug: row.slug }}
         >
           Delete
         </Link>
-        <span className="row-chevron">
+        <span className="inline-flex items-center text-ring">
           <Chevron />
         </span>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -320,28 +334,31 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
  * this avoids.
  */
 function statusBadge(row: AppRow): ReactNode {
-  if (row.archived) return <span className="badge badge--warning">archived</span>;
+  if (row.archived) return <Badge variant="warning">archived</Badge>;
   if (row.kind === "tunnel") {
     return row.status === "online" ? (
-      <span className="badge badge--success">
-        <span className="dot"></span>online
-      </span>
+      <Badge variant="success">
+        <BadgeDot />
+        online
+      </Badge>
     ) : (
-      <span className="badge badge--muted">
-        <span className="dot dot--idle"></span>offline
-      </span>
+      <Badge variant="muted">
+        <BadgeDot idle />
+        offline
+      </Badge>
     );
   }
   if (row.auth === "oauth") {
     if (row.connection === "connected") {
       return (
-        <span className="badge badge--success">
-          <span className="dot"></span>connected
-        </span>
+        <Badge variant="success">
+          <BadgeDot />
+          connected
+        </Badge>
       );
     }
-    if (row.connection === "needs_reconnect") return <span className="badge badge--warning">needs reconnect</span>;
-    return <span className="badge badge--muted">not connected</span>;
+    if (row.connection === "needs_reconnect") return <Badge variant="warning">needs reconnect</Badge>;
+    return <Badge variant="muted">not connected</Badge>;
   }
   return null;
 }
@@ -378,14 +395,14 @@ function DeleteConfirmDialog({
 
   return (
     <ConfirmDialog title={`Delete ${row.name}?`} text={deleteConfirmText(tokenCount)} onClose={onClose}>
-      <div className="actions">
-        <button type="button" className="btn btn--ghost" onClick={onClose}>
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onClose}>
           Cancel
-        </button>
-        <button type="button" className="btn btn--danger" onClick={() => void confirm()}>
+        </Button>
+        <Button type="button" variant="danger" onClick={() => void confirm()}>
           Delete
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </ConfirmDialog>
   );
 }
@@ -465,14 +482,14 @@ const PlusIcon = (): ReactNode => (
 /** A fresh namespace (EmptyStates "Apps — empty"): the two kinds named, and the one control
  *  that does anything about it. */
 const EmptyApps = (): ReactNode => (
-  <div className="empty">
-    <div className="empty-title">No apps yet</div>
-    <div className="empty-text">
+  <Empty>
+    <EmptyTitle>No apps yet</EmptyTitle>
+    <EmptyDescription>
       Tunneled bots dial in with an app token; proxied endpoints are forwarded by the hub.
-    </div>
-    <Link className="btn btn--primary" to={paths.appNew}>
+    </EmptyDescription>
+    <Link className={buttonVariants({ className: "mt-4" })} to={paths.appNew}>
       <PlusIcon />
       <span>Add app</span>
     </Link>
-  </div>
+  </Empty>
 );

@@ -3,8 +3,14 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
+import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApi, useAppEnv } from "@/lib/api-context";
 import { ApiError } from "@/lib/http";
 import { paths } from "@/lib/paths";
@@ -27,8 +33,8 @@ import {
  * browser's notifications opt-in.
  *
  * The port of `server/src/pages/approvals.tsx`, element for element and class for class: one
- * template for both artboards, `.wide-only` / `.narrow-only` picking which spelling shows.
- * What differs is only what a client has to do differently:
+ * template for both artboards, a `max-md:hidden` / `md:hidden` pair picking which spelling
+ * shows. What differs is only what a client has to do differently:
  *
  *   - the two halves are two reads (`?status=pending`, then `?limit=`), where the server made
  *     them in one handler — the pending read is the SAME cache entry the nav badge polls, so
@@ -58,33 +64,33 @@ export function ApprovalsPage(): ReactNode {
 
   return (
     <Shell active="approvals">
-      <main className="page--document">
+      <Page shape="document">
         {notice === null ? null : <NoticeBanner notice={notice} flushUntitled />}
 
-        <div className="page-head">
+        <PageHead>
           <div>
-            <h1 className="page-title">Approvals</h1>
-            <p className="page-subtitle wide-only">
+            <PageTitle>Approvals</PageTitle>
+            <PageSubtitle className="max-md:hidden">
               Approval-gated requests from your agents. Approving lets the agent retry the exact call once;
               approvals expire after an hour.
-            </p>
-            <p className="page-subtitle narrow-only">Single use · expire after an hour</p>
+            </PageSubtitle>
+            <PageSubtitle className="md:hidden">Single use · expire after an hour</PageSubtitle>
           </div>
           <PushToggle />
-        </div>
+        </PageHead>
 
-        <section className="section">
-          <h2 className="section-title">Pending</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold">Pending</h2>
           <QueryState
             query={pending}
             skeleton={<Skeleton rows={3} />}
             empty={{
               when: (data) => data.approvals.length === 0,
               render: (
-                <div className="empty">
-                  <div className="empty-title">No pending requests</div>
-                  <div className="empty-text">Approval-gated calls appear here the moment an agent hits one.</div>
-                </div>
+                <Empty>
+                  <EmptyTitle>No pending requests</EmptyTitle>
+                  <EmptyDescription>Approval-gated calls appear here the moment an agent hits one.</EmptyDescription>
+                </Empty>
               ),
             }}
           >
@@ -92,14 +98,16 @@ export function ApprovalsPage(): ReactNode {
           </QueryState>
         </section>
 
-        <section className="section">
-          <h2 className="section-title">History</h2>
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold">History</h2>
           <QueryState query={history} skeleton={<Skeleton rows={6} />}>
             {(data: ApprovalsResponse) => <History {...historyOf(data.approvals, historyLimit)} limit={historyLimit} />}
           </QueryState>
-          <div className="note">History prunes with the audit trail after 7 days. Times are local.</div>
+          <div className="max-w-[72ch] text-xs text-muted-foreground">
+            History prunes with the audit trail after 7 days. Times are local.
+          </div>
         </section>
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -116,46 +124,38 @@ export function ApprovalsPage(): ReactNode {
 function PendingCard({ row, now }: { row: ApprovalRow; now: number }): ReactNode {
   const decide = useDecision(row);
   return (
-    <div className="card approval">
-      <div className="approval-head">
+    <Card size="flush" className="flex flex-col gap-3.5 p-5 max-md:gap-3 max-md:p-4">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="wide-only" style={{ display: "flex", alignItems: "baseline", gap: "var(--space-4)" }}>
-            <div className="approval-tool">{row.tool}</div>
-            <div className="approval-where">on {row.appSlug}</div>
+          <div className="flex items-baseline gap-2 max-md:hidden">
+            <div className="font-mono text-md font-semibold">{row.tool}</div>
+            <div className="text-sm text-muted-foreground">on {row.appSlug}</div>
           </div>
-          <div className="approval-tool narrow-only">{row.tool}</div>
-          <div className="approval-meta wide-only">
+          <div className="font-mono text-md font-semibold md:hidden">{row.tool}</div>
+          <div className="mt-0.5 text-sm text-muted-foreground max-md:hidden">
             {principalOf(row)} · requested {listStamp(row.createdAt)}
           </div>
-          <div className="note narrow-only">
+          <div className="max-w-[72ch] text-xs text-muted-foreground md:hidden">
             {row.appSlug} · {principalOf(row)} · {listStamp(row.createdAt)}
           </div>
         </div>
-        <div className="approval-status">
-          <span className="badge badge--warning">pending</span>
-          <div className="expiry">expires in {minutesUntil(now, row.expiresAt)} min</div>
+        <div className="flex shrink-0 items-center gap-2.5 max-md:flex-col max-md:items-end max-md:gap-1">
+          <Badge variant="warning">pending</Badge>
+          <div className="text-xs text-muted-foreground">expires in {minutesUntil(now, row.expiresAt)} min</div>
         </div>
       </div>
-      <div className="code">{JSON.stringify(row.args, null, 2)}</div>
-      <div className="actions">
-        <button
-          type="button"
-          className="btn btn--danger-outline btn--sm"
-          disabled={decide.pending}
-          onClick={() => decide.run("reject")}
-        >
-          Reject
-        </button>
-        <button
-          type="button"
-          className="btn btn--primary btn--sm"
-          disabled={decide.pending}
-          onClick={() => decide.run("approve")}
-        >
-          Approve
-        </button>
+      <div className="m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle">
+        {JSON.stringify(row.args, null, 2)}
       </div>
-    </div>
+      <div className="flex flex-wrap justify-end gap-3 max-md:*:flex-1">
+        <Button type="button" variant="danger-outline" size="sm" disabled={decide.pending} onClick={() => decide.run("reject")}>
+          Reject
+        </Button>
+        <Button type="button" size="sm" disabled={decide.pending} onClick={() => decide.run("approve")}>
+          Approve
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -204,33 +204,33 @@ function History({
 }): ReactNode {
   if (history.length === 0) {
     return (
-      <div className="empty">
-        <div className="empty-title">No decisions yet</div>
-        <div className="empty-text">Approved and rejected requests are kept here for 7 days.</div>
-      </div>
+      <Empty>
+        <EmptyTitle>No decisions yet</EmptyTitle>
+        <EmptyDescription>Approved and rejected requests are kept here for 7 days.</EmptyDescription>
+      </Empty>
     );
   }
   return (
     <>
-      <div className="card">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Decided</th>
-              <th>Principal</th>
-              <th>App</th>
-              <th>Tool</th>
-              <th>Outcome</th>
-            </tr>
-          </thead>
-          <tbody>
+      <Card size="flush">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Decided</TableHead>
+              <TableHead>Principal</TableHead>
+              <TableHead>App</TableHead>
+              <TableHead>Tool</TableHead>
+              <TableHead>Outcome</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {history.map((row) => (
               <HistoryRow key={row.id} row={row} />
             ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="muted">
+          </TableBody>
+        </Table>
+      </Card>
+      <div className="text-sm text-muted-foreground">
         {hasMore ? (
           <>
             Showing last {limit} decisions ·{" "}
@@ -255,28 +255,28 @@ function HistoryRow({ row }: { row: ApprovalRow }): ReactNode {
   const outcome = historyOutcome(row.status);
   const when = listStamp(row.decidedAt ?? row.createdAt);
   return (
-    <tr>
-      <td className="wide-only cell-time">{when}</td>
-      <td className="wide-only cell-mono">{principalOf(row)}</td>
-      <td className="wide-only">{row.appSlug}</td>
-      <td className="wide-only cell-mono">
+    <TableRow>
+      <TableCell className="max-md:hidden font-mono text-xs whitespace-nowrap text-muted-foreground">{when}</TableCell>
+      <TableCell className="max-md:hidden font-mono text-xs wrap-anywhere">{principalOf(row)}</TableCell>
+      <TableCell className="max-md:hidden">{row.appSlug}</TableCell>
+      <TableCell className="max-md:hidden font-mono text-xs wrap-anywhere">
         <Link to={paths.approval(row.id)}>{row.tool}</Link>
-      </td>
-      <td className="wide-only">
-        <span className={`badge badge--${outcome.tone}`}>{outcome.label}</span>
-      </td>
-      <td className="cell-summary">
+      </TableCell>
+      <TableCell className="max-md:hidden">
+        <Badge variant={outcome.tone}>{outcome.label}</Badge>
+      </TableCell>
+      <TableCell className="hidden max-md:flex max-md:items-center max-md:justify-between max-md:gap-3">
         <div>
-          <Link className="list-title mono" to={paths.approval(row.id)}>
+          <Link className="font-mono text-base font-medium" to={paths.approval(row.id)}>
             {row.tool}
           </Link>
-          <div className="note">
+          <div className="max-w-[72ch] text-xs text-muted-foreground">
             {when} · {principalOf(row)} · {row.appSlug}
           </div>
         </div>
-        <span className={`badge badge--${outcome.tone}`}>{outcome.label}</span>
-      </td>
-    </tr>
+        <Badge variant={outcome.tone}>{outcome.label}</Badge>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -341,17 +341,18 @@ function PushToggle(): ReactNode {
 
   const label = LABELS[state];
   return (
-    <button
+    <Button
       type="button"
-      className="btn btn--outline btn--sm"
+      variant="outline"
+      size="sm"
       disabled={state === "unsupported" || state === "on"}
       aria-disabled={state === "unsupported" || state === "on" ? true : undefined}
       onClick={() => void enable()}
     >
       <BellIcon />
-      <span className="wide-only">{label ?? "Enable notifications"}</span>
-      <span className="narrow-only">{label ?? "Notifications"}</span>
-    </button>
+      <span className="max-md:hidden">{label ?? "Enable notifications"}</span>
+      <span className="md:hidden">{label ?? "Notifications"}</span>
+    </Button>
   );
 }
 

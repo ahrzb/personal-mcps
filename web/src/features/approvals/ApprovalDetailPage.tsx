@@ -1,8 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AuthFrame } from "@/chrome/AuthFrame";
+import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { useApi } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import { approvalQuery } from "@/lib/queries";
@@ -15,10 +20,10 @@ import { detailBadge, explanation, formatArgs, timeRows } from "./derive";
  * notification or an error string, often on a phone, with one job: decide, or read, one
  * request.
  *
- * CHROMELESS, as the server page was: no header and no nav, just the `.auth` column with the
- * brand, one card and the way back to the dashboard. `approval.status` alone selects what the
- * card shows — pending draws Approve / Reject, every other status reads as a record with its
- * own sentence.
+ * CHROMELESS, as the server page was: no header and no nav, just `AuthFrame`'s column with the
+ * brand, one `Card size="auth"` and the way back to the dashboard. `approval.status` alone
+ * selects what the card shows — pending draws Approve / Reject, every other status reads as a
+ * record with its own sentence.
  *
  * The port of `server/src/pages/approval-detail.tsx`, element for element. The id the URL
  * names was already checked against this owner's listing before the document was served, so
@@ -33,25 +38,24 @@ export function ApprovalDetailPage(): ReactNode {
   const now = Date.now();
 
   return (
-    <div className="auth">
-      <div className="brand">
-        <BrandMark />
-        <span>personal-mcps</span>
-      </div>
+    <AuthFrame
+      foot={
+        <>
+          All requests: <Link to={paths.approvals}>Approvals dashboard</Link>
+        </>
+      }
+    >
       <QueryState
         query={read}
         skeleton={
-          <div className="auth-card">
+          <Card size="auth">
             <Skeleton rows={6} />
-          </div>
+          </Card>
         }
       >
         {(data: ApprovalDetailRead) => <DetailCard approval={data.approval} now={now} />}
       </QueryState>
-      <p className="auth-foot">
-        All requests: <Link to={paths.approvals}>Approvals dashboard</Link>
-      </p>
-    </div>
+    </AuthFrame>
   );
 }
 
@@ -60,45 +64,41 @@ export function ApprovalDetailPage(): ReactNode {
 function DetailCard({ approval, now }: { approval: DetailApproval; now: number }): ReactNode {
   const badge = detailBadge(approval.status);
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-          <h1 className="card-title">Approve this request?</h1>
-          <span className={`badge badge--${badge.tone}`}>{badge.label}</span>
+        <div className="flex items-center gap-2">
+          <CardTitle render={<h1 />}>Approve this request?</CardTitle>
+          <Badge variant={badge.tone}>{badge.label}</Badge>
         </div>
-        <p className="card-desc">An agent wants to run an approval-gated tool.</p>
+        <CardDescription>An agent wants to run an approval-gated tool.</CardDescription>
       </div>
 
-      <div className="kv">
-        <div className="kv-row">
-          <span className="kv-key">Principal</span>
-          <span className="mono">agent:{approval.agentSlug}</span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-key">App</span>
-          <span>{approval.appSlug}</span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-key">Tool</span>
-          <span className="mono">{approval.tool}</span>
-        </div>
+      <KvList variant="block">
+        <Kv k="Principal">
+          <span className="font-mono">agent:{approval.agentSlug}</span>
+        </Kv>
+        <Kv k="App">{approval.appSlug}</Kv>
+        <Kv k="Tool">
+          <span className="font-mono">{approval.tool}</span>
+        </Kv>
         {timeRows(approval, now).map((row) => (
-          <div className="kv-row" key={row.label}>
-            <span className="kv-key">{row.label}</span>
-            <span>{row.value}</span>
-          </div>
+          <Kv key={row.label} k={row.label}>
+            {row.value}
+          </Kv>
         ))}
+      </KvList>
+
+      <div className="flex flex-col gap-1.5">
+        <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Arguments</div>
+        <pre className="m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle">
+          {formatArgs(approval.args)}
+        </pre>
       </div>
 
-      <div className="field">
-        <div className="eyebrow">Arguments</div>
-        <pre className="code">{formatArgs(approval.args)}</pre>
-      </div>
-
-      <p className="muted">{explanation(approval)}</p>
+      <p className="text-sm text-muted-foreground">{explanation(approval)}</p>
 
       {approval.status === "pending" ? <Decide approval={approval} /> : null}
-    </div>
+    </Card>
   );
 }
 
@@ -107,45 +107,13 @@ function DetailCard({ approval, now }: { approval: DetailApproval; now: number }
 function Decide({ approval }: { approval: DetailApproval }): ReactNode {
   const decide = useDecision(approval);
   return (
-    <div className="actions">
-      <button
-        type="button"
-        className="btn btn--danger-outline"
-        style={{ flex: 1 }}
-        disabled={decide.pending}
-        onClick={() => decide.run("reject")}
-      >
+    <div className="flex flex-wrap justify-end gap-3">
+      <Button type="button" variant="danger-outline" className="flex-1" disabled={decide.pending} onClick={() => decide.run("reject")}>
         Reject
-      </button>
-      <button
-        type="button"
-        className="btn btn--primary"
-        style={{ flex: 1 }}
-        disabled={decide.pending}
-        onClick={() => decide.run("approve")}
-      >
+      </Button>
+      <Button type="button" className="flex-1" disabled={decide.pending} onClick={() => decide.run("approve")}>
         Approve
-      </button>
+      </Button>
     </div>
   );
 }
-
-/** The hub mark from the artboards. Duplicated from the Shell, which does not export it and
- *  whose header this page deliberately does not render. */
-const BrandMark = (): ReactNode => (
-  <svg
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="12" cy="12" r="3.5" />
-    <path d="M12 8.5V3.5" />
-    <path d="M14.5 14.5L18.5 18.5" />
-    <path d="M9.5 14.5L5.5 18.5" />
-  </svg>
-);

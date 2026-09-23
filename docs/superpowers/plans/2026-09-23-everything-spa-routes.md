@@ -64,8 +64,8 @@ a phone's browser chrome). If the owner wants them back: a `themeColor` prop on 
   };
   ```
 
-- **Escaping, required of every island** (new): serialized with `<` → `<`, U+2028 →
-  ` `, U+2029 → ` ` — `login.tsx:79`'s `jsLiteral` rule, which moves into `spa.tsx`
+- **Escaping, required of every island** (new): serialized with `<` → `\u003c`, U+2028 →
+  `\u2028`, U+2029 → `\u2029` — `login.tsx:79`'s `jsLiteral` rule, which moves into `spa.tsx`
   when `login.tsx` goes. Today `spa.tsx:74-77` is safe only because every bootstrap value is hex,
   charset-bound or configuration; the login island carries `?next=`, `?error=` and `?username=`
   text any link can set to `</script><img …>`, and `redirectTo` passes `hubRelative` while

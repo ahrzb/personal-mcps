@@ -616,7 +616,8 @@
     that is right is named in `web/visual-accepted.json` with its reason rather than absorbed by
     a looser threshold. Pass 2, only after pass 1 has shipped whole, swaps the hand-written
     primitives for shadcn components themed to the current tokens, gated by the **same**
-    baselines, and ends with Tailwind's preflight on and `styles.css` deleted. Each pass changes
+    baselines *(2026-09-23: the same files, except the pass-1 accepted pairs, re-shot from the
+    SPA — amendment below)*, and ends with Tailwind's preflight on and `styles.css` deleted. Each pass changes
     one variable while the other is held still, which is what makes a screenshot a pass/fail
     gate rather than an opinion: a combined rewrite would make every difference ambiguous
     between "the port is wrong" and "the new component looks different".
@@ -648,6 +649,44 @@
     shared chrome element (the shell, the rail, the notices, the dialogs) would keep a server
     and a client spelling to hold in step. The trust argument is answered by keeping every check
     server-side (above), not by keeping the markup there.
+
+    *Pass 1 shipped whole on 2026-09-23 (`d815c18`, deploy `b73374fd`)* — every page the SPA,
+    the server rendering gone with its preview, its fixtures, `wrangler.preview.jsonc` and the
+    script that shot the baselines from it; the baselines themselves are committed and are pass
+    2's reference.
+
+    *Amended 2026-09-23 — pass 2's rulings* (brief `docs/superpowers/plans/2026-09-23-shadcn-pass.md`
+    §1, on the inventory `…-shadcn-inventory.md` §7–§8):
+    - **The legacy sheet is layered from pass 2's first phase**, not served to its last.
+      `server/src/pages/styles.css` becomes `web/src/legacy.css`, imported by `app.css` under
+      `@layer theme, base, legacy, utilities`, so every utility outranks every legacy rule by
+      construction and no counter-rule is ever written. Unlayered, a swapped component renders
+      as its own classes *minus* whatever the old sheet and its counter-rules take away, and the
+      gate could not tell "the component is wrong" from "the cascade is wrong". The server half —
+      the `/styles.css` route, its reserved segment, the shell's `<link>` — ships in the same
+      deploy: the shell links only `/app.css`, and `/styles.css` answers the 404 of any unclaimed
+      path. `legacy.css` is deleted in pass 2's last phase, once nothing matches it.
+    - **The pass-1 accepted pairs are re-shot from the SPA at `d815c18`, and
+      `web/visual-accepted.json` starts pass 2 empty.** `visual:compare` passes an accepted pair
+      at *any* ratio, so each pair pass 1 accepted (51 entries at its close) — every one because the SPA render
+      was judged right and the server fixture wrong — would be ungated through pass 2. The owner
+      chose screenshots as the gate because "it's more testable", and a pair that passes at any
+      ratio is not tested. This changes "the **same** baselines" for those files only; every
+      other baseline is the server's, untouched. Reversible: the server-shot PNGs are in git.
+      Pass 2's accepted list therefore holds only pass-2 differences, which is what a reviewer
+      needs to read.
+    - **The look wins over the density ladder in pass 2.** Seven places today's look departs
+      from `design/layout-and-density.md` — the framed rail's 28 px entries, the 16 px
+      `badge--xs` with its 10 px type, the 18 px nav badge, the 28 px code chip, the OTP boxes, the
+      48 px level header, the 20 px narrow titles — become named theme values (or arbitrary
+      values), not ladder fixes, because the gate is the baselines. Moving them onto the ladder
+      is its own later change, with its own accepted entries.
+    - **The gate gains a component gate.** A full-page screenshot's per-pair budget absorbs a
+      radius or a placeholder colour on a few elements, and only rest states are captured. So the
+      gallery gains a non-route **primitives** page drawing each legacy class beside its new
+      component in every variant, size and state, and `visual:compare` gains a crop-compare mode
+      that compares the new column against the old at **budget 0**. A generated component is a
+      template to edit until it matches there; no page uses it before it does.
 
 39. **Credential management demands recent authentication at better-auth's own mount, not
     only on the hub's routes** *(2026-09-23, §4/§16; reverses the "known fact" recorded in

@@ -1564,7 +1564,10 @@ Deliberately tiny — ~~server-rendered pages (Hono JSX)~~ browser pages *(2026-
   answer is a 303 to the client's third-party `redirect_uri`, which no `fetch` can follow into
   the address bar — carrying the bootstrap's CSRF token and, as `oauth_query`, the value the
   read returned: the bytes the provider just verified, not a string the client assembled.
-  Its gate and its verify-before-write order are untouched.
+  Its gate and its verify-before-write order are untouched *(2026-09-23, as shipped: the one
+  change is a read ahead of the provider call — on Allow the chosen agent is resolved first,
+  §19.5 step 4 — and the picker's `required` binds Allow alone: Deny submits without
+  validation, since refusing needs no agent and the server resolves one only on accept)*.
 
 **Panes behind a rail** *(added 2026-09-02)*. One shell component serves all three paned
 pages — `/settings`, `/apps/<slug>` and `/agents/<slug>` *(2026-09-16: three, not two;
@@ -1584,7 +1587,9 @@ to select)*:
 single 900 px breakpoint of its own; the owner found the pages inconsistent and the ladder
 below replaces all of them)*. Every width, height and breakpoint is pinned once in
 `design/layout-and-density.md` — derived there from the published systems, with the tokens
-in `server/src/pages/styles.css` `:root` and the **Layout & density** panel on
+in `server/src/pages/styles.css` `:root` *(2026-09-23, decision 38's pass-2 amendment:
+`web/src/legacy.css` from pass 2's first phase, then `app.css`'s `@theme` from its second)*
+and the **Layout & density** panel on
 `design/Main.dc.html` as its two homes. §13 decides the *shape*; that file decides the
 *numbers*, and §13 does not repeat them. The ladder in one line: three page shapes —
 **document** 760 (the auth card 400), **table** 1280, **workspace** full width with the
@@ -1594,7 +1599,10 @@ shell) and **1024** (panes side by side); rows **32 / 40 / 44**; controls
 **36 / 32 / 24 / 44**; one **badge 20**; no type under 11 px; prose capped at **72ch**;
 gutters **16 → 24** at wide. Every "the shell's breakpoint" below means 768, and every
 "side by side" means 1024. Any other number in §13 is an HTTP status, a lifetime or an op's
-value — never a layout one.
+value — never a layout one. *(2026-09-23, decision 38's pass-2 amendment: today's look departs
+from the ladder in seven places — the framed rail's entries, the smallest badge, the nav badge,
+the code chip, the OTP boxes, the level header, the narrow titles — and pass 2 keeps the look,
+naming each as a theme value. Moving them onto the ladder is its own later change.)*
 
 - **A pane is a route.** Each pane has exactly one URL, `/<page>/<pane>`; the page root
   renders the first rail entry (the *landing* pane — `/settings` → Password,
@@ -1683,7 +1691,11 @@ it is the shell, not a page rule.
 *(2026-09-23, decision 38: there are no server-rendered pages left, so the paragraph below
 describes a mechanism that retires with `layout.tsx`. The Base UI Dialog of its 2026-09-18
 amendment is the only drawer; the `:target` rules stay in `styles.css`, unused, until pass 2
-deletes the sheet.)*
+deletes the sheet. Done at pass 1's close, 2026-09-23: `layout.tsx` is deleted, and
+`web/scripts/drawer-check.mts` checks only the drawer's **behaviour** on the SPA gallery —
+it opens where the sheet puts it, Escape, a tap beside it and its close button each close it
+and return focus to the hamburger, and the scroll lock is released — its pixel comparison
+against the server preview gone with the preview.)*
 
 ~~**No script — on the server-rendered pages.**~~ The sidebar is `:target`-driven: the
 hamburger is `<a href="#menu" class="menu-open" aria-label="Menu">`, the sidebar `<nav
@@ -1711,9 +1723,28 @@ the list markers `.md ul` / `.md ol` depend on. *(2026-09-23: that holds through
 whose gate is that nothing looks different — `visual:compare` against the server-rendered
 baselines in `design/baseline/`, a right difference named in `web/visual-accepted.json`
 with its reason, never a loosened threshold. Pass 2 moves the hand-written primitives onto
-the shadcn components in `web/src/components/ui/`, themed to these tokens and the density
-ladder, against the same baselines, and ends with the preflight on and `styles.css`
+the shadcn components in `web/src/components/ui/`, themed to these tokens ~~and the density
+ladder~~, against the same baselines, and ends with the preflight on and `styles.css`
 deleted.)*
+
+*(Amended 2026-09-23 — pass 1 has shipped, and decision 38's pass-2 amendment rules how pass 2
+runs.)* ~~The client reads `/styles.css`~~ From pass 2's first phase the sheet is no longer a
+second document: `styles.css` becomes `web/src/legacy.css`, imported by `app.css` under
+`@layer theme, base, legacy, utilities`, so every utility outranks every legacy rule by
+construction — the coexistence counter-rules `app.css` carried against an unlayered sheet are
+deleted, and none is ever written again. The shell links `/app.css` alone, and `/styles.css`
+is no longer served (the 404 of any unclaimed path). The gate stays `visual:compare` against
+`design/baseline/`, with two changes. The pairs pass 1 accepted are re-shot from the SPA at
+pass 1's closing commit and `web/visual-accepted.json` starts pass 2 **empty**, so every
+entry it gains is a pass-2 difference with its reason. And a **primitives** page joins the
+gallery — not a route; each legacy class drawn beside the component replacing it, in every
+variant, size and state — compared new column against old column at **budget 0**: that is
+where a component's fidelity is gated, since a full-page pair's budget absorbs a radius or a
+placeholder colour. A generated component is a template, edited until it matches there, and
+no page uses it before it does. Where today's look and the density ladder disagree, the look
+wins in pass 2 (*Where the numbers live*, above). Pass 2 ends with Tailwind's preflight
+imported, `legacy.css` deleted once nothing in `web/src` matches a rule in it, and the `.md`
+prose rules and the few base rules that must stay global moved into `app.css`.
 
 **The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
 **twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
@@ -1778,8 +1809,8 @@ the plain-text `400`; `/device` and `/approvals` the ordinary session; and `/log
 at all**. The bootstrap is `{csrf, username, origin, vapidPublicKey}` — the VAPID public
 key joining the origin as configuration the approvals page needs and no API reports — and
 `/login`, which has no session, carries none; its one island is `#pmcp-login` (`/login`
-above). Every island is serialized with `<`, U+2028 and U+2029 escaped (`<`, ` `,
-` `): the bootstrap's values happened to be safe because each is hex, charset-bound or
+above). Every island is serialized with `<`, U+2028 and U+2029 escaped (`\u003c`, `\u2028`,
+`\u2029`): the bootstrap's values happened to be safe because each is hex, charset-bound or
 configuration, but `/login`'s carries text a link sets, and a `</script>` in it must not end
 the element. **The headers are the pages' own, by construction**: the shell is emitted by
 the one HTML renderer every page used — `Content-Type: text/html; charset=utf-8`,
@@ -1787,7 +1818,8 @@ the one HTML renderer every page used — `Content-Type: text/html; charset=utf-
 hub's only anti-framing header) and `Cache-Control: no-store` — at all six URLs, `/login`
 included. The shell's head is the one head for every page, so `/login` and `/oauth/consent`
 now say `theme-color #ffffff` where they said `#fafafa`, and the three chromeless pages link
-the manifest they did not — invisible in a screenshot, accepted.
+the manifest ~~they did not~~ and the icons they did not — invisible in a screenshot, accepted
+*(2026-09-23: shipped so, `/login` last)*.
 
 **PWA**: the web surface ships a web-app manifest and a minimal service worker, so
 the dashboard installs to phone and desktop home screens. The service worker exists for

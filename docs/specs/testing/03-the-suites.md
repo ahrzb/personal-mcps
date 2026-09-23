@@ -53,3 +53,14 @@ aliases without changing canonical MCP names. CLI tests cover hub execution/sear
 bounded integer settings flags, and app alias configuration. Provider acceptance in the
 sibling repository proves settings and alias plan/apply/import/refresh/destroy behavior.
 
+*(2026-09-23, decision 38.)* Three hand-run, browser-driven walks under `web/scripts/` sit
+beside the suites and never inside them: `visual-compare.mts` (`pnpm visual:compare`) diffs
+every gallery state against its `design/baseline/` PNG at 1280 and 390, and — pass 2's
+component gate — in a **crop-compare mode** diffs the non-route `primitives` page's new column
+against its old column at budget 0; `drawer-check.mts` (`pnpm check:drawer`) proves the phone
+drawer's **behaviour** on the gallery — open, Escape, a tap beside it, its close button, focus
+handed back, the scroll lock released — and no longer compares pixels; and
+`audit-search-check.mts` (`pnpm check:audit-search`) proves a search never unmounts the
+explorer's input. `server-baselines.mts`, which shot the server-rendered baselines, is deleted
+with the preview it shot from; the PNGs it made are committed.
+

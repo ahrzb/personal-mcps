@@ -11,11 +11,16 @@ personal-mcps/
                      #   workspace importer, unpublished; `vite build` emits dist/app.{js,css}
     src/lib/          # the fetch door, the wire types, the query keys
     src/chrome/       # the shell, the pane rail, the dialogs
+    src/components/ui/ # the shadcn components pass 2 edits to today's look (2026-09-23)
     src/features/     # apps, app-detail, agents, audit (+ the five page families, 2026-09-23)
+    src/legacy.css    # the old shared sheet, @layer legacy, from pass 2's first phase to
+                      #   its last (2026-09-23)
     src/preview/      # the state gallery, preview-mode only — the kept demo of every
-                      #   state once server/dev/ retires (2026-09-23)
+                      #   state since server/dev/ retired (2026-09-23), and pass 2's
+                      #   primitives page
     scripts/          # visual-compare.mts, drawer-check.mts, audit-search-check.mts
-                      #   (2026-09-21), server-baselines.mts (2026-09-23) — hand-run,
+                      #   (2026-09-21), shots.mts (their shared capture setup) ~~,
+                      #   server-baselines.mts (2026-09-23)~~ — hand-run,
                       #   browser-driven
   clients/
     js/              # @ahrzb/personal-mcp-client — the third workspace importer
@@ -58,4 +63,13 @@ view-only builders, whose server halves stay as the reads' implementations. `ser
 stays as the one document, and `server/src/pages/styles.css` stays until pass 2 deletes it.
 `design/baseline/` holds the server-rendered baselines the pass-1 screenshot gate diffs
 against, shot once before any page moved.)*
+
+*(Amended 2026-09-23, at pass 1's close (`d815c18`): done. `server/dev/`,
+`wrangler.preview.jsonc` and `server/src/pages/{layout,login,device,settings,approvals,
+approval-detail,consent,format}.*` are deleted, and so is `web/scripts/server-baselines.mts`,
+which had nothing left to shoot from; `server/src/pages/` keeps `spa.tsx`, `model.ts`,
+`markdown.ts`, `icon.ts` and — until pass 2's first phase moves it to `web/src/legacy.css` —
+`styles.css`. `design/baseline/` is pass 2's reference: the server's PNGs, except the pairs
+pass 1 accepted, which are re-shot from the SPA gallery at `d815c18` (decision 38's pass-2
+amendment; the server's versions stay in git).)*
 

@@ -333,7 +333,16 @@ navigates to; the list it produces is what gets the Settings slot, not the scree
    receives `access_denied`. *(2026-09-23, decision 38: this POST is unchanged and stays a
    form post — its answer is a 303 to the client's third-party `redirect_uri`, which a
    `fetch` cannot follow into the address bar. The client renders the form; the CSRF token
-   it carries is the shell bootstrap's.)*
+   it carries is the shell bootstrap's.)* *(Amended 2026-09-23, as shipped with decision 38's
+   consent family: on Allow the handler **resolves the chosen agent first** — scoped to the
+   signed-in owner — and only then calls the provider, so an agent that does not resolve is
+   refused with nothing written anywhere. Calling the provider first had left, on that
+   refusal, a provider consent with no `oauth_binding`: the next authorize skipped this
+   screen, and the token it minted was refused at the door until the provider's consent was
+   cleared. The order is now read, verify, write — still "verifies before it writes", and
+   still one `400` for every refusal. Deny needs no agent, so the picker's `required` binds
+   Allow alone: Deny submits without form validation, and the server resolves an agent only
+   on accept.)*
 
 CSRF posture, stated once: the hub's own CSRF token gates the POST; the provider's
 signed `oauth_query` is what makes the *request being consented to* unforgeable; and

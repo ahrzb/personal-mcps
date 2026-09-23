@@ -8,10 +8,13 @@
   `login`, `device`, `settings`, `audit`, `approvals`, `apps`, `agents` *(amended
   2026-09-03: reserved ahead of its pages, decision 30 reversed — `/agents` answers its
   own not-built-yet text until they land)*, `oauth`, `api`,
-  `connect`, `internal`, the five shell assets `manifest.webmanifest`, `sw.js`,
-  `styles.css` *(amended 2026-08-26: the stylesheet became a served segment)*,
+  `connect`, `internal`, the ~~five~~ shell assets `manifest.webmanifest`, `sw.js`,
+  `styles.css` *(amended 2026-08-26: the stylesheet became a served segment; 2026-09-23,
+  decision 38's pass-2 amendment: it stops being one in pass 2's first phase, when the sheet
+  moves into the client bundle and `/styles.css` is no longer served)*,
   `icon-192.png`, `icon-512.png` *(amended 2026-09-03: the two PWA icons the manifest
-  declares and the shell head links, §13)*,
+  declares and the shell head links, §13)*, `app.js`, `app.css` *(2026-09-23: the client's
+  script and sheet, §13 — the route table reserves both, and this list had not named them)*,
   `.well-known` *(amended 2026-08-26: OAuth discovery documents, §19 — the dot already
   puts it outside the username charset, like the shell assets, and it is reserved anyway
   so the walk stays total)*, plus

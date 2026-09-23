@@ -156,11 +156,37 @@
   PNG not exactly the viewport's width, and stopping the dev server it started. A baseline
   shot after a page moved would prove nothing, so it is committed, not re-shot per change;
   `visual:compare` diffs each migrated family's gallery against it, a right difference named
-  in `web/visual-accepted.json` with its reason, and pass 2 reuses the same files. The smoke's
+  in `web/visual-accepted.json` with its reason, and pass 2 reuses the same files *(2026-09-23,
+  pass 1's close: the script is deleted with the preview it shot from — neither can run again
+  — and its committed PNGs are pass 2's reference; the pairs pass 1 accepted are re-shot from
+  the SPA, next bullet)*. The smoke's
   three HTML scrapes move with their pages: `/settings`' rail and control strings become the
   statuses plus `GET /api/hub/settings`, the bearer-only change-password post expects `401`
   at its JSON route, `/login`'s `callbackURL` is read from `#pmcp-login`, and the consent
   walk takes `csrf` from `#pmcp-bootstrap` and `oauth_query` from the consent read.
+- **pass 2's gate** *(2026-09-23, decision 38's pass-2 amendment)* — every phase ends with
+  `visual:compare` exiting 0 carrying only that phase's expected entries, every phone PNG
+  exactly the viewport's width, `check:drawer` and `check:audit-search` exiting 0, and the
+  owners' test files by exit code. Three things change from pass 1. **The accepted pairs are
+  re-shot**: the pairs pass 1 accepted are shot again from the SPA gallery at pass 1's closing
+  commit, replacing their server PNGs in `design/baseline/`, and `web/visual-accepted.json`
+  starts pass 2 empty — an accepted pair passes at any ratio, so an accepted pair is an
+  ungated one, and pass 2's list may hold only pass 2's own differences. **A component gate
+  joins the page gate**: the gallery gains a non-route `primitives` page, one state per
+  component, each drawing the legacy classes beside the component replacing them in every
+  variant × size × state (rest, focus, invalid, disabled, checked, and narrow at 390), and
+  `visual-compare.mts` gains a **crop-compare mode** that compares each state's new column
+  against its old column at **budget 0** — the per-pair budget of
+  a full-page shot absorbs exactly the radius or placeholder colour a component gets wrong,
+  and a component no page uses yet has no page pair at all. A component is used on a page
+  only after its crop compares clean or its difference is named. **`drawer-check.mts` checks
+  behaviour only** — the press opens the drawer where the sheet puts it, Escape, a tap beside
+  it and its close button each close it and hand focus back to the hamburger, an entry
+  navigates and closes it, the scroll lock is released — against the SPA gallery; its pixel
+  comparison went with the server preview it compared against, and the drawer's look is
+  `visual-compare`'s. And one worker row moves: the `web-pages.test.ts` row proving the shell's
+  static assets stay cacheable while its pages are `no-store` takes `/app.css` as its asset
+  once `/styles.css` is no longer served — ported, not deleted.
 - **fresh authentication at better-auth's mount** *(2026-09-23, decision 39)* — one worker
   file, `server/test/worker/fresh-auth.test.ts`, whose **table of guarded endpoints is the
   endpoint list** decision 39 names by category. Per row: a cookie session aged past

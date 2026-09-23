@@ -91,3 +91,13 @@ in them (P5's grep proves it later). The look does not change.
    on typed inputs, outline and mini buttons, the audit search or a focused current tab;
    `.input--mono` never applied; the markdown `hr` invisible; "Times are local" over UTC
    timestamps; an expired approval badge grey on the detail page and amber in the list.
+
+### Rulings made during P3
+
+- **NativeSelect keeps the browser's arrow** (p3-consent found the inventory and the primitive
+  disagree). P1b's `native-select.tsx` draws no chevron; inventory §2.6 recommended one. The
+  primitive stands: the look wins (§1.3) and the phone keeps its native picker either way. The
+  "select arrow" expected entries (consent, the credential filter) are void — those states match.
+- **`cn` keeps a `leading-*` before a `text-<size>`** (`586f7b9`, found by p3-agents and
+  p3-settings): Tailwind 4 reads a size's line height through `--tw-leading`, so tailwind-merge's
+  size-drops-leading rule only deleted Button's `leading-none`.

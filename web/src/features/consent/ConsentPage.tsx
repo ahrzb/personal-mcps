@@ -1,8 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AuthFrame } from "@/chrome/AuthFrame";
+import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
 import { Failure, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup } from "@/components/ui/field";
+import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { useApi, useAppEnv } from "@/lib/api-context";
 import { ApiError } from "@/lib/http";
 import { paths } from "@/lib/paths";
@@ -37,32 +46,24 @@ export function ConsentPage(): ReactNode {
   let body: ReactNode;
   if (read.isPending) {
     body = (
-      <div className="auth-card">
+      <Card size="auth">
         <Skeleton rows={6} />
-      </div>
+      </Card>
     );
   } else if (read.isError) {
     // A 400 is the provider refusing the signature — what the document-level 400 said for an
     // edited or expired query. Retrying cannot mend a signature, so it offers none.
     body =
       read.error instanceof ApiError && read.error.status === 400 ? (
-        <div className="alert alert--danger" role="alert">
+        <Alert variant="danger" role="alert">
           {read.error.message}
-        </div>
+        </Alert>
       ) : (
         <Failure message={read.error.message} onRetry={() => void read.refetch()} />
       );
   } else body = <ConsentCard read={read.data} />;
 
-  return (
-    <div className="auth">
-      <div className="brand">
-        <BrandMark />
-        <span>personal-mcps</span>
-      </div>
-      {body}
-    </div>
-  );
+  return <AuthFrame>{body}</AuthFrame>;
 }
 
 /** The card: who is asking, where the code goes, what it may reach, the agent it acts as. */
@@ -72,58 +73,60 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
   useDocumentTitle(`Connect ${displayName}`);
 
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Connect {displayName}</div>
-        <div className="auth-desc">
+        <CardTitle>Connect {displayName}</CardTitle>
+        <CardDescription>
           {displayName} wants to connect to your {read.namespace} namespace.
-        </div>
+        </CardDescription>
       </div>
 
       {read.clientSelfRegistered && (
-        <div className="alert alert--warning">
+        <Alert variant="warning">
           <WarningIcon />
-          <div className="alert-text">This application registered itself — identity unverified.</div>
-        </div>
+          <AlertDescription>This application registered itself — identity unverified.</AlertDescription>
+        </Alert>
       )}
 
-      <div className="kv">
-        <div className="kv-row">
-          <div className="kv-key">Redirects to</div>
-          <div className="mono">{read.redirectOrigin}</div>
-        </div>
-        <div className="kv-row">
-          <div className="kv-key">Namespace</div>
-          <div>{read.namespace}</div>
-        </div>
-        <div className="kv-row">
-          <div className="kv-key">Scopes</div>
-          <div className="mono">{read.scopes.join(", ")}</div>
-        </div>
-      </div>
+      <KvList variant="block">
+        <Kv k="Redirects to">
+          <span className="font-mono">{read.redirectOrigin}</span>
+        </Kv>
+        <Kv k="Namespace">{read.namespace}</Kv>
+        <Kv k="Scopes">
+          <span className="font-mono">{read.scopes.join(", ")}</span>
+        </Kv>
+      </KvList>
 
-      <form method="post" action={paths.oauthConsent} className="form">
+      <FieldGroup render={<form method="post" action={paths.oauthConsent} />}>
         <input type="hidden" name="csrf" value={bootstrap.csrf} />
         <input type="hidden" name="oauth_query" value={read.oauthQuery} />
         {read.agents.length === 0 ? <NoAgents /> : <AgentPicker agents={read.agents} />}
-        <div className="confirm-actions">
+        <div className="flex gap-3 max-md:flex-col-reverse max-md:gap-2.5">
           {/* `formNoValidate`: the picker is `required`, and on the server page that blocked
               Deny until an agent was chosen — refusing needs no agent. */}
-          <button type="submit" name="decision" value="deny" className="btn btn--danger-outline" formNoValidate>
+          <Button
+            type="submit"
+            name="decision"
+            value="deny"
+            variant="danger-outline"
+            className="flex-[1_1_auto]"
+            formNoValidate
+          >
             Deny
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
             name="decision"
             value="accept"
-            className="btn btn--primary"
+            className="flex-[1_1_auto]"
             disabled={read.agents.length === 0}
           >
             Allow
-          </button>
+          </Button>
         </div>
-      </form>
-    </div>
+      </FieldGroup>
+    </Card>
   );
 }
 
@@ -131,43 +134,31 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
  *  rather than left to fail server-side, and Deny still works. */
 function NoAgents(): ReactNode {
   return (
-    <div className="empty">
-      <div className="empty-title">No agents yet</div>
-      <div className="empty-text">
+    <Empty>
+      <EmptyTitle>No agents yet</EmptyTitle>
+      <EmptyDescription>
         Create one under <Link to={paths.agentNew}>Agents</Link> before connecting a client — the agent it is given
         decides everything the client can do.
-      </div>
-    </div>
+      </EmptyDescription>
+    </Empty>
   );
 }
 
 /** The agent the client will act as — defaulted to NOTHING, so a consent is always a choice. */
 function AgentPicker({ agents }: { agents: ConsentRead["agents"] }): ReactNode {
   return (
-    <div className="field">
-      <label htmlFor="agent">Agent</label>
-      <select id="agent" name="agent" required defaultValue="">
+    <Field>
+      <Label htmlFor="agent">Agent</Label>
+      <NativeSelect id="agent" name="agent" required defaultValue="">
         <option value="">Choose an agent</option>
         {agents.map((agent) => (
           <option key={agent.slug} value={agent.slug}>
             {agent.name}
           </option>
         ))}
-      </select>
-      <div className="field-hint">The client will be able to do exactly what this agent can.</div>
-    </div>
-  );
-}
-
-/** The hub mark — duplicated from the Shell, whose header this page does not render. */
-function BrandMark(): ReactNode {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.5" />
-      <path d="M12 8.5V3.5" />
-      <path d="M14.5 14.5L18.5 18.5" />
-      <path d="M9.5 14.5L5.5 18.5" />
-    </svg>
+      </NativeSelect>
+      <FieldDescription>The client will be able to do exactly what this agent can.</FieldDescription>
+    </Field>
   );
 }
 

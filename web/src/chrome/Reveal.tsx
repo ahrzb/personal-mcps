@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 /**
  * A freshly minted key, in the one render that will ever hold it (§4/§15) — the add-app
@@ -13,21 +15,22 @@ export function TokenReveal({ token, children }: { token: string; children?: Rea
   const [copied, setCopied] = useState(false);
   return (
     <>
-      <div className="token-reveal">
-        <div className="token-value">{token}</div>
-        <button
-          type="button"
-          className="btn btn--outline"
+      <div className="flex items-center gap-2">
+        {/* A control-high mono well that takes the row's free width and clips what does not
+            fit: the token is one unbreakable string. */}
+        <div className="flex h-control grow items-center overflow-hidden rounded-md bg-muted px-3 font-mono text-sm text-foreground">
+          {token}
+        </div>
+        <Button
+          variant="outline"
           onClick={() => {
             void navigator.clipboard.writeText(token).then(() => setCopied(true));
           }}
         >
           {copied ? "Copied" : "Copy"}
-        </button>
+        </Button>
       </div>
-      <div className="alert alert--warning">
-        This token is shown only once. Store it in your bot's secret store.
-      </div>
+      <Alert variant="warning">This token is shown only once. Store it in your bot's secret store.</Alert>
       {children}
     </>
   );
@@ -37,22 +40,25 @@ export function TokenReveal({ token, children }: { token: string; children?: Rea
  * A value the reader is meant to take away rather than read — the scoped endpoint a resource
  * is served on (§3), and anything else a page hands over intact. The Copy button is
  * enhancement, exactly as the token reveal's is.
+ *
+ * The value wraps anywhere, because an endpoint is one long token in a narrow column, and the
+ * button sits on the first line's baseline.
  */
 export function Copyable({ value }: { value: string }): ReactNode {
   const [copied, setCopied] = useState(false);
   return (
-    <span className="copyable">
-      <span className="mono copy-value">{value}</span>
-      <button
-        type="button"
-        className="btn btn--ghost btn--sm"
+    <span className="inline-flex min-w-0 items-baseline gap-2">
+      <span className="min-w-0 font-mono wrap-anywhere">{value}</span>
+      <Button
+        variant="ghost"
+        size="sm"
         aria-label="Copy"
         onClick={() => {
           void navigator.clipboard.writeText(value).then(() => setCopied(true));
         }}
       >
         {copied ? "Copied" : "Copy"}
-      </button>
+      </Button>
     </span>
   );
 }

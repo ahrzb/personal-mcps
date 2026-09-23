@@ -1,6 +1,6 @@
 /**
- * The strings the client renders that are not markup: §13's two time spellings and the
- * alert class a notice's tone earns.
+ * The strings the client renders that are not markup: §13's two time spellings, and a
+ * notice's tone.
  *
  * Once a COPY of `server/src/pages/format.ts`, and EXACT on purpose: every page this client
  * took over printed its stamps through the original, and pass 1 holds the look constant
@@ -70,7 +70,12 @@ export function formatStamp(at: number): string {
 /** A flash's tone, as the shell and every pane spell it. */
 export type NoticeTone = "success" | "warning" | "danger";
 
-/** One modifier per tone over the bare `.alert` base. */
+/**
+ * legacy.css's `.alert` classes per tone. Its last reader is /settings' own banner
+ * (`SettingsNotice`), which should draw `<Alert variant={notice.tone}>` (`components/ui/alert`,
+ * whose variants are these tones) and delete this with it, in the settings family's pass-2
+ * conversion. Every other banner already does.
+ */
 const ALERT_CLASS: Record<NoticeTone, string> = {
   success: "alert alert--success",
   warning: "alert alert--warning",

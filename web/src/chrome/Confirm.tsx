@@ -1,7 +1,13 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback } from "react";
 import type { ReactNode } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 /**
  * §13's confirm step. URL-ADDRESSED, exactly as the server-rendered one was: the dialog is
@@ -10,16 +16,8 @@ import type { ReactNode } from "react";
  * this one must keep, because a confirm URL is shareable, bookmarkable, and is how the
  * preview gallery shows the state at all.
  *
- * It renders a NATIVE `<dialog>` and opens it with `showModal()`.
- *
- * That combination is deliberate and was arrived at by comparing screenshots. Base UI's
- * Dialog supplies the behaviour the server-rendered page could not — a focus trap, Escape to
- * close, `aria-modal` wiring — while the element keeps `styles.css`'s `dialog` and
- * `dialog::backdrop` rules, which are the whole of a confirmation's appearance, and the
- * platform's own `dialog:modal` centring. Base UI's default `<div>` popup matched none of
- * those selectors: it rendered unstyled at the foot of the document with no scrim, and
- * reproducing the box in `app.css` would have been a second definition of a design element
- * the shared sheet already owns.
+ * The box is `components/ui/dialog`, which draws what the native `<dialog>` drew (its width,
+ * edge, scrim and centring); Base UI supplies the focus trap, Escape and `aria-modal`.
  */
 export function ConfirmDialog({
   title,
@@ -37,62 +35,24 @@ export function ConfirmDialog({
   onClose: () => void;
 }): ReactNode {
   return (
-    <Dialog.Root
+    <Dialog
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
-      <Dialog.Portal>
-        <Dialog.Popup render={<ModalDialog />}>
-          <div className="dialog-body">
-            <div>
-              {/* `render={<div />}` on both: Base UI's defaults are an `<h2>` and a `<p>`,
-                  and `styles.css:130-140` gives every `h1,h2,h3` `line-height: 1.2` where a
-                  div inherits the body's 1.55. A heading is therefore NOT the box
-                  `.dialog-title` describes, and the sheet that says so is every page's
-                  design language — so the primitive stops matching the
-                  base-element selector rather than fighting it with a counter-rule. */}
-              <Dialog.Title render={<div />} className="dialog-title">
-                {title}
-              </Dialog.Title>
-              <Dialog.Description render={<div />} className="dialog-text">
-                {text}
-              </Dialog.Description>
-            </div>
-            {children}
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
-
-/**
- * The `<dialog>` element itself, opened modally as soon as it is in the document.
- *
- * `showModal()` rather than the `open` attribute: only the modal form gets the UA's centring
- * and a `::backdrop` at all — an `open` attribute produces a left-aligned box and no scrim,
- * which is exactly why the server-rendered page shipped a re-open script beside its
- * `<dialog open>`. Props arrive from Base UI's `render` and are spread, so its ARIA wiring
- * and its own ref are preserved.
- */
-function ModalDialog(props: React.ComponentProps<"dialog">): ReactNode {
-  const own = useRef<HTMLDialogElement | null>(null);
-  useEffect(() => {
-    const element = own.current;
-    if (element !== null && !element.open) element.showModal();
-  }, []);
-  return (
-    <dialog
-      {...props}
-      ref={(element) => {
-        own.current = element;
-        const forwarded = (props as { ref?: React.Ref<HTMLDialogElement> }).ref;
-        if (typeof forwarded === "function") forwarded(element);
-        else if (forwarded !== null && forwarded !== undefined) forwarded.current = element;
-      }}
-    />
+      {/* `[&_.actions]:gap-2` stands in for legacy.css's `dialog .actions { gap: 8px }`, which
+          keyed on the native element this box no longer is: every caller still wraps its
+          actions in a legacy `.actions` row (12px apart elsewhere). It goes when the last
+          caller passes a `DialogFooter` instead, in its family's pass-2 conversion. */}
+      <DialogContent className="[&_.actions]:gap-2">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{text}</DialogDescription>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
   );
 }
 

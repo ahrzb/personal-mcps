@@ -1,8 +1,10 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetClose, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useApi, useAppEnv } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import { pendingApprovalsQuery } from "@/lib/queries";
@@ -12,15 +14,13 @@ import { usePreviewTransient } from "@/preview/transient";
  * The shell every signed-in SPA page renders inside: the 56px header with the brand, the
  * five nav destinations and the user block, plus the narrow drawer.
  *
- * ONE behavioural change from `pages/layout.tsx`, and it is the one this rewrite exists to
- * make: the wide nav and the narrow drawer are the same five entries, and the drawer is a
- * Base UI Dialog rather than the `:target` mechanism the server-rendered pages needed (they
- * shipped no script). `styles.css`'s `.menu`, `.scrim` and `.menu-open` rules are untouched
- * and this component reuses them by class; `app.css` adds the open state they key elsewhere.
+ * ONE header markup, two shapes. Wide, the inner row is `display: contents`, so the brand, the
+ * nav and the user block lay out in the header's own row, ordered brand · nav · user. Narrow,
+ * that inner row becomes the 56px bar (brand and hamburger), the nav and the user block are
+ * hidden, and the same five entries and the sign-out live in the drawer, a `Sheet`.
  *
- * Everything else is the same markup and the same classes: the page chrome is
- * `styles.css`'s, not Tailwind's, because the design language is the shared sheet's and a
- * second rendering of the header is a second chance for the two to disagree.
+ * The wide nav and the narrow drawer are the same five entries: the one behavioural change
+ * from the server-rendered layout, whose drawer was a `:target` panel with no script.
  */
 export function Shell({
   active,
@@ -32,32 +32,49 @@ export function Shell({
   const { bootstrap } = useAppEnv();
   return (
     <>
-      <header className="app-header">
-        <div className="app-header-main">
-          <Link className="brand" to={paths.apps}>
+      <header className="flex h-header items-center gap-6 border-b px-8 max-md:block max-md:h-auto max-md:border-b-0 max-md:px-0">
+        <div className="contents max-md:flex max-md:h-header max-md:items-center max-md:justify-between max-md:border-b max-md:px-5">
+          <Link className={`${BRAND} ${FOCUS_RING}`} to={paths.apps}>
             <BrandMark />
             <span>personal-mcps</span>
           </Link>
           <Drawer active={active} username={bootstrap.username} />
-          <div className="app-header-end">
-            <span className="header-user">{bootstrap.username}</span>
-            <SignOutForm />
+          <div className="order-2 ml-auto flex items-center gap-3 max-md:hidden">
+            <span className={USER}>{bootstrap.username}</span>
+            <SignOutForm className="flex" />
           </div>
         </div>
-        <nav className="nav">
+        <nav className="order-1 flex items-center gap-1 max-md:hidden">
           {NAV.map((item) => (
-            <NavEntry key={item.key} item={item} active={active} className="nav-link" />
+            <NavEntry key={item.key} item={item} active={active} className={NAV_LINK} />
           ))}
         </nav>
       </header>
-      {/* The flash banner is NOT here. `styles.css` positions `.alert` as the first child
-          of a page's own `<main>`, above `.page-head`, which is where every server-rendered
-          page drew it — hoisting it into the chrome would put it outside the page's gutters
-          and above its title. `chrome/Notice`'s `NoticeBanner` is the page's to render. */}
+      {/* The flash banner is NOT here: it is the first line of a page's own `<main>`, above its
+          title and inside its gutters, so `chrome/Notice`'s `NoticeBanner` is the page's to
+          render. */}
       {children}
     </>
   );
 }
+
+/** Focus shows the ring every control shows, where a link or a bare button would otherwise
+ *  show the browser's outline. */
+const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/35";
+
+/** The mark and the name, 15px semibold, never squeezed: the bar's home link, and the
+ *  drawer's heading. It keeps the text colour when hovered, unlike a plain link. */
+const BRAND = "flex shrink-0 items-center gap-2 text-md font-semibold text-foreground no-underline";
+
+/** Who is signed in, beside the sign-out. */
+const USER = "text-base text-muted-foreground";
+
+/** An entry in the bar: a 32px pill, filled when hovered and while it is the current page. */
+const NAV_LINK = `flex h-control-sm items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-base font-medium text-muted-foreground no-underline hover:bg-muted hover:text-foreground aria-[current=page]:bg-muted aria-[current=page]:text-foreground ${FOCUS_RING}`;
+
+/** An entry in the drawer: a 44px row, its count pushed to the far end, filled only while it
+ *  is the current page. A hover greys the others' text, as a link's does. */
+const MENU_LINK = `flex h-control-touch items-center justify-between rounded-lg px-3 text-md font-medium text-muted-foreground no-underline hover:text-fg-subtle aria-[current=page]:bg-muted aria-[current=page]:text-foreground ${FOCUS_RING}`;
 
 /** The five nav destinations, in the order §13 renders them — every one a route of this
  *  client's since /settings moved (decision 38), so every one is a `Link`. */
@@ -119,7 +136,11 @@ function PendingBadge(): ReactNode {
     refetchOnWindowFocus: true,
   });
   const count = pending.data?.approvals.length ?? 0;
-  return count === 0 ? null : <span className="nav-badge">{count}</span>;
+  return count === 0 ? null : (
+    <Badge variant="count" size="count">
+      {count}
+    </Badge>
+  );
 }
 
 /**
@@ -127,26 +148,25 @@ function PendingBadge(): ReactNode {
  * not better-auth's own route), which answers with Set-Cookie and a 303 to /login. A `fetch`
  * could not apply the navigation, so this is one of the places the SPA still submits a form
  * rather than calling the API.
+ *
+ * `className` is the form's: the bar lays it out as a flex item, the drawer as a block.
+ * `buttonClassName` adjusts the button, which the drawer keeps at 36px and 13px where every
+ * other small button grows to the phone's 44px.
  */
-function SignOutForm(): ReactNode {
+function SignOutForm({ className, buttonClassName }: { className?: string; buttonClassName?: string }): ReactNode {
   return (
-    <form method="post" action={paths.signOut}>
-      <button type="submit" className="btn btn--outline btn--sm">
+    <form method="post" action={paths.signOut} className={className}>
+      <Button type="submit" variant="outline" size="sm" className={buttonClassName}>
         Sign out
-      </button>
+      </Button>
     </form>
   );
 }
 
 /**
- * The narrow navigation: the same five entries as the bar's nav, in the drawer
- * `styles.css`'s narrow breakpoint reveals. A Base UI Dialog, so it traps focus and closes
- * on Escape — which the `:target` drawer of the server-rendered pages could not.
- *
- * `.menu-open`, `.menu`, `.menu-head` and `.menu-foot` are the sheet's existing classes,
- * and so is `.scrim` on the Dialog's own backdrop. What the sheet does NOT carry is an
- * open state this component can reach (it had only the server pages' `#menu:target`), so
- * `app.css` adds the `[data-open]` rules Base UI's switch needs.
+ * The narrow navigation: the same five entries as the bar's nav, in the `menu` Sheet, which
+ * exists below the narrow breakpoint only. A Base UI Dialog underneath, so it traps focus and
+ * closes on Escape — which the `:target` drawer of the server-rendered pages could not.
  *
  * The open flag starts from the gallery's `drawerOpen` transient, which is how the
  * `apps/drawerOpen` state draws it open; outside the gallery that is always false.
@@ -160,38 +180,46 @@ function SignOutForm(): ReactNode {
 function Drawer({ active, username }: { active: string; username: string }): ReactNode {
   const [open, setOpen] = useState(usePreviewTransient().drawerOpen === true);
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger className="menu-open" aria-label="Menu" render={<button type="button" />}>
+    <Sheet open={open} onOpenChange={setOpen}>
+      {/* The hamburger: absent above the narrow breakpoint, a 44px target at the bar's right
+          edge below it, pulled 10px into the bar's gutter so its glyph lines up with the
+          content beneath. */}
+      <SheetTrigger
+        aria-label="Menu"
+        className={`hidden cursor-pointer bg-transparent p-0 text-foreground max-md:-mr-2.5 max-md:inline-flex max-md:size-control-touch max-md:items-center max-md:justify-center max-md:rounded-md ${FOCUS_RING}`}
+      >
         <MenuIcon />
-      </Dialog.Trigger>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="scrim" />
-        <Dialog.Popup className="menu" data-slot="dialog-content">
-          <div className="menu-head">
-            <span className="brand">
-              <BrandMark />
-              <span>personal-mcps</span>
-            </span>
-            <Dialog.Close className="menu-close" aria-label="Close menu" render={<button type="button" />}>
-              <CloseIcon />
-            </Dialog.Close>
-          </div>
-          {NAV.map((item) => (
-            <NavEntry
-              key={item.key}
-              item={item}
-              active={active}
-              className="menu-link"
-              onNavigate={() => setOpen(false)}
-            />
-          ))}
-          <div className="menu-foot">
-            <span className="header-user">{username}</span>
-            <SignOutForm />
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </SheetTrigger>
+      <SheetContent variant="menu">
+        <div className="mb-1.5 flex h-header items-center justify-between border-b border-row-border pl-3">
+          <span className={BRAND}>
+            <BrandMark />
+            <span>personal-mcps</span>
+          </span>
+          <SheetClose
+            aria-label="Close menu"
+            className={`inline-flex size-control-touch cursor-pointer items-center justify-center rounded-md bg-transparent p-0 text-foreground ${FOCUS_RING}`}
+          >
+            <CloseIcon />
+          </SheetClose>
+        </div>
+        {NAV.map((item) => (
+          <NavEntry
+            key={item.key}
+            item={item}
+            active={active}
+            className={MENU_LINK}
+            onNavigate={() => setOpen(false)}
+          />
+        ))}
+        {/* Pushed to the drawer's foot by the auto margin, under the rule that separates who
+            you are from where you can go. */}
+        <div className="mt-auto flex items-center justify-between gap-2.5 border-t border-row-border px-3 pt-2.5 pb-1">
+          <span className={USER}>{username}</span>
+          <SignOutForm buttonClassName="max-md:h-control max-md:text-sm" />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

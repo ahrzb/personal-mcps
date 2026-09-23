@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useDropSearchKeys } from "./Confirm";
-import { alertClass } from "@/lib/format";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { hasNotice, NOTICE_KEYS, noticeOf } from "@/lib/notice";
 import type { Notice } from "@/lib/notice";
 import type { NoticeTone } from "@/lib/format";
@@ -10,9 +10,9 @@ import type { NoticeTone } from "@/lib/format";
  * The flash banner, ported from `pages/apps.tsx:218-229` — and rendered by the PAGE, inside
  * its own `<main>` above `.page-head`, exactly where the server-rendered pages rendered it.
  *
- * Not by the shell, deliberately: `styles.css` positions `.alert` as the first child of the
- * page's `<main>`, so a banner hoisted into the chrome would sit outside the page's gutters
- * and above its title. The shell owns the header; the page owns its own first line.
+ * Not by the shell, deliberately: a banner hoisted into the chrome would sit outside the
+ * page's gutters and above its title. The shell owns the header; the page owns its own first
+ * line.
  */
 export function NoticeBanner({
   notice,
@@ -20,8 +20,8 @@ export function NoticeBanner({
 }: {
   notice: Notice;
   /**
-   * Leave an UNTITLED message off `.alert-text`, whose 2px top margin only exists to part a
-   * message from its title — so the text sits level with the icon. `/approvals` and
+   * Draw an UNTITLED message without `AlertDescription`, whose 2px top margin only exists to
+   * part a message from its title — so the text sits level with the icon. `/approvals` and
    * `/settings` spelled their banner that way; `/apps` always spaced it, and its baselines
    * hold that, so the default keeps it.
    */
@@ -29,13 +29,13 @@ export function NoticeBanner({
 }): ReactNode {
   const spaced = notice.title !== undefined || !flushUntitled;
   return (
-    <div className={alertClass(notice.tone)} role={notice.tone === "danger" ? "alert" : "status"}>
+    <Alert variant={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>
       <NoticeIcon tone={notice.tone} />
       <div>
-        {notice.title === undefined ? null : <div className="alert-title">{notice.title}</div>}
-        <div className={spaced ? "alert-text" : undefined}>{notice.message}</div>
+        {notice.title === undefined ? null : <AlertTitle>{notice.title}</AlertTitle>}
+        {spaced ? <AlertDescription>{notice.message}</AlertDescription> : <div>{notice.message}</div>}
       </div>
-    </div>
+    </Alert>
   );
 }
 

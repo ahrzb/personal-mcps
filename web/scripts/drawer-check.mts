@@ -33,15 +33,25 @@ const WEB = fileURLToPath(new URL("../", import.meta.url));
 const SPA_PORT = Number(process.env.DRAWER_SPA_PORT ?? 5175);
 const SPA = `http://127.0.0.1:${SPA_PORT}`;
 
-/** The phone shape. Above `legacy.css`'s 767px breakpoint there is no hamburger to press. */
+/** The phone shape. Above the 768px narrow breakpoint there is no hamburger to press. */
 const VIEWPORT = { width: 390, height: 844 } as const;
 
 /** Where the open panel must land: 280px wide, flush to the right edge of a 390px viewport
- *  (`legacy.css`'s `.menu`). */
+ *  (`components/ui/sheet`'s `menu` panel). */
 const PANEL_X = VIEWPORT.width - 280;
 
 /** The gallery state the drawer is driven from — any page drawing the Shell would do. */
 const SPA_STATE = "/__preview/apps/default";
+
+/**
+ * What the drawer check drives, by what the Shell renders rather than by any class: the
+ * Sheet's panel and scrim by their `data-slot`, the two buttons by their accessible names.
+ */
+const PANEL = '[data-slot="sheet-content"]';
+const SCRIM = '[data-slot="sheet-overlay"]';
+const HAMBURGER = 'button[aria-label="Menu"]';
+const CLOSE = 'button[aria-label="Close menu"]';
+const AGENTS_ENTRY = `${PANEL} a:has-text("Agents")`;
 
 const failures: string[] = [];
 
@@ -57,20 +67,20 @@ function check(name: string, held: boolean, detail = ""): void {
  * panel that is merely mounted proves nothing.
  */
 async function panel(page: Page): Promise<{ mounted: boolean; visible: boolean; x: number | null }> {
-  return await page.evaluate(() => {
-    const menu = document.querySelector<HTMLElement>(".menu");
+  return await page.evaluate((selector) => {
+    const menu = document.querySelector<HTMLElement>(selector);
     if (menu === null) return { mounted: false, visible: false, x: null };
     return {
       mounted: true,
       visible: getComputedStyle(menu).visibility === "visible",
       x: menu.getBoundingClientRect().x,
     };
-  });
+  }, PANEL);
 }
 
-/** Opens the drawer and waits out `legacy.css`'s 0.22s transition. */
+/** Opens the drawer and waits out its 0.22s slide. */
 async function open(page: Page): Promise<void> {
-  await page.click(".menu-open");
+  await page.click(HAMBURGER);
   await page.waitForTimeout(500);
 }
 
@@ -83,7 +93,7 @@ async function closed(page: Page): Promise<boolean> {
 /** Whether focus went back to the hamburger that opened the drawer — the Dialog's promise,
  *  and what keeps a keyboard user from being dropped at the top of the document. */
 async function focusReturned(page: Page): Promise<boolean> {
-  return await page.evaluate(() => document.activeElement?.classList.contains("menu-open") === true);
+  return await page.evaluate((selector) => document.activeElement?.matches(selector) === true, HAMBURGER);
 }
 
 const spaServer = startServer(
@@ -101,33 +111,34 @@ try {
   await mounted(page);
   await settle(page);
 
-  check("the hamburger is reachable at the phone width", await page.isVisible(".menu-open"));
+  check("the hamburger is reachable at the phone width", await page.isVisible(HAMBURGER));
   check("nothing is drawn until it is pressed", !(await panel(page)).mounted);
 
   // The first animation frame after the press must still be off-screen. Base UI mounts the
   // popup with `data-starting-style` for exactly one frame, and that frame is what the enter
   // transition runs FROM — without it the panel appears in place instead of sliding.
-  await page.click(".menu-open");
+  await page.click(HAMBURGER);
   const entering = await page.evaluate(
-    () =>
+    (selector) =>
       new Promise<number | null>((resolve) =>
         requestAnimationFrame(() => {
-          const menu = document.querySelector<HTMLElement>(".menu");
+          const menu = document.querySelector<HTMLElement>(selector);
           resolve(menu === null ? null : menu.getBoundingClientRect().x);
         }),
       ),
+    PANEL,
   );
   await page.waitForTimeout(500);
   const shown = await panel(page);
   check("pressing it opens the drawer", shown.visible && shown.x === PANEL_X, `x=${shown.x}`);
   check("it slides in rather than appearing", entering !== null && entering > PANEL_X, `entered at x=${entering}`);
 
-  const scrim = await page.evaluate(() => {
-    const element = document.querySelector<HTMLElement>(".scrim");
+  const scrim = await page.evaluate((selector) => {
+    const element = document.querySelector<HTMLElement>(selector);
     if (element === null) return null;
     const style = getComputedStyle(element);
     return { opacity: style.opacity, pointerEvents: style.pointerEvents };
-  });
+  }, SCRIM);
   check(
     "the scrim dims the page and takes the tap that closes it",
     scrim?.opacity === "1" && scrim.pointerEvents === "auto",
@@ -143,12 +154,12 @@ try {
   check("a tap beside it closes it", await closed(page));
 
   await open(page);
-  await page.click(".menu-close");
+  await page.click(CLOSE);
   check("its own close button closes it", await closed(page));
   check("…and focus returns to the hamburger", await focusReturned(page));
 
   await open(page);
-  await page.click('.menu-link:has-text("Agents")');
+  await page.click(AGENTS_ENTRY);
   await page.waitForTimeout(700);
   // The gallery runs the real route tree over a MEMORY history, so the rendered page is the
   // evidence that a navigation happened; `page.url()` never moves.
@@ -156,7 +167,7 @@ try {
   check("an entry navigates and the drawer goes with it", heading === "Agents" && !(await panel(page)).mounted, `h1=${heading}`);
 
   await open(page);
-  await page.click('.menu-link:has-text("Agents")');
+  await page.click(AGENTS_ENTRY);
   await page.waitForTimeout(700);
   check("the entry for the page already shown closes it too", !(await panel(page)).mounted);
 

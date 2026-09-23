@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Input } from "@/components/ui/input";
 
 /**
  * The six-box TOTP code entry both code-checking cards draw — /settings' enrolment and
@@ -22,10 +23,13 @@ export function OtpBoxes({ invalid }: { invalid: boolean }): ReactNode {
   return (
     <>
       <input type="hidden" name="code" value={digits.join("")} />
-      <div className="otp" data-otp>
+      <div className="flex justify-center gap-2">
         {digits.map((digit, i) => (
-          <input
+          // A digit box: 44x48 (48x52 on a phone), its digit centred at 18px semibold, and
+          // flat, without a field's shadow.
+          <Input
             key={i}
+            className="h-otp-h w-otp-w p-0 text-center text-xl font-semibold shadow-none max-md:h-otp-h-touch max-md:w-otp-w-touch"
             ref={(element) => {
               boxes.current[i] = element;
             }}

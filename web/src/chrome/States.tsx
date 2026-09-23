@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Skeleton as Block } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/http";
 
 /**
@@ -43,22 +46,14 @@ export function QueryState<T>({
 /**
  * A read in flight where there is nothing yet to show. Rows rather than a spinner: the
  * shapes below are tables and lists, and a block of the right height stops the pane from
- * jumping when the answer lands.
- *
- * The one place this client draws with Tailwind utilities rather than `styles.css` classes,
- * because the loading state is NEW: the server-rendered pages had none — they blocked the
- * document on their reads — so there is no existing class to reuse and inventing one would
- * mean editing the sheet every page shares.
- *
- * `rounded-sm` is 6px, the radius these rows were drawn with when `rounded-md` still meant
- * Tailwind's 6px; the theme's `rounded-md` is a control's 8px since pass 2's P1a.
+ * jumping when the answer lands. Each row is 36px, a control's height.
  */
 export function Skeleton({ rows }: { rows: number }): ReactNode {
   return (
     <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading…</span>
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className="h-9 animate-pulse rounded-sm bg-muted" />
+        <Block key={index} className="h-9" />
       ))}
     </div>
   );
@@ -67,12 +62,12 @@ export function Skeleton({ rows }: { rows: number }): ReactNode {
 /** A read that failed for a reason the owner can retry. */
 export function Failure({ message, onRetry }: { message: string; onRetry: () => void }): ReactNode {
   return (
-    <div className="alert alert--danger" role="status">
+    <Alert variant="danger" role="status">
       {message}{" "}
-      <button type="button" className="btn btn--outline btn--sm" onClick={onRetry}>
+      <Button variant="outline" size="sm" onClick={onRetry}>
         Retry
-      </button>
-    </div>
+      </Button>
+    </Alert>
   );
 }
 
@@ -84,7 +79,7 @@ export function Failure({ message, onRetry }: { message: string; onRetry: () => 
  */
 export function Refreshing({ active }: { active: boolean }): ReactNode {
   return active ? (
-    <span className="muted" aria-live="polite">
+    <span className="text-sm text-muted-foreground" aria-live="polite">
       refreshing…
     </span>
   ) : null;

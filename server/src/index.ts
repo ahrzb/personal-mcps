@@ -153,11 +153,10 @@ export const ROUTES = [
   ".well-known", // oauth: the two §19.2 discovery documents — the dot keeps it out of the username charset, and it joins the reservation so the §16 walk stays total
   "manifest.webmanifest", // web: PWA manifest (§13) — a dot keeps it out of the username charset anyway
   "sw.js", // web: install+push service worker (§13)
-  "styles.css", // web: the one stylesheet every page's shell links (§13)
   "icon-192.png", // web: the PWA icon the shell head and the manifest link (§13)
   "icon-512.png", // web: the manifest's install-size icon (§13)
   "app.js", // web: the browser client's one script bundle (§13) — the dot keeps it out of the username charset, as sw.js's does
-  "app.css", // web: the browser client's one stylesheet, loaded after styles.css (§13)
+  "app.css", // web: the browser client's one stylesheet, and the shell's only one since pass 2's P0 freed styles.css (§13)
 ] as const;
 
 /** One top-level segment, as the table above names it. */
@@ -432,7 +431,7 @@ type Mount = (app: Hono<{ Bindings: Env }>, segment: ServedSegment) => void;
 /**
  * Segment → mount, exhaustive over ROUTES by type: a segment added to the table above with
  * no mount here is a compile error, and a mount that claims nothing is caught at runtime by
- * the router walk. The browser surface is one app (web.pageRoutes) that fourteen segments
+ * the router walk. The browser surface is one app (web.pageRoutes) that thirteen segments
  * dispatch into whole; the five machine segments are mounted here because each is the
  * composition root's own wiring of a sibling module.
  */
@@ -446,7 +445,6 @@ const MOUNTS: Record<ServedSegment, Mount> = {
   agents: browser,
   "manifest.webmanifest": browser,
   "sw.js": browser,
-  "styles.css": browser,
   "icon-192.png": browser,
   "icon-512.png": browser,
   "app.js": browser,

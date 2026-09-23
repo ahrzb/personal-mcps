@@ -20,6 +20,7 @@ import { parseSearch, routeTree, stringifySearch } from "@/router";
  *
  *   GET /__preview                   — an index linking every page × state pair
  *   GET /__preview/<page>/<state>    — that page, rendered against that state's seed
+ *   GET /__preview/primitives/<x>    — one component beside its legacy markup (`PrimitiveState`)
  *
  * PREVIEW MODE ONLY. `main.tsx` reaches this module behind `import.meta.env.MODE ===
  * "preview"`, which Vite replaces with a literal at build time, so Rollup drops this whole
@@ -51,6 +52,13 @@ function main(): void {
   }
   const name = match[1] as PreviewName;
   const state = decodeURIComponent(match[2] ?? "");
+  if (name === "primitives") {
+    // The bench is not a route: its state IS the render, drawn bare (`PrimitiveState`).
+    const State = seeds.primitives[state];
+    if (State === undefined) root.textContent = `No such preview: primitives/${state}`;
+    else createRoot(root).render(<StrictMode><State /></StrictMode>);
+    return;
+  }
   const page = seeds[name] as Record<string, Seed> | undefined;
   const seed = page?.[state];
   if (seed === undefined) root.textContent = `No such preview: ${match[1]}/${state}`;

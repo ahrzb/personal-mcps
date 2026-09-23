@@ -4,9 +4,9 @@
 //
 //   pnpm check:drawer             # exits non-zero on the first broken behaviour
 //
-// It exists because the drawer shipped broken. `styles.css` draws the panel and the scrim but
-// keys OPEN on `#menu:target` — the server-rendered pages it was written for shipped no
-// script, and a URL fragment was their only switch. This client opens the same markup with a
+// It exists because the drawer shipped broken. `styles.css` (now `legacy.css`) drew the
+// panel and the scrim but keyed OPEN on `#menu:target` — the server-rendered pages it was
+// written for shipped no script, and a URL fragment was their only switch. This client opens the same markup with a
 // Base UI Dialog, whose switch is `data-open`, so the dialog opened — focus trapped, scroll
 // locked — with the panel still translated a full width off-screen. Nothing in the suite
 // noticed, because every screenshot was of a closed drawer and every unit test is of the Worker.
@@ -33,11 +33,11 @@ const WEB = fileURLToPath(new URL("../", import.meta.url));
 const SPA_PORT = Number(process.env.DRAWER_SPA_PORT ?? 5175);
 const SPA = `http://127.0.0.1:${SPA_PORT}`;
 
-/** The phone shape. Above `styles.css`'s 767px breakpoint there is no hamburger to press. */
+/** The phone shape. Above `legacy.css`'s 767px breakpoint there is no hamburger to press. */
 const VIEWPORT = { width: 390, height: 844 } as const;
 
 /** Where the open panel must land: 280px wide, flush to the right edge of a 390px viewport
- *  (`styles.css`'s `.menu`). */
+ *  (`legacy.css`'s `.menu`). */
 const PANEL_X = VIEWPORT.width - 280;
 
 /** The gallery state the drawer is driven from — any page drawing the Shell would do. */
@@ -68,7 +68,7 @@ async function panel(page: Page): Promise<{ mounted: boolean; visible: boolean; 
   });
 }
 
-/** Opens the drawer and waits out `styles.css`'s 0.22s transition. */
+/** Opens the drawer and waits out `legacy.css`'s 0.22s transition. */
 async function open(page: Page): Promise<void> {
   await page.click(".menu-open");
   await page.waitForTimeout(500);

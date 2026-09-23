@@ -206,6 +206,64 @@ const secretPush: [ListedItem, CatalogDerivation] = [
   }),
 ];
 
+/**
+ * Every construct `pages/markdown.ts` lets through, in one description: inline code, strong, a
+ * link, a nested bullet list, an ordered list, a blockquote, a rule, a GFM table, a task list and
+ * a fence. It is the `.md` sheet's one test: no other fixture reaches most of these, and pass 2's
+ * preflight flip strips the browser defaults the list, blockquote, rule, table and task-list
+ * rendering rely on (inventory §4).
+ *
+ * The three forms are that module's `renderMarkdown` / `inlineMarkdown` / `plainText` run over
+ * the source below and pasted verbatim, for the reason `prose` in `./agents.ts` gives: the
+ * browser holds no renderer. Re-run them if the source or the renderer changes.
+ */
+const MARKDOWN_TOUR_TEXT = [
+  "Every construct the hub's renderer lets through, with `inline code`, **strong** and a [link out](https://example.com/docs).",
+  "",
+  "- A bullet",
+  "- A bullet holding a nested list:",
+  "  - nested one",
+  "  - nested two",
+  "",
+  "1. First step",
+  "2. Second step",
+  "",
+  "> A quoted warning from the app's own docs.",
+  "",
+  "---",
+  "",
+  "| Field | Type | Required |",
+  "| --- | --- | --- |",
+  "| `doi` | string | yes |",
+  "| `format` | string | no |",
+  "",
+  "- [x] A finished task",
+  "- [ ] An open task",
+  "",
+  "```json",
+  '{ "doi": "10.1000/xyz123" }',
+  "```",
+].join("\n");
+
+const MARKDOWN_TOUR_PROSE: RenderedProse = {
+  inline:
+    'Every construct the hub&#39;s renderer lets through, with <code>inline code</code>, <strong>strong</strong> and a <a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">link out</a>.',
+  block:
+    '<p>Every construct the hub&#39;s renderer lets through, with <code>inline code</code>, <strong>strong</strong> and a <a href="https://example.com/docs" rel="noopener noreferrer" target="_blank">link out</a>.</p>\n' +
+    "<ul>\n<li>A bullet</li>\n<li>A bullet holding a nested list:<ul>\n<li>nested one</li>\n<li>nested two</li>\n</ul>\n</li>\n</ul>\n" +
+    "<ol>\n<li>First step</li>\n<li>Second step</li>\n</ol>\n" +
+    "<blockquote>\n<p>A quoted warning from the app&#39;s own docs.</p>\n</blockquote>\n" +
+    "<hr>\n" +
+    "<table>\n<thead>\n<tr>\n<th>Field</th>\n<th>Type</th>\n<th>Required</th>\n</tr>\n</thead>\n" +
+    "<tbody><tr>\n<td><code>doi</code></td>\n<td>string</td>\n<td>yes</td>\n</tr>\n" +
+    "<tr>\n<td><code>format</code></td>\n<td>string</td>\n<td>no</td>\n</tr>\n</tbody></table>\n" +
+    '<ul>\n<li><input checked="" disabled="" type="checkbox"> A finished task</li>\n' +
+    '<li><input disabled="" type="checkbox"> An open task</li>\n</ul>\n' +
+    "<pre><code>{ &quot;doi&quot;: &quot;10.1000/xyz123&quot; }</code></pre>\n",
+  text:
+    "Every construct the hub's renderer lets through, with inline code, strong and a link out. A bullet A bullet holding a nested list: nested one nested two First step Second step A quoted warning from the app's own docs. Field Type Required doi string yes format string no A finished task An open task { \"doi\": \"10.1000/xyz123\" }",
+};
+
 const digestDaily: [ListedItem, CatalogDerivation] = [
   {
     name: "digest_daily",
@@ -747,6 +805,28 @@ export const appDetailSeeds: Record<string, Seed> = {
     path: pane("mcp-tools", "catalog"),
     search: { sel: "tool:secret_push" },
     queries: TUNNEL_CACHE,
+  },
+
+  /** That card with `MARKDOWN_TOUR_TEXT` as the tool's description — every Markdown construct,
+   *  rendered through the details card's own `.note.md` container. */
+  catalogMarkdown: {
+    path: pane("mcp-tools", "catalog"),
+    search: { sel: "tool:secret_push" },
+    queries: cache({
+      app: TUNNEL,
+      caps: TUNNEL_CAPS,
+      catalog: {
+        ...CATALOG,
+        tools: family("tools", [
+          paperFetch,
+          jobfeedCrawl,
+          [
+            { ...secretPush[0], description: MARKDOWN_TOUR_TEXT },
+            { ...secretPush[1], description: MARKDOWN_TOUR_PROSE },
+          ],
+        ]),
+      },
+    }),
   },
 
   /** The prompt arm of that card, whose rows are a DECLARATION rather than a schema. */

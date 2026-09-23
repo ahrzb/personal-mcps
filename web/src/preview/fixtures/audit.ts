@@ -224,6 +224,14 @@ export const auditSeeds: Record<string, Seed> = {
     search: { view: "events", ...RECENT, principal: "agent:claude", outcome: "ok" },
   }),
 
+  /** The phone's Filters level open over that selection: the rail's groups full screen, `2 on`,
+   *  the two held values ticked and the sticky Show button. Narrow only in the app; at 1280 it
+   *  is the same full-screen level, which only a widened phone window ever shows. */
+  filtersLevel: {
+    ...seed({ search: { view: "events", ...RECENT, principal: "agent:claude", outcome: "ok" } }),
+    transient: { filtersLevel: true },
+  },
+
   /**
    * A ×N run UNFOLDED — the disclosure the run row shipped without.
    *

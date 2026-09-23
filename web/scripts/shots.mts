@@ -15,7 +15,7 @@ import type { ChildProcess } from "node:child_process";
 import type { Page } from "playwright";
 
 /**
- * The two artboard shapes, named as the output filenames spell them. `styles.css` names 768
+ * The two artboard shapes, named as the output filenames spell them. `legacy.css` names 768
  * and 1024 as its breakpoints, so 1280 is the wide shape above both; 390 is the phone shape
  * `design/README.md` records its mobile captures at.
  */

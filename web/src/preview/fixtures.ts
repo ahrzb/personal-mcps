@@ -7,6 +7,7 @@ import { settingsSeeds } from "./fixtures/settings";
 import { deviceSeeds } from "./fixtures/device";
 import { consentSeeds } from "./fixtures/consent";
 import { loginSeeds } from "./fixtures/login";
+import { primitivesStates } from "./fixtures/primitives";
 import type { PreviewSeeds } from "./seed";
 
 /**
@@ -33,4 +34,5 @@ export const seeds: PreviewSeeds = {
   device: deviceSeeds,
   "oauth-consent": consentSeeds,
   login: loginSeeds,
+  primitives: primitivesStates,
 };

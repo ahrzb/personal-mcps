@@ -15,8 +15,9 @@ import type { TotpEnrollment, Violation } from "@/lib/types";
  *  - §13's connecting screen, whose authorize URL comes from a single-use state row;
  *  - /settings' TOTP enrolment and backup codes, shown once for the same reason as a key.
  *
- * Two more arms (`recordSearch`, `openRun`) are typed-in or reading-position state, each
- * saying below why it is not in the URL.
+ * Two more arms (`recordSearch`, `openRun`) are typed-in or reading-position state, and two
+ * (`drawerOpen`, `filtersLevel`) are overlays a tap opens, each saying below why it is not in
+ * the URL.
  *
  * So each owning component reads this context for its INITIAL value and is otherwise
  * unchanged. In production the context is empty and every arm reads as absent, which is the
@@ -69,6 +70,14 @@ export type Transient = {
   /** What the owner typed into the Execution pane before a refused Save — kept on screen
    *  beside the op's sentence (`refusal`), which is the whole point of that state. */
   executionDraft?: { defaults: string; maximum: string };
+  /**
+   * The phone drawer (`chrome/Shell`) and /audit's Filters level, drawn OPEN. Each is opened
+   * by a tap and holds its open flag in component state rather than the URL (a way of reaching
+   * a screen, not a screen a link should land on), so without these an open overlay's look
+   * could not be screenshotted, and a restyle of either would pass the gate unseen.
+   */
+  drawerOpen?: boolean;
+  filtersLevel?: boolean;
 };
 
 const TransientContext = createContext<Transient>({});

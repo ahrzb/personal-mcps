@@ -270,6 +270,15 @@ export const appsSeeds: Record<string, Seed> = {
     queries: reads(board),
   },
 
+  /** The same page with the phone drawer open over it — the five entries, Apps current, the
+   *  user block and the scrim. Above the narrow breakpoint the drawer is not drawn at all, so
+   *  the 1280 shot is the page under an invisible open dialog. */
+  drawerOpen: {
+    path: "/apps",
+    queries: reads(board),
+    transient: { drawerOpen: true },
+  },
+
   /** A namespace with nothing in it yet: the empty card, and no nav badge. */
   empty: {
     path: "/apps",

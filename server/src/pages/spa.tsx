@@ -9,7 +9,7 @@
  *
  * The HEAD is the same at every URL, which is the point: one viewport rule, one theme
  * colour, one manifest and icon set, so an installed PWA behaves identically whichever route
- * it was installed from, and one webfont. `/app.css` loads after `/styles.css`, never instead.
+ * it was installed from, one webfont, and one stylesheet of the hub's own (`/app.css`).
  *
  * The BODY is three elements and no more:
  *
@@ -38,12 +38,9 @@ export type SpaShellProps = {
    *  unskippable. What the value means is the caller's business, which keeps this template
    *  from knowing what a session or a sign-in step is. */
   island: { id: "pmcp-bootstrap" | "pmcp-login"; value: unknown };
-  /** The shared sheet every page reads: the design language, and the source of truth for
-   *  every token and page-chrome class. */
+  /** The client bundle's one sheet: the design language, the utilities, and — since pass 2's
+   *  P0 — the shared page sheet layered beneath them (web/src/legacy.css). */
   stylesheet: string;
-  /** The client's own sheet, loaded AFTER the shared one and never instead of it: it carries
-   *  only what Tailwind's utilities and the Base UI primitives need to coexist with it. */
-  appStylesheet: string;
   /** The client bundle. */
   script: string;
 };
@@ -73,7 +70,7 @@ function jsLiteral(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-export const SpaShell: FC<SpaShellProps> = ({ title, island, stylesheet, appStylesheet, script }) => (
+export const SpaShell: FC<SpaShellProps> = ({ title, island, stylesheet, script }) => (
   <>
     {html`<!doctype html>`}
     <html lang="en">
@@ -83,7 +80,6 @@ export const SpaShell: FC<SpaShellProps> = ({ title, island, stylesheet, appStyl
         <meta name="theme-color" content="#ffffff" />
         <title>{title}</title>
         <link rel="stylesheet" href={stylesheet} />
-        <link rel="stylesheet" href={appStylesheet} />
         <link rel="manifest" href={MANIFEST} />
         <link rel="icon" href={ICON} />
         <link rel="apple-touch-icon" href={ICON} />

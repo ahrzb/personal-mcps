@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { LoginIsland } from "@/lib/bootstrap";
 import type { Transient } from "./transient";
 
@@ -35,8 +36,8 @@ export type Seed = {
   /** Router state: `?confirm=`, `?sel=`, `?q=`, `?show=`, `?which=`, `?new=` — the
    *  URL-addressed dialogs and selections. Absent means the bare route. */
   search?: Record<string, string | string[]>;
-  /** Transient component state that no resource returns. See `./transient.ts` for why these
-   *  four exist and nothing else does. */
+  /** Transient component state that no resource returns. See `./transient.ts` for why each
+   *  arm exists and nothing else does. */
   transient?: Transient;
   /**
    * API paths this state leaves IN FLIGHT — `/api/hub` prefixes the gallery's client answers
@@ -82,6 +83,8 @@ export type Seed = {
  * `audit` is the exception to "keyed as that one keys them": the server-rendered page it
  * replaces had entirely different states, so its baselines are written from this gallery's
  * own accepted render rather than inherited (§5, decision 36).
+ *
+ * `primitives` is not a page at all: see `PrimitiveState`.
  */
 export const PREVIEW_PAGES = [
   "apps",
@@ -97,12 +100,26 @@ export const PREVIEW_PAGES = [
   "device",
   "oauth-consent",
   "login",
+  "primitives",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];
 
 /**
- * Every page's every state. `Record<PreviewName, …>` rather than a partial, so a page added
- * without seeds is a TYPE ERROR — the reason the index can never silently lag the pages.
+ * Every page's every state, keyed by EVERY `PreviewName` rather than a partial, so a page
+ * added without seeds is a TYPE ERROR — the reason the index can never silently lag the
+ * pages. The `primitives` bench holds components rather than seeds.
  */
-export type PreviewSeeds = Record<PreviewName, Record<string, Seed>>;
+export type PreviewSeeds = {
+  [Name in PreviewName]: Record<string, Name extends "primitives" ? PrimitiveState : Seed>;
+};
+
+/**
+ * One state of the `primitives` bench — pass 2's component gate, not a route. It is a
+ * component the gallery renders bare (no router, no query cache, no Shell), drawing one
+ * generated component beside the legacy markup it replaces through
+ * `fixtures/primitives/Columns.tsx`, whose comment is the two-column contract
+ * `visual-compare.mts` crops by. Its states have no baseline: the legacy column IS the
+ * reference, inside the same screenshot.
+ */
+export type PrimitiveState = () => ReactNode;

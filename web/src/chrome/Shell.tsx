@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { useApi, useAppEnv } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import { pendingApprovalsQuery } from "@/lib/queries";
+import { usePreviewTransient } from "@/preview/transient";
 
 /**
  * The shell every signed-in SPA page renders inside: the 56px header with the brand, the
@@ -144,8 +145,11 @@ function SignOutForm(): ReactNode {
  *
  * `.menu-open`, `.menu`, `.menu-head` and `.menu-foot` are the sheet's existing classes,
  * and so is `.scrim` on the Dialog's own backdrop. What the sheet does NOT carry is an
- * open state this component can reach — it keys open on `#menu:target` — so `app.css`
- * adds the `[data-open]` counter-rules Base UI's switch needs.
+ * open state this component can reach (it had only the server pages' `#menu:target`), so
+ * `app.css` adds the `[data-open]` rules Base UI's switch needs.
+ *
+ * The open flag starts from the gallery's `drawerOpen` transient, which is how the
+ * `apps/drawerOpen` state draws it open; outside the gallery that is always false.
  *
  * The open flag is held here rather than left to the Dialog because a tapped entry has to
  * shut the drawer, and nothing else would do it: a drawer link to the route already shown
@@ -154,7 +158,7 @@ function SignOutForm(): ReactNode {
  * but that is the router's doing and not a promise this component should rest on.
  */
 function Drawer({ active, username }: { active: string; username: string }): ReactNode {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(usePreviewTransient().drawerOpen === true);
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger className="menu-open" aria-label="Menu" render={<button type="button" />}>

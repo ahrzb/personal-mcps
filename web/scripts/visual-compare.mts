@@ -3,7 +3,9 @@
 // different" is evidence rather than an assertion. The baselines are the reference: shot from
 // the server-rendered pages before each one moved to this client (decision 38 — the server
 // preview that drew them is retired, `src/preview/seed.ts` says what it was), and for /audit
-// from this gallery's own accepted render (decision 36).
+// from this gallery's own accepted render (decision 36). The 51 pairs pass 1 had accepted
+// (server fixture wrong, SPA right) and the states the server never had were shot from this
+// gallery at pass 1's close, in pass 2's P0, so pass 2 starts with nothing accepted.
 //
 //   pnpm visual:compare           # writes web/.visual/report.html, exits non-zero on a fail
 //
@@ -15,11 +17,18 @@
 // one-line reason. That file is the point: where Base UI replaces a hand-rolled primitive the
 // rendering SHOULD differ, and a named, reviewable exception records that better than a
 // threshold loosened until everything passes.
+//
+// The `primitives` bench is compared differently: not against a baseline file, but its
+// component column against its legacy column, both cropped out of the same render, at a
+// budget of zero (`columns` below). A state declares the two columns by rendering
+// `preview/fixtures/primitives/Columns.tsx`, whose comment is the contract. A full-page pair
+// can hide a changed radius inside its 2%; a crop of one component at zero cannot, which is
+// why pass 2 gates its components there before any page uses them.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
 import {
@@ -34,8 +43,9 @@ import {
   waitForServer,
 } from "./shots.mts";
 
-/** The share of differing pixels a pair may carry before it fails. */
-const BUDGET = 0.02;
+/** The share of differing pixels a pair may carry before it fails: a whole page against its
+ *  baseline, and a `primitives` component column against its legacy column. */
+const BUDGET = { page: 0.02, columns: 0 } as const;
 
 /**
  * Per-pixel colour tolerance handed to pixelmatch. Antialiasing along a glyph edge differs
@@ -56,9 +66,16 @@ const REPORT = fileURLToPath(new URL("../.visual/", import.meta.url));
 /**
  * One compared pair. `sizeMismatch` is its own outcome rather than a 100% ratio because two
  * images of different dimensions cannot be diffed at all — reporting that as a ratio would
- * hide what actually changed, and it is also what a MISSING baseline reads as.
+ * hide what actually changed, and it is also what a MISSING baseline reads as. `mode` says
+ * which comparison it was, and so which budget it is held to.
  */
-type Result = { key: string; ratio: number; sizeMismatch: boolean; accepted: string | null };
+type Result = {
+  key: string;
+  ratio: number;
+  sizeMismatch: boolean;
+  accepted: string | null;
+  mode: keyof typeof BUDGET;
+};
 
 const accepted = await acceptedPairs();
 // `--host 127.0.0.1` and `--strictPort` are both load-bearing. Vite binds `localhost`,
@@ -88,8 +105,11 @@ try {
       await page.goto(`${ORIGIN}/__preview/${name}/${state}`, { waitUntil: "load" });
       await mounted(page);
       await settle(page);
+      if (name === "primitives") {
+        results.push(await columns(page, key, accepted[key] ?? null));
+        continue;
+      }
       const shot = await page.screenshot({ fullPage: true });
-      await writeFile(`${REPORT}${key}.new.png`, shot);
       results.push(await compare(key, shot, accepted[key] ?? null));
     }
     await context.close();
@@ -115,33 +135,62 @@ for (const each of results) {
 console.log(`\nreport: web/.visual/report.html`);
 const failures = results.filter((each) => each.accepted === null && failed(each));
 if (failures.length > 0) {
-  console.error(`${failures.length} pair(s) over ${BUDGET * 100}% and not listed in visual-accepted.json`);
+  console.error(
+    `${failures.length} pair(s) over budget (${BUDGET.page * 100}% a page, ${BUDGET.columns} a primitives column) ` +
+      `and not listed in visual-accepted.json`,
+  );
 }
 finish(failures.length > 0 ? 1 : 0);
 
 function failed(result: Result): boolean {
-  return result.sizeMismatch || result.ratio > BUDGET;
+  return result.sizeMismatch || result.ratio > BUDGET[result.mode];
 }
 
 /** One pair, diffed against its baseline. A MISSING baseline is a failure with a reason
  *  rather than a crash: it means the gallery holds a state no baseline was shot for, which is
- *  worth seeing in the report. */
+ *  worth seeing in the report — and its `.new.png` is what a baseline for it is copied from. */
 async function compare(key: string, shot: Buffer, accepted: string | null): Promise<Result> {
   const baselineBytes = await readFile(`${BASELINE}${key}.png`).catch(() => null);
-  if (baselineBytes === null) return { key, ratio: 1, sizeMismatch: true, accepted };
-  const before = PNG.sync.read(baselineBytes);
-  const after = PNG.sync.read(shot);
-  if (before.width !== after.width || before.height !== after.height) {
-    await writeFile(`${REPORT}${key}.old.png`, baselineBytes);
-    return { key, ratio: 1, sizeMismatch: true, accepted };
+  if (baselineBytes === null) {
+    await writeFile(`${REPORT}${key}.new.png`, shot);
+    return { key, ratio: 1, sizeMismatch: true, accepted, mode: "page" };
   }
-  const diff = new PNG({ width: before.width, height: before.height });
-  const differing = pixelmatch(before.data, after.data, diff.data, before.width, before.height, {
+  return await diff(key, baselineBytes, shot, accepted, "page");
+}
+
+/**
+ * One `primitives` state: its `next` column diffed against its `legacy` column, both cropped
+ * out of this one render by `Columns`' `data-column` cells. There is no baseline file — the
+ * legacy markup drawn beside the component is the reference. A state that does not render
+ * exactly one `Columns` throws here (the locator is strict), which fails the run by name.
+ */
+async function columns(page: Page, key: string, accepted: string | null): Promise<Result> {
+  const legacy = await page.locator('[data-column="legacy"]').screenshot();
+  const next = await page.locator('[data-column="next"]').screenshot();
+  return await diff(key, legacy, next, accepted, "columns");
+}
+
+/** Diffs `after` against `before` and writes the report's three images for `key`. */
+async function diff(
+  key: string,
+  beforeBytes: Buffer,
+  afterBytes: Buffer,
+  accepted: string | null,
+  kind: Result["mode"],
+): Promise<Result> {
+  await writeFile(`${REPORT}${key}.old.png`, beforeBytes);
+  await writeFile(`${REPORT}${key}.new.png`, afterBytes);
+  const before = PNG.sync.read(beforeBytes);
+  const after = PNG.sync.read(afterBytes);
+  if (before.width !== after.width || before.height !== after.height) {
+    return { key, ratio: 1, sizeMismatch: true, accepted, mode: kind };
+  }
+  const image = new PNG({ width: before.width, height: before.height });
+  const differing = pixelmatch(before.data, after.data, image.data, before.width, before.height, {
     threshold: PIXEL_TOLERANCE,
   });
-  await writeFile(`${REPORT}${key}.diff.png`, PNG.sync.write(diff));
-  await writeFile(`${REPORT}${key}.old.png`, baselineBytes);
-  return { key, ratio: differing / (before.width * before.height), sizeMismatch: false, accepted };
+  await writeFile(`${REPORT}${key}.diff.png`, PNG.sync.write(image));
+  return { key, ratio: differing / (before.width * before.height), sizeMismatch: false, accepted, mode: kind };
 }
 
 /** The named exceptions: key → the one-line reason the difference is intended. */
@@ -156,7 +205,8 @@ async function acceptedPairs(): Promise<Record<string, string>> {
   return out;
 }
 
-/** Side by side: the baseline, the React rendering, and the diff. */
+/** Side by side: the reference (the baseline, or a primitive's legacy column), the React
+ *  rendering, and the diff. */
 function reportHtml(results: Result[]): string {
   const rows = results
     .slice()
@@ -167,14 +217,15 @@ function reportHtml(results: Result[]): string {
           ? `<span class="accepted">accepted — ${escapeHtml(each.accepted)}</span>`
           : each.sizeMismatch
             ? `<span class="fail">size mismatch or missing baseline</span>`
-            : each.ratio > BUDGET
+            : each.ratio > BUDGET[each.mode]
               ? `<span class="fail">over budget</span>`
               : `<span class="ok">ok</span>`;
+      const [before, after] = each.mode === "columns" ? ["legacy column", "component column"] : ["baseline", "react"];
       return `<section><h2>${escapeHtml(each.key)}</h2>
 <p>${(each.ratio * 100).toFixed(2)}% differing · ${verdict}</p>
 <div class="shots">
-  <figure><figcaption>baseline</figcaption><img src="${each.key}.old.png"></figure>
-  <figure><figcaption>react</figcaption><img src="${each.key}.new.png"></figure>
+  <figure><figcaption>${before}</figcaption><img src="${each.key}.old.png"></figure>
+  <figure><figcaption>${after}</figcaption><img src="${each.key}.new.png"></figure>
   <figure><figcaption>diff</figcaption><img src="${each.key}.diff.png"></figure>
 </div></section>`;
     })

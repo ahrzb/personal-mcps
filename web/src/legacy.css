@@ -1,5 +1,12 @@
-/* The hub's one stylesheet. Every page template styles itself from the classes below —
-   no page ships its own <style> block, no second css file, no preprocessor.
+/* The design language pass 1 shipped, as the server once served it at /styles.css (it was
+   `server/src/pages/styles.css` until pass 2's P0). `app.css` imports it into
+   `layer(legacy)`, BENEATH Tailwind's utilities, so a utility on an element always beats
+   the class rule it replaces and no counter-rule is ever needed. That inverts one thing:
+   an `!important` here (`[hidden]`, `.wide-only`, `[aria-invalid]`) now beats a
+   utility's `!`.
+
+   Pass 2 empties it: each family stops using its rules, and P5 deletes the file once no
+   class below is used in web/src. Families do not edit it (the pass-2 brief).
    Values are lifted from the design artboards under /design (Main.dc.html is the
    design-language reference); the Mobile*.dc.html boards are the same pages under the
    one narrow breakpoint at the bottom of this file. */
@@ -541,11 +548,6 @@ p {
   font-family: var(--font-mono);
 }
 
-.error-text {
-  font-size: var(--text-sm);
-  color: var(--destructive);
-}
-
 /* --------------------------------------------------------------- buttons ---- */
 
 .btn {
@@ -572,12 +574,6 @@ p {
   background: var(--primary);
   border-color: var(--primary);
   color: var(--primary-fg);
-}
-
-.btn--secondary {
-  background: var(--muted);
-  border-color: var(--muted);
-  color: var(--primary);
 }
 
 .btn--outline {
@@ -628,28 +624,6 @@ p {
 
 .btn[disabled],
 .btn[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* square icon-only control — a step arrow, a close */
-.btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-h-sm);
-  height: var(--control-h-sm);
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  box-shadow: var(--shadow);
-  color: var(--fg);
-  cursor: pointer;
-}
-
-.btn-icon[disabled],
-.btn-icon[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
 }
@@ -741,10 +715,6 @@ select {
   font-family: var(--font-mono);
 }
 
-.input--auto {
-  width: auto;
-}
-
 .field-hint {
   font-size: var(--text-sm);
   color: var(--muted-fg);
@@ -753,23 +723,6 @@ select {
 .field-error {
   font-size: var(--text-sm);
   color: var(--destructive);
-}
-
-/* search input with a leading icon */
-.input-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-group > svg {
-  position: absolute;
-  left: var(--space-6);
-  pointer-events: none;
-}
-
-.input-group > input {
-  padding-left: 34px;
 }
 
 .checkbox {
@@ -906,10 +859,6 @@ select {
   flex: 1 1 auto;
 }
 
-.spacer {
-  flex-grow: 1;
-}
-
 /* an invisible wrapper whose children join the PARENT's own flex rhythm — a
    <form> around otp/field/button (login's totp and backup-code cards) or around
    a row of mutation buttons (an app row's Connect/Archive), so the form
@@ -1033,43 +982,10 @@ select {
   font-weight: 600;
 }
 
-/* how many rows the card lists, beside its title — the boards' lighter weight, so the
-   number reads as a fact about the heading rather than as part of it */
-.card-count {
-  font-weight: 400;
-  color: var(--muted-fg);
-}
-
 .card-desc {
   margin-top: var(--space-2);
   font-size: var(--text-sm);
   color: var(--muted-fg);
-}
-
-.stat {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  padding: var(--space-8) var(--space-9);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.stat-label {
-  font-size: var(--text-sm);
-  color: var(--muted-fg);
-}
-
-.stat-value {
-  font-size: var(--text-2xl);
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.stat-value--danger {
-  color: var(--danger-fg);
 }
 
 /* plain rows inside a padded card — passkeys, sessions on narrow */
@@ -1154,11 +1070,6 @@ select {
 
 .table .cell-muted {
   color: var(--muted-fg);
-}
-
-.table .cell-strong {
-  font-size: var(--text-base);
-  font-weight: 500;
 }
 
 .table .cell-actions {
@@ -1462,13 +1373,6 @@ select {
   max-width: 460px;
 }
 
-/* the second line of a two-line empty state — what to DO about it, one step quieter than
-   the sentence that said what happened */
-.empty-text--aside {
-  font-size: var(--text-xs);
-  color: var(--ring);
-}
-
 /* --------------------------------------------------------------- dialogs ---- */
 
 dialog {
@@ -1505,7 +1409,6 @@ dialog::backdrop {
   line-height: 1.5;
 }
 
-.dialog .actions,
 dialog .actions {
   gap: var(--space-4);
 }
@@ -2366,11 +2269,6 @@ dialog .actions {
       visibility 0.22s ease;
   }
 
-  #menu:target {
-    visibility: visible;
-    transform: none;
-  }
-
   .menu-head {
     display: flex;
     align-items: center;
@@ -2434,11 +2332,6 @@ dialog .actions {
     transition: opacity 0.22s ease;
   }
 
-  #menu:target ~ .scrim {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
   .page--document,
   .page--table,
   .page--workspace {
@@ -2490,7 +2383,6 @@ dialog .actions {
   /* every tappable control grows to the 44px touch target */
   .btn,
   .btn--sm,
-  .btn-icon,
   input[type="text"],
   input[type="password"],
   input[type="search"],
@@ -2505,10 +2397,6 @@ dialog .actions {
   .btn,
   .btn--sm {
     font-size: var(--text-base);
-  }
-
-  .btn-icon {
-    width: var(--control-h-touch);
   }
 
   /* .otp input ties the touch-target rule above on specificity (0,1,1 each);
@@ -2594,15 +2482,6 @@ dialog .actions {
   .confirm-actions {
     flex-direction: column-reverse;
     gap: var(--space-5);
-  }
-
-  .stat {
-    padding: var(--space-7) var(--space-8);
-    gap: var(--space-1);
-  }
-
-  .stat-value {
-    font-size: 22px;
   }
 
   /* tables become stacked cards: header row gone, each row a card body */

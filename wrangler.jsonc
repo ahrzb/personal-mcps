@@ -27,10 +27,10 @@
   // (§15) — these lines are never queried by the product.
   "observability": { "enabled": true },
 
-  // CSS ships as a TEXT module and the pinned QuickJS interpreter ships as a precompiled
-  // WebAssembly module. `fallthrough` keeps Wrangler's defaults alive beside both rules.
+  // The pinned QuickJS interpreter ships as a precompiled WebAssembly module. `fallthrough`
+  // keeps Wrangler's defaults alive beside the rule. (The worker imports no CSS since pass 2's
+  // P0 — the one stylesheet is web/src's, served from the assets binding as /app.css.)
   "rules": [
-    { "type": "Text", "globs": ["**/*.css"], "fallthrough": true },
     { "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }
   ],
 

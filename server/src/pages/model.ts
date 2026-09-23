@@ -174,19 +174,17 @@ export const paths = {
   manifest: "/manifest.webmanifest",
   /** Push + notificationclick only — never a fetch handler (the no-SPA pin). */
   serviceWorker: "/sw.js",
-  /** The one stylesheet every page's document head links. */
-  stylesheet: "/styles.css",
   /**
    * The browser client's two files (§13), served by web.ts out of the ASSETS binding and
-   * linked by the SPA shell document — the script after the bootstrap block, the sheet
-   * after `stylesheet`, which it extends rather than replaces. Dotted, so both stay out of
-   * the username charset as the three above already do.
+   * linked by the SPA shell document — the script after the island, the sheet in the head
+   * as the hub's only stylesheet (the shared page sheet is layered inside it since pass 2's
+   * P0). Dotted, so both stay out of the username charset as the two above already do.
    */
   clientScript: "/app.js",
   clientStylesheet: "/app.css",
   /** The two PNGs the manifest's `icons` declares — the pair Chromium's install gate is
    *  built around — the first also the shell head's `rel="icon"`. Dotted, so both stay
-   *  out of the username charset as the three above already do. */
+   *  out of the username charset as the four above already do. */
   icon192: "/icon-192.png",
   icon512: "/icon-512.png",
 

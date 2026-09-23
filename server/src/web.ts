@@ -14,7 +14,7 @@
 // posted at one of its endpoints is answered 415 and the hub owns those targets instead
 // (see "The credential family" below, and pages/model's `paths.auth`); the chunked streaming
 // JSONL export framing (never buffered); the web-app manifest and the minimal install+push
-// service worker (no offline rendering); and the stylesheet the shell links.
+// service worker (no offline rendering); and the two bundle files the shell links.
 //
 // What a page SHOWS is NOT here: pages/model.ts owns every read and api.ts answers it as
 // JSON, so a handler below is a gate, a document-level check, and the shell — and the ops
@@ -56,9 +56,6 @@ import {
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
 import type { AuditExportQuery, LoginStep } from "./pages/model";
-// The one stylesheet, as bytes a worker can serve (see the *.css declaration in
-// workers-env.d.ts for why an import is how it gets here).
-import styles from "./pages/styles.css";
 
 /**
  * The one thing a request carries from a gate to the handler under it: the session the
@@ -117,9 +114,10 @@ type PageRouter = unknown;
  * - /oauth/connections — a 301 to /settings/clients, where §13 re-homed the bindings the
  *   consent screen produced. connection_list/connection_revoke are fronted by that pane,
  *   through `/api/hub/settings` and `/api/hub/settings/clients/connection_revoke`.
- * - /manifest.webmanifest, /sw.js, /styles.css — the PWA shell: installability, push,
- *   and the one stylesheet. The service worker handles push + notificationclick
- *   (opening /approvals/<id>) and never intercepts navigation (the no-SPA pin, §13).
+ * - /manifest.webmanifest, /sw.js — the PWA shell: installability and push. The service
+ *   worker handles push + notificationclick (opening /approvals/<id>) and never intercepts
+ *   navigation (the no-SPA pin, §13). /app.js and /app.css, the client bundle, come
+ *   straight out of the ASSETS binding.
  */
 export function pageRoutes(): PageRouter {
   // deps: hono · identity.requireOwnerSession · admin.ops · pages/model (the reads) ·
@@ -417,12 +415,12 @@ export function pageRoutes(): PageRouter {
   // navigation because it never registers to.
   app.get(paths.serviceWorker, () => new Response(SERVICE_WORKER, { headers: JAVASCRIPT }));
 
-  app.get(paths.stylesheet, () => new Response(styles, { headers: CSS }));
-
-  // The browser client, straight out of the ASSETS binding. The raw request goes through
-  // unmodified, so the asset lookup is `web/dist/app.js` / `web/dist/app.css` with no
-  // prefix to rewrite and no second spelling of either name; wrangler's `run_worker_first`
-  // is what makes these two routes the only reachable path into that directory.
+  // The browser client, straight out of the ASSETS binding — `/app.css` is the shell's one
+  // stylesheet since pass 2's P0, the shared sheet layered inside it (web/src/legacy.css).
+  // The raw request goes through unmodified, so the asset lookup is `web/dist/app.js` /
+  // `web/dist/app.css` with no prefix to rewrite and no second spelling of either name;
+  // wrangler's `run_worker_first` is what makes these two routes the only reachable path
+  // into that directory.
   app.get(paths.clientScript, (c) => env.ASSETS.fetch(c.req.raw));
   app.get(paths.clientStylesheet, (c) => env.ASSETS.fetch(c.req.raw));
 
@@ -916,7 +914,7 @@ async function shellDocument(session: OwnerSession, title: string): Promise<Resp
  *  session-less /login included, gets one head, one asset set and `render`'s headers. */
 function spaDocument(title: string, island: SpaShellProps["island"]): Promise<Response> {
   return render(
-    SpaShell({ title, island, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
+    SpaShell({ title, island, stylesheet: paths.clientStylesheet, script: paths.clientScript }),
   );
 }
 
@@ -978,7 +976,6 @@ function noSuchPage(): Response {
 }
 
 const TEXT = { "Content-Type": "text/plain; charset=utf-8" } as const;
-const CSS = { "Content-Type": "text/css; charset=utf-8" } as const;
 const JAVASCRIPT = { "Content-Type": "text/javascript; charset=utf-8" } as const;
 // No cache headers, like every other shell asset: an unversioned URL under a year-long
 // `immutable` would make the icon the one asset a deploy could never replace.

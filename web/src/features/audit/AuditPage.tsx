@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { useApi } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
+import { usePreviewTransient } from "@/preview/transient";
 import { auditWindowQuery } from "@/lib/queries";
 import type { AuditWindowResponse, AuditWindowRow } from "@/lib/types";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -136,7 +137,7 @@ function Explorer({
 
   const [shown, setShown] = useState({ events: EVENTS_PAGE, sessions: SESSIONS_PAGE });
   const [expandedGroups, setExpandedGroups] = useState<Partial<Record<FacetField, boolean>>>({});
-  const [filterLevel, setFilterLevel] = useState(false);
+  const [filterLevel, setFilterLevel] = useState(usePreviewTransient().filtersLevel === true);
   // A changed selection is a different list, so "Load more" starts over: keeping 600 revealed
   // rows across a facet click would hand the reader a page they never scrolled.
   useEffect(() => setShown({ events: EVENTS_PAGE, sessions: SESSIONS_PAGE }), [key]);

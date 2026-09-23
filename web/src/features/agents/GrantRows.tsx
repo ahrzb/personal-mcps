@@ -23,7 +23,7 @@ import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { Badge, BadgeRemove } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupSegment } from "@/components/ui/radio-group";
-import { GroupHead, GroupHeadNote, ListRow, ListRowControl, ListRowDetail, Via } from "@/chrome/Listing";
+import { GroupHead, GroupHeadNote, ListingNote, ListRow, ListRowControl, ListRowDetail, RowLink, Via } from "@/chrome/Listing";
 
 /** What one entry's control can say. `none` contributes NOTHING to the saved set — that is
  *  how this editor revokes, since the op replaces the pair's whole set. */
@@ -221,11 +221,7 @@ export function DropButton({ entry, onChoose }: { entry: string; onChoose: Choos
  * because that is what a client-side `Link` takes: a `?sel=` appended to `to` would be part
  * of the pathname and would match no route.
  */
-export type RowLink = (sel: string) => { to: string; search: Record<string, string> };
-
-/** A row's name as its link, stretched by its `::after` over the whole `ListRow`, so a click
- *  anywhere on the row opens its details; the control column sits above it. */
-const ROW_LINK = "font-mono after:absolute after:inset-0";
+export type RowLinkTo = (sel: string) => { to: string; search: Record<string, string> };
 
 /** One listing row of the grant editor. */
 export function GrantRow({
@@ -234,7 +230,7 @@ export function GrantRow({
   onChoose,
 }: {
   row: AgentListRow;
-  link: RowLink;
+  link: RowLinkTo;
   onChoose: ChooseEntry;
 }): ReactNode {
   if (row.kind === "undeclared") {
@@ -261,9 +257,9 @@ export function GrantRow({
     return (
       <ListRow>
         <div>
-          <Link className={ROW_LINK} {...link(row.sel)}>
+          <RowLink className="font-mono" render={<Link {...link(row.sel)} />}>
             {row.entry}
-          </Link>
+          </RowLink>
           {row.builtin ? (
             <>
               {" "}
@@ -282,9 +278,9 @@ export function GrantRow({
     return (
       <ListRow>
         <div>
-          <Link className={ROW_LINK} {...link(row.sel)}>
+          <RowLink className="font-mono" render={<Link {...link(row.sel)} />}>
             {row.entry}
-          </Link>
+          </RowLink>
           <ListRowDetail warn={row.dormant}>{row.detail}</ListRowDetail>
         </div>
         <ListRowControl>
@@ -296,9 +292,9 @@ export function GrantRow({
   return (
     <ListRow>
       <div>
-        <Link className={ROW_LINK} {...link(row.sel)}>
+        <RowLink className="font-mono" render={<Link {...link(row.sel)} />}>
           {row.name}
-        </Link>
+        </RowLink>
         {/* The app's own prose, rendered by the hub and inline only: a row is one line high,
             and a fence or a list in a description must not be allowed to make it three. The
             markup is `pages/markdown.ts`'s output — the one renderer allowed to produce it —
@@ -336,7 +332,7 @@ export function GrantGroup({
   onChoose,
 }: {
   group: AgentListGroup;
-  link: RowLink;
+  link: RowLinkTo;
   onChoose: ChooseEntry;
 }): ReactNode {
   return (
@@ -353,7 +349,7 @@ export function GrantGroup({
       {group.state === null ? (
         group.rows.map((row) => <GrantRow key={row.entry} row={row} link={link} onChoose={onChoose} />)
       ) : (
-        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{group.state}</p>
+        <ListingNote>{group.state}</ListingNote>
       )}
     </>
   );

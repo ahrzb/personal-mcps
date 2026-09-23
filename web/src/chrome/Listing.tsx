@@ -2,12 +2,13 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { Muted, Note } from "./Text";
 
 /**
- * The split pane's vocabulary (legacy.css's `.listing`, `.lh`, `.gh`, `.cr`, `.save`,
- * `.details`, `.dh`, `.db` and their parts): a LISTING of rows on the left — a head, grouped
- * rows that scroll, a foot — and the DETAILS of the selected row beside it. Both sit in
- * `chrome/Page`'s `<Pane split>`.
+ * The split pane's vocabulary (legacy.css's `.listing`, `.lh`, `.gh`, `.cr`, `.row-link`,
+ * `.save`, `.details`, `.dh`, `.db` and their parts): a LISTING of rows on the left — a head,
+ * grouped rows that scroll, a foot — and the DETAILS of the selected row beside it. Both sit
+ * in `chrome/Page`'s `<Pane split>`.
  *
  * Below 1024px on a page with levels (`data-level` on the `<main>`, see `chrome/Page`) the
  * listing is level 2 and the details level 3, one at a time, full width; the listing's own
@@ -67,15 +68,27 @@ export const ListingHead = part(
   "flex flex-col gap-2 border-b px-4 py-3.5 [[data-level]_&]:max-lg:[&:not(:has(>:not([data-slot=listing-title])))]:hidden",
 );
 
-/** The listing's name, 16px semibold; below 1024px on a page with levels the level header
- *  carries it instead. */
-export const ListingTitle = part("listing-title", "text-lg font-semibold [[data-level]_&]:max-lg:hidden");
+/**
+ * `.listing-title`, 16px semibold: the listing's name in its head, and the selected row's name
+ * in a `DetailsHead` or a card in the rows. Inside a `ListingHead` below 1024px on a page with
+ * levels it goes, since the level header carries it; anywhere else it stays.
+ */
+export const ListingTitle = part(
+  "listing-title",
+  "text-lg font-semibold [[data-level]_[data-slot=listing-head]_&]:max-lg:hidden",
+);
 
 /** A 12px muted line saying what the listing holds or reaches. */
 export const Sum = part("sum", "text-xs leading-normal text-muted-foreground");
 
 /** The listing's scrolling region, between its head and its foot. */
 export const ListingScroll = part("listing-scroll", "min-h-0 flex-1 overflow-auto");
+
+/** `.note.gh-state`: a `Note` standing in for rows — why a group or the whole listing is
+ *  empty, or what a filter left — inset 16px, as the rows are. A `<p>`. */
+export function ListingNote({ className, ...props }: useRender.ComponentProps<"p">): ReactNode {
+  return <Note className={cn("p-4", className)} {...props} />;
+}
 
 /**
  * A group's heading: its name and count on the left, a note or a small form on the right,
@@ -134,6 +147,27 @@ export function ListRow({
   });
 }
 
+/**
+ * `.row-link`: the link that makes a whole row one target — a listing's `ListRow` or a table's
+ * `TableRow link` — its `::after` stretched over the nearest positioned box, the row. An
+ * `<a>`; `render={<Link … />}` for a client route, `render={<button type="button" />}` for a
+ * row that opens rather than navigates. What else the row holds is raised above it.
+ */
+export function RowLink({ className, render, ...props }: useRender.ComponentProps<"a">): ReactNode {
+  return useRender({
+    defaultTagName: "a",
+    render,
+    props: mergeProps<"a">({ className: cn("after:absolute after:inset-0", className) }, props),
+    state: { slot: "row-link" },
+  });
+}
+
+/** `.ty`: the dim 11px word after a row's name saying what kind of thing it is — a schema
+ *  path's type, a pattern's family. A `<span>`. */
+export function ListRowType({ className, ...props }: ComponentProps<"span">): ReactNode {
+  return <span data-slot="list-row-type" className={cn("text-2xs text-ring", className)} {...props} />;
+}
+
 /** The 11px line under a row's name; `warn` is a dormant entry's amber. */
 export function ListRowDetail({
   warn = false,
@@ -188,16 +222,10 @@ export const SaveBar = part(
 /** The end of a `SaveBar`: its counts and its verbs, pushed to the edge on a phone. */
 export const SaveBarEnd = part("save-bar-end", "flex items-center gap-2.5 [[data-level]_&]:max-lg:ml-auto");
 
-/** The saved counts in a `SaveBarEnd`: muted, 13px, and gone below 1024px on a page with levels
- *  (the head's reach line says them too). A `<span>`. */
+/** The saved counts in a `SaveBarEnd`: a `Muted` span, gone below 1024px on a page with levels
+ *  (the head's reach line says them too). */
 export function SaveBarCount({ className, ...props }: ComponentProps<"span">): ReactNode {
-  return (
-    <span
-      data-slot="save-bar-count"
-      className={cn("text-sm text-muted-foreground [[data-level]_&]:max-lg:hidden", className)}
-      {...props}
-    />
-  );
+  return <Muted data-slot="save-bar-count" className={cn("[[data-level]_&]:max-lg:hidden", className)} {...props} />;
 }
 
 /** The details column beside the listing, on the sunken ground, scrolling on its own; on a

@@ -3,9 +3,11 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
-import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
+import { Actions } from "@/chrome/Actions";
+import { Page, PageHead, PageSubtitle, PageTitle, Section, SectionTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { CodeBlock, Muted, Note, RowTitle } from "@/chrome/Text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -79,8 +81,8 @@ export function ApprovalsPage(): ReactNode {
           <PushToggle />
         </PageHead>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Pending</h2>
+        <Section>
+          <SectionTitle>Pending</SectionTitle>
           <QueryState
             query={pending}
             skeleton={<Skeleton rows={3} />}
@@ -96,17 +98,17 @@ export function ApprovalsPage(): ReactNode {
           >
             {(data: ApprovalsResponse) => data.approvals.map((row) => <PendingCard key={row.id} row={row} now={now} />)}
           </QueryState>
-        </section>
+        </Section>
 
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">History</h2>
+        <Section>
+          <SectionTitle>History</SectionTitle>
           <QueryState query={history} skeleton={<Skeleton rows={6} />}>
             {(data: ApprovalsResponse) => <History {...historyOf(data.approvals, historyLimit)} limit={historyLimit} />}
           </QueryState>
-          <div className="max-w-[72ch] text-xs text-muted-foreground">
+          <Note render={<div />}>
             History prunes with the audit trail after 7 days. Times are local.
-          </div>
-        </section>
+          </Note>
+        </Section>
       </Page>
     </Shell>
   );
@@ -117,9 +119,9 @@ export function ApprovalsPage(): ReactNode {
  * the principal and request time under them; the narrow one puts the tool alone and folds the
  * rest into one compact line — two spellings of the same fields, not two data shapes.
  *
- * The arguments are a plain (non-`<pre>`) block on purpose: normal white-space collapses
- * `JSON.stringify`'s indentation to single spaces, which is the compact rendering the
- * artboards draw for small objects, while still wrapping a bulky one instead of overflowing.
+ * The arguments are `CodeBlock` on a `<div>` (the detail page's is its `<pre>`). Either way it
+ * is `pre-wrap`, as legacy `.code` was: `JSON.stringify`'s indentation stays, and a bulky body
+ * wraps anywhere instead of overflowing the card.
  */
 function PendingCard({ row, now }: { row: ApprovalRow; now: number }): ReactNode {
   const decide = useDecision(row);
@@ -129,32 +131,32 @@ function PendingCard({ row, now }: { row: ApprovalRow; now: number }): ReactNode
         <div>
           <div className="flex items-baseline gap-2 max-md:hidden">
             <div className="font-mono text-md font-semibold">{row.tool}</div>
-            <div className="text-sm text-muted-foreground">on {row.appSlug}</div>
+            <Muted render={<div />}>on {row.appSlug}</Muted>
           </div>
           <div className="font-mono text-md font-semibold md:hidden">{row.tool}</div>
-          <div className="mt-0.5 text-sm text-muted-foreground max-md:hidden">
+          <Muted render={<div />} className="mt-0.5 max-md:hidden">
             {principalOf(row)} · requested {listStamp(row.createdAt)}
-          </div>
-          <div className="max-w-[72ch] text-xs text-muted-foreground md:hidden">
+          </Muted>
+          <Note render={<div />} className="md:hidden">
             {row.appSlug} · {principalOf(row)} · {listStamp(row.createdAt)}
-          </div>
+          </Note>
         </div>
         <div className="flex shrink-0 items-center gap-2.5 max-md:flex-col max-md:items-end max-md:gap-1">
           <Badge variant="warning">pending</Badge>
           <div className="text-xs text-muted-foreground">expires in {minutesUntil(now, row.expiresAt)} min</div>
         </div>
       </div>
-      <div className="m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle">
+      <CodeBlock render={<div />}>
         {JSON.stringify(row.args, null, 2)}
-      </div>
-      <div className="flex flex-wrap justify-end gap-3 max-md:*:flex-1">
+      </CodeBlock>
+      <Actions grow>
         <Button type="button" variant="danger-outline" size="sm" disabled={decide.pending} onClick={() => decide.run("reject")}>
           Reject
         </Button>
         <Button type="button" size="sm" disabled={decide.pending} onClick={() => decide.run("approve")}>
           Approve
         </Button>
-      </div>
+      </Actions>
     </Card>
   );
 }
@@ -230,7 +232,7 @@ function History({
           </TableBody>
         </Table>
       </Card>
-      <div className="text-sm text-muted-foreground">
+      <Muted render={<div />}>
         {hasMore ? (
           <>
             Showing last {limit} decisions ·{" "}
@@ -243,7 +245,7 @@ function History({
             Showing {history.length} decision{history.length === 1 ? "" : "s"}
           </>
         )}
-      </div>
+      </Muted>
     </>
   );
 }
@@ -257,9 +259,9 @@ function HistoryRow({ row }: { row: ApprovalRow }): ReactNode {
   return (
     <TableRow>
       <TableCell className="max-md:hidden font-mono text-xs whitespace-nowrap text-muted-foreground">{when}</TableCell>
-      <TableCell className="max-md:hidden font-mono text-xs wrap-anywhere">{principalOf(row)}</TableCell>
+      <TableCell variant="mono" className="max-md:hidden">{principalOf(row)}</TableCell>
       <TableCell className="max-md:hidden">{row.appSlug}</TableCell>
-      <TableCell className="max-md:hidden font-mono text-xs wrap-anywhere">
+      <TableCell variant="mono" className="max-md:hidden">
         <Link to={paths.approval(row.id)}>{row.tool}</Link>
       </TableCell>
       <TableCell className="max-md:hidden">
@@ -267,12 +269,12 @@ function HistoryRow({ row }: { row: ApprovalRow }): ReactNode {
       </TableCell>
       <TableCell className="hidden max-md:flex max-md:items-center max-md:justify-between max-md:gap-3">
         <div>
-          <Link className="font-mono text-base font-medium" to={paths.approval(row.id)}>
+          <RowTitle className="font-mono" render={<Link to={paths.approval(row.id)} />}>
             {row.tool}
-          </Link>
-          <div className="max-w-[72ch] text-xs text-muted-foreground">
+          </RowTitle>
+          <Note render={<div />}>
             {when} · {principalOf(row)} · {row.appSlug}
-          </div>
+          </Note>
         </div>
         <Badge variant={outcome.tone}>{outcome.label}</Badge>
       </TableCell>

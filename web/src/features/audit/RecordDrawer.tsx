@@ -23,12 +23,12 @@ import { JsonTree } from "./JsonTree";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Eyebrow, Note } from "@/chrome/Text";
 import {
   BACK,
-  EYEBROW,
+  CLOCK,
   HOVER_RING,
   LEVEL_HEAD,
-  NOTE,
   OutcomeBadge,
   SearchBox,
   SkelBar,
@@ -107,7 +107,7 @@ export function RecordDrawer({
                     </Button>
                   </Empty>
                 ) : (
-                  <p className={NOTE}>Reading the record…</p>
+                  <Note>Reading the record…</Note>
                 )}
               </div>
             </>
@@ -126,7 +126,7 @@ export function RecordDrawer({
                 />
 
                 <div>
-                  <p className={EYEBROW}>Record</p>
+                  <Eyebrow render={<p />}>Record</Eyebrow>
                   <Fields row={head} onFilter={onFilter} />
                 </div>
 
@@ -134,18 +134,18 @@ export function RecordDrawer({
                   <>
                     <BodySkeleton label="Arguments" />
                     <BodySkeleton label="Result" />
-                    <p className={NOTE}>Bodies are read on their own, by id — the fields above came with the row.</p>
+                    <Note>Bodies are read on their own, by id — the fields above came with the row.</Note>
                   </>
                 ) : (
                   <>
                     <Section label="Arguments" value={full?.args} open={open} setOpen={setOpen} needle={needle} />
                     <Section label="Result" value={full?.result} open={open} setOpen={setOpen} needle={needle} />
-                    {full?.noBodies === undefined ? null : <p className={NOTE}>{NO_BODIES_SENTENCE[full.noBodies]}</p>}
+                    {full?.noBodies === undefined ? null : <Note>{NO_BODIES_SENTENCE[full.noBodies]}</Note>}
                     <Section label="Detail" value={head.detail} open={open} setOpen={setOpen} needle={needle} />
                     {/* Said once for the whole record rather than per section: three "no
                         matches" under three headings reads as three failures. */}
                     {needle.trim() !== "" && matchesIn([full?.args, full?.result, head.detail], needle) === 0 ? (
-                      <p className={NOTE}>No matches in this record.</p>
+                      <Note>No matches in this record.</Note>
                     ) : null}
                   </>
                 )}
@@ -211,7 +211,7 @@ function Head({
       >
         <Titled of={title} />
       </SheetTitle>
-      {time === undefined ? null : <span className={`${NOTE} whitespace-nowrap`}>{time}</span>}
+      {time === undefined ? null : <Note render={<span />} className="whitespace-nowrap">{time}</Note>}
       <Button variant="outline" size="sm" className="ml-auto max-md:hidden" onClick={onClose}>
         Close
       </Button>
@@ -268,7 +268,7 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
             the sheet's measure so a three-clause refusal does not run the drawer's width. */}
         {shown.label === null ? null : <> <span className="font-sans">{shown.label}</span></>}
         {shown.code === null ? null : <> <span className="font-mono text-muted-foreground">{shown.code}</span></>}
-        {sentence === null ? null : <span className={WHY}>{sentence}</span>}
+        {sentence === null ? null : <Note render={<span />} className={WHY}>{sentence}</Note>}
       </span>,
     ],
     ["duration", fmtDuration(row.durationMs)],
@@ -328,7 +328,7 @@ function Section({
   const path = label.toLowerCase();
   return (
     <div>
-      <p className={EYEBROW}>{label}</p>
+      <Eyebrow render={<p />}>{label}</Eyebrow>
       <JsonTree
         value={value}
         path={path}
@@ -354,7 +354,7 @@ function matchesIn(bodies: unknown[], needle: string): number {
 function BodySkeleton({ label }: { label: string }): ReactNode {
   return (
     <div aria-busy="true">
-      <p className={EYEBROW}>{label}</p>
+      <Eyebrow render={<p />}>{label}</Eyebrow>
       <SkelBar width="70%" className="block" />
       <SkelBar width="52%" className="mt-1.5 block" />
     </div>
@@ -384,11 +384,11 @@ function Chain({
   if (siblings.length <= 1) return null;
   return (
     <div>
-      <p className={EYEBROW}>This approval, end to end</p>
+      <Eyebrow render={<p />}>This approval, end to end</Eyebrow>
       <div className="flex flex-col gap-0.5">
         {siblings.map((sibling) => (
           <button type="button" key={sibling.id} className={SIBLING} onClick={() => onOpenRecord(sibling)}>
-            <span className="w-[52px] flex-none font-mono text-muted-foreground">{fmtClock(sibling.ts)}</span>
+            <span className={CLOCK}>{fmtClock(sibling.ts)}</span>
             <span className={sibling.id === row.id ? "font-mono font-semibold" : "font-mono"}>
               <Titled of={titleOf(sibling)} />
             </span>
@@ -397,10 +397,10 @@ function Chain({
           </button>
         ))}
       </div>
-      <p className={NOTE}>
+      <Note>
         Every row carrying this <span className="font-mono">detail.approvalId</span>, oldest first — the refused call, the
         request, your answer, and the dispatch that followed.
-      </p>
+      </Note>
     </div>
   );
 }
@@ -435,8 +435,8 @@ const CELL =
 const ID_BUTTON =
   "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] text-inherit underline underline-offset-2 max-md:inline-flex max-md:items-center max-md:self-stretch";
 
-/** What the outcome means, on its own line under the code. */
-const WHY = `${NOTE} mt-0.5 block font-sans leading-normal [word-break:normal] wrap-anywhere max-md:mt-1 max-md:flex-[1_1_100%]`;
+/** What the outcome means, a `Note` on its own line under the code. */
+const WHY = "mt-0.5 block font-sans leading-normal [word-break:normal] wrap-anywhere max-md:mt-1 max-md:flex-[1_1_100%]";
 
 /** A line of the approval's timeline, opening that row's record. */
 const SIBLING = `flex min-h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit ${HOVER_RING} max-md:min-h-control-touch`;

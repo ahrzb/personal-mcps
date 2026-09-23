@@ -87,9 +87,9 @@ export function useFlashParams(search: Record<string, unknown>): URLSearchParams
   return identity === "" ? held : params;
 }
 
-/** Tone-appropriate glyph — danger, warning, then success; `stroke="currentColor"` so it
- *  always matches the alert's own text colour. */
-function NoticeIcon({ tone }: { tone: NoticeTone }): ReactNode {
+/** An `Alert`'s leading glyph, 16px, for its tone — danger, warning, then success;
+ *  `stroke="currentColor"` so it always matches the alert's own text colour. */
+export function NoticeIcon({ tone }: { tone: NoticeTone }): ReactNode {
   if (tone === "danger") {
     return (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

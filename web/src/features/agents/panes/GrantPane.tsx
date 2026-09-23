@@ -23,10 +23,10 @@ import type { AppRow } from "@/lib/types";
 import { effectiveRolesOf, reachabilityFor, ROLE_FAMILIES } from "../door";
 import { itemProse, KIND_OF_FAMILY, subjectOf } from "../grant-editor";
 import { statusOf } from "../derive";
-import { MUTED, NOTE } from "../AgentFrame";
+import { Muted, Note } from "@/chrome/Text";
 import type { AgentPageData } from "../AgentFrame";
 import { FilterForm } from "./FilterForm";
-import { GroupHead, GroupHeadNote, Listing, ListingHead, ListingScroll, ListingTitle, Sum } from "@/chrome/Listing";
+import { GroupHead, GroupHeadNote, Listing, ListingHead, ListingNote, ListingScroll, ListingTitle, Sum } from "@/chrome/Listing";
 import { TitleRow } from "@/chrome/Page";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -140,7 +140,7 @@ export function GrantPane({
       <ListingHead>
         <TitleRow>
           <ListingTitle render={<span />}>Grant another app</ListingTitle>
-          <span className={NOTE}>apps {agent} holds nothing on</span>
+          <Note render={<span />}>apps {agent} holds nothing on</Note>
         </TitleRow>
         <FilterForm
           to={paths.agentPane(agent, "grant")}
@@ -156,9 +156,9 @@ export function GrantPane({
       </ListingHead>
       <ListingScroll>
         {total === 0 ? (
-          <p className={`${NOTE} p-4`}>
+          <ListingNote>
             {agent} already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it.
-          </p>
+          </ListingNote>
         ) : (
           <>
             <GroupHead>
@@ -201,19 +201,19 @@ function GrantCard({ card, agent, q }: { card: GrantCardView; agent: string; q: 
     <div className="grid grid-cols-[1fr_auto] gap-x-4 border-b border-row-border px-4 py-3.5 max-lg:grid-cols-1 max-lg:gap-y-2">
       <div className="flex min-w-0 flex-col gap-1.5">
         <TitleRow>
-          <span className="text-lg font-semibold">{app.name}</span>
+          <ListingTitle render={<span />}>{app.name}</ListingTitle>
           <Badge variant="mono">{app.slug}</Badge>
           <Badge variant="mono">{app.kind}</Badge>
           {status === null ? null : <Badge variant="muted">{status}</Badge>}
         </TitleRow>
         {app.description === "" ? null : <div>{app.description}</div>}
-        <div className={NOTE}>
+        <Note render={<div />}>
           {card.counts === "" ? null : `${card.counts} · `}roles{" "}
           {card.roles.length === 0 ? "none" : card.roles.join(", ")} ·{" "}
           <Link to={paths.agentPane(agent, "grant")} search={toggleSearch}>
             {card.open ? "hide" : "show endpoints"}
           </Link>
-        </div>
+        </Note>
         {card.open ? (
           // Its endpoints, scrolling inside the card: a card stays a card however many
           // endpoints the app advertises.
@@ -240,7 +240,7 @@ function GrantCard({ card, agent, q }: { card: GrantCardView; agent: string; q: 
                 </div>
                 <div className="inline-flex flex-wrap justify-end gap-1">
                   {endpoint.roles.length === 0 ? (
-                    <span className={MUTED}>only via all or by name</span>
+                    <Muted>only via all or by name</Muted>
                   ) : (
                     endpoint.roles.map((role) => (
                       <Badge variant="mono" key={role}>

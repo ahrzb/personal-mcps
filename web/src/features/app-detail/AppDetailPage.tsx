@@ -24,6 +24,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { Actions } from "@/chrome/Actions";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { Kv, KvList } from "@/chrome/Kv";
 import { Tiles } from "@/chrome/Listing";
@@ -33,7 +34,7 @@ import type { PaneEntry, PaneMarker } from "@/chrome/Panes";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { Skeleton } from "@/chrome/States";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
+import { Badge, BadgeRow } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DialogFooter } from "@/components/ui/dialog";
@@ -254,7 +255,7 @@ export function AppDetailPage(): ReactNode {
               <Crumb render={<Link to={paths.apps} />}>Apps</Crumb>
               <CrumbSep />
               <PageTitle>{row.name}</PageTitle>
-              <div className="flex flex-wrap items-center gap-1">
+              <BadgeRow>
                 <Badge variant="mono" size="title">
                   {slug}
                 </Badge>
@@ -266,7 +267,7 @@ export function AppDetailPage(): ReactNode {
                     {status}
                   </Badge>
                 )}
-              </div>
+              </BadgeRow>
             </TitleRow>
             {row.description === "" ? null : <PageSubtitle>{row.description}</PageSubtitle>}
           </div>
@@ -553,7 +554,7 @@ function UpstreamCard({
       {oauth ? (
         // On a phone the bare Disconnect takes the row's free width; the Connect form keeps
         // its own, as it always has.
-        <div className="flex flex-wrap items-center justify-end gap-3">
+        <Actions>
           <form method="post" action={paths.appConnect(slug)}>
             <input type="hidden" name="csrf" value={csrf} />
             <Button type="submit" variant="outline" size="sm">
@@ -569,7 +570,7 @@ function UpstreamCard({
           >
             Disconnect
           </Button>
-        </div>
+        </Actions>
       ) : null}
     </Card>
   );
@@ -623,7 +624,7 @@ function AppConfirm({
         text="It refuses connections and leaves the list — tokens, grants and history are kept."
         onClose={onClose}
       >
-        <Actions
+        <ConfirmFooter
           word="Archive"
           pending={archive.isPending}
           onCancel={onClose}
@@ -639,7 +640,7 @@ function AppConfirm({
         text="Revokes its tokens, closes the live connection and removes every grant. This cannot be undone."
         onClose={onClose}
       >
-        <Actions
+        <ConfirmFooter
           word="Delete"
           pending={remove.isPending}
           onCancel={onClose}
@@ -661,7 +662,7 @@ function AppConfirm({
       }
       onClose={onClose}
     >
-      <Actions
+      <ConfirmFooter
         word="Revoke"
         pending={revoke.isPending}
         onCancel={onClose}
@@ -673,7 +674,7 @@ function AppConfirm({
 
 /** Every dialog's foot: Cancel, then the one destructive verb. Shared because the only
  *  thing that differs between four confirmations is the question above it. */
-function Actions({
+function ConfirmFooter({
   word,
   pending,
   onCancel,

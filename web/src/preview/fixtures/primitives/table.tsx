@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { PrimitiveState } from "../../seed";
+import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Columns } from "./Columns";
@@ -9,9 +10,11 @@ import { Columns } from "./Columns";
  * write, and /audit's `.a-etab` (`size="dense"`), each beside `<Table>`.
  *
  * The `next` side is also the recipe a page follows: `.table .cell-*` are descendant rules of
- * the `.table` class, so a converted page spells each cell in utilities, exactly as below
- * (`CELL`). Classes that are not scoped under `.table` (`.row-link`, `.cell-name`, `.mono`,
- * `.badge`, audit's `a-tmono` and `a-who`) stay on both sides; they are other components' business.
+ * the `.table` class, so a converted page draws a link row with `TableRow link`, the actions
+ * and mono cells with `TableCell`'s variants and the actions cell's buttons at `size="cell"`,
+ * and spells the other cells in utilities, exactly as below (`CELL`). Classes that are not
+ * scoped under `.table` (`.row-link`, `.cell-name`, `.mono`, `.badge`, `.row-chevron`,
+ * audit's `a-tmono` and `a-who`) stay on both sides; they are other components' business.
  *
  * Hover is not benched: the compare never moves the pointer.
  */
@@ -78,7 +81,7 @@ export const tableStates: Record<string, PrimitiveState> = {
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow className={CELL.linkRow}>
+              <TableRow link>
                 <TableCell>
                   <div className="cell-name mono">
                     <a className="row-link" href="#triage-bot">
@@ -89,8 +92,8 @@ export const tableStates: Record<string, PrimitiveState> = {
                 </TableCell>
                 <TableCell className={CELL.muted}>3 apps</TableCell>
                 <TableCell className={CELL.muted}>Aug 24, 2026</TableCell>
-                <TableCell className={`${CELL.actions} relative z-1`}>
-                  <a className={`btn btn--danger-outline btn--sm ${CELL.actionButton}`} href="#delete">
+                <TableCell variant="actions">
+                  <a className={buttonVariants({ variant: "danger-outline", size: "cell" })} href="#delete">
                     Delete
                   </a>
                   <span className="row-chevron">
@@ -104,7 +107,7 @@ export const tableStates: Record<string, PrimitiveState> = {
                 </TableCell>
                 <TableCell className={CELL.muted}>no grants</TableCell>
                 <TableCell className={CELL.time}>Jul 02, 2026</TableCell>
-                <TableCell className={CELL.actions}>
+                <TableCell variant="actions">
                   <span className="badge badge--muted">Expired</span>
                 </TableCell>
               </TableRow>
@@ -173,8 +176,8 @@ export const tableStates: Record<string, PrimitiveState> = {
               {HISTORY.map((row) => (
                 <TableRow key={row.tool}>
                   <TableCell className={`max-md:hidden ${CELL.time}`}>{row.when}</TableCell>
-                  <TableCell className={`max-md:hidden ${CELL.mono}`}>{row.principal}</TableCell>
-                  <TableCell className={`max-md:hidden ${CELL.mono}`}>
+                  <TableCell variant="mono" className="max-md:hidden">{row.principal}</TableCell>
+                  <TableCell variant="mono" className="max-md:hidden">
                     <a href="#tool">{row.tool}</a>
                   </TableCell>
                   <TableCell className="max-md:hidden">
@@ -286,19 +289,10 @@ export const tableStates: Record<string, PrimitiveState> = {
 const CELL = {
   /** `.cell-muted` */
   muted: "text-muted-foreground",
-  /** `.cell-mono`: breaks anywhere, so an identifier never widens the card. */
-  mono: "font-mono text-xs wrap-anywhere",
   /** `.cell-time` */
   time: "font-mono text-xs text-muted-foreground whitespace-nowrap",
-  /** `.cell-actions`: right-aligned wide; its own row, left-aligned, under the card at 390. */
-  actions: "text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left",
-  /** `.table .cell-actions .btn`: 32px and 13px wide; a 44px half-row at 390. */
-  actionButton:
-    "h-control-sm px-2.5 text-sm ml-1 max-md:h-control-touch max-md:flex-1 max-md:px-3 max-md:text-base max-md:ml-0",
   /** `.cell-summary`: the one line a phone shows in place of the columns. */
   summary: "hidden max-md:flex max-md:items-center max-md:justify-between max-md:gap-3",
-  /** `.agent-row` / `.app-row`: the whole row is the link inside it. */
-  linkRow: "relative cursor-pointer hover:bg-muted",
   /** `.row--dim`: every cell and link recedes, beating a cell's own colour. */
   dimRow: "[&>td]:text-ring [&>td_a]:text-ring",
 };

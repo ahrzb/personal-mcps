@@ -29,24 +29,27 @@ import { paths } from "@/lib/paths";
 import { auditQuery, useGrantEditor } from "@/lib/queries";
 import type { AuditRow, ListedAgent, RoleDeclaration, RoleFamily, Violation } from "@/lib/types";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
-import { KvList } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
 import {
   Details,
   DetailsBody,
   DetailsHead,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  RowLink,
   SaveBar,
   SaveBarEnd,
   Sum,
 } from "@/chrome/Listing";
-import { TitleRow } from "@/chrome/Page";
+import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { QueryState, Refreshing, Skeleton } from "@/chrome/States";
+import { Eyebrow, Muted, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -54,7 +57,7 @@ import { Card } from "@/components/ui/card";
 import { DialogFooter } from "@/components/ui/dialog";
 import { usePreviewTransient } from "@/preview/transient";
 import { GrantGroup, reachLine } from "@/features/agents/GrantRows";
-import type { RowLink } from "@/features/agents/GrantRows";
+import type { RowLinkTo } from "@/features/agents/GrantRows";
 import { draftOf, grantEditorOf } from "@/features/agents/grant-editor";
 import type { GrantDraft } from "@/features/agents/grant-editor";
 import { grantEntryOf, reachabilityFor } from "@/features/agents/door";
@@ -116,7 +119,7 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Agents</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">who can call this app, and how</span>
+            <Note render={<span />}>who can call this app, and how</Note>
           </TitleRow>
         </ListingHead>
         <ListingScroll>
@@ -132,7 +135,7 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Agents</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">who can call this app, and how</span>
+            <Note render={<span />}>who can call this app, and how</Note>
             <Refreshing active={refreshing} />
           </TitleRow>
           <Sum>
@@ -143,7 +146,7 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
               rows do not depend on it — they simply print no call count until it lands. */}
           <QueryState
             query={calls}
-            skeleton={<span className="text-sm text-muted-foreground">counting calls…</span>}
+            skeleton={<Muted>counting calls…</Muted>}
             children={() => null}
           />
         </ListingHead>
@@ -158,10 +161,10 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
               calls={calls.isSuccess ? (counts[agent.slug] ?? 0) : null}
             />
           ))}
-          <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+          <ListingNote>
             Granting a new agent starts from the agent's own page — <a href={paths.agents}>Agents</a> → the agent →
             Grant another app.
-          </p>
+          </ListingNote>
         </ListingScroll>
       </Listing>
       {picked === null ? (
@@ -225,15 +228,15 @@ function AgentRow({
   return (
     <ListRow>
       <div>
-        <Link className="font-mono after:absolute after:inset-0" to="." search={{ sel: `agent:${agent.slug}` }}>
+        <RowLink className="font-mono" render={<Link to="." search={{ sel: `agent:${agent.slug}` }} />}>
           {agent.slug}
-        </Link>{" "}
-        <span className="max-w-[72ch] text-xs text-muted-foreground">{agent.description}</span>
+        </RowLink>{" "}
+        <Note render={<span />}>{agent.description}</Note>
         <ListRowDetail>
           <div>
-            <span className="text-sm text-muted-foreground">allowed</span>{" "}
+            <Muted>allowed</Muted>{" "}
             {allowed.length === 0 ? (
-              <span className="text-sm text-muted-foreground">—</span>
+              <Muted>—</Muted>
             ) : (
               allowed.map((entry) => (
                 <Badge variant="mono" size="wrap" key={entry.entry}>
@@ -243,9 +246,9 @@ function AgentRow({
             )}
           </div>
           <div>
-            <span className="text-sm text-muted-foreground">ask first</span>{" "}
+            <Muted>ask first</Muted>{" "}
             {askFirst.length === 0 ? (
-              <span className="text-sm text-muted-foreground">—</span>
+              <Muted>—</Muted>
             ) : (
               askFirst.map((entry) => (
                 <Badge variant="warning" size="wrap" key={entry.entry}>
@@ -285,34 +288,26 @@ function UnselectedDetails({
   return (
     <Details>
       <DetailsHead>
-        <div className="text-lg font-semibold">Agents</div>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">Select an agent to edit what it may call on {slug}.</p>
+        <ListingTitle>Agents</ListingTitle>
+        <Note>Select an agent to edit what it may call on {slug}.</Note>
       </DetailsHead>
       <DetailsBody>
         <Card size="sm" render={<section />}>
-          <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Per tool</div>
+          <Eyebrow>Per tool</Eyebrow>
           <KvList>
             {subjects.slice(0, PER_TOOL_ROWS).map((subject) => {
               const reached = door.reach(subject, "tools");
-              // A details pair, but keyed by the tool's own name at its natural width and in
-              // the body colour, rather than `Kv`'s fixed muted key column.
               return (
-                <div
-                  className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5"
-                  key={subject}
-                >
-                  <span>{subject}</span>
-                  <span className="min-w-0 wrap-anywhere">
-                    {reached.length === 0
-                      ? "no agent"
-                      : reached.map((each) => `${each.agent}${each.mode === "approval" ? " (ask)" : ""}`).join(", ")}
-                  </span>
-                </div>
+                <Kv plainKey k={subject} key={subject}>
+                  {reached.length === 0
+                    ? "no agent"
+                    : reached.map((each) => `${each.agent}${each.mode === "approval" ? " (ask)" : ""}`).join(", ")}
+                </Kv>
               );
             })}
           </KvList>
           {subjects.length <= PER_TOOL_ROWS ? null : (
-            <p className="max-w-[72ch] text-xs text-muted-foreground">… {subjects.length - PER_TOOL_ROWS} more in the Catalog</p>
+            <Note>… {subjects.length - PER_TOOL_ROWS} more in the Catalog</Note>
           )}
         </Card>
       </DetailsBody>
@@ -358,34 +353,28 @@ function GrantEditorPane({
 
   // A row's `?sel=` belongs to the AGENT page, whose details column explains a role, a pattern
   // or an item; here `sel` already names the agent being edited.
-  const link: RowLink = (sel) => ({ to: paths.agentApp(agent.slug, slug), search: { sel } });
+  const link: RowLinkTo = (sel) => ({ to: paths.agentApp(agent.slug, slug), search: { sel } });
 
   return (
     <Details>
       <DetailsHead>
         <TitleRow>
-          <span className="font-mono text-lg font-semibold">{agent.slug}</span>
+          <ListingTitle render={<span />} className="font-mono">{agent.slug}</ListingTitle>
           <Badge variant="muted">agent</Badge>
           {agent.description === "" ? null : (
-            <span className="max-w-[72ch] text-xs text-muted-foreground">{agent.description}</span>
+            <Note render={<span />}>{agent.description}</Note>
           )}
           {stored.length === 0 ? (
             <Badge variant="warning" className="border-dashed">
               new grant · nothing saved yet
             </Badge>
           ) : null}
-          {/* `TitleRowEnd`'s placement, on the link itself rather than on a wrapper. */}
-          <Link
-            className="ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full"
-            to={paths.agentApp(agent.slug, slug)}
-          >
-            open agent page
-          </Link>
+          <TitleRowEnd render={<Link to={paths.agentApp(agent.slug, slug)} />}>open agent page</TitleRowEnd>
         </TitleRow>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">
+        <Note>
           {agent.slug}'s grant on {slug}. Solid: set on the row · hollow: implied by a role · a row cannot lower
           what a role grants.
-        </p>
+        </Note>
         <Sum>{reachLine(agent.slug, editor.reach)}</Sum>
       </DetailsHead>
       {refusal === null ? null : (

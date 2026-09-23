@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { Actions } from "@/chrome/Actions";
 import { AuthFrame } from "@/chrome/AuthFrame";
 import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { CodeBlock, Eyebrow, Muted } from "@/chrome/Text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
@@ -89,13 +91,13 @@ function DetailCard({ approval, now }: { approval: DetailApproval; now: number }
       </KvList>
 
       <div className="flex flex-col gap-1.5">
-        <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Arguments</div>
-        <pre className="m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle">
+        <Eyebrow>Arguments</Eyebrow>
+        <CodeBlock>
           {formatArgs(approval.args)}
-        </pre>
+        </CodeBlock>
       </div>
 
-      <p className="text-sm text-muted-foreground">{explanation(approval)}</p>
+      <Muted render={<p />}>{explanation(approval)}</Muted>
 
       {approval.status === "pending" ? <Decide approval={approval} /> : null}
     </Card>
@@ -107,13 +109,13 @@ function DetailCard({ approval, now }: { approval: DetailApproval; now: number }
 function Decide({ approval }: { approval: DetailApproval }): ReactNode {
   const decide = useDecision(approval);
   return (
-    <div className="flex flex-wrap justify-end gap-3">
+    <Actions>
       <Button type="button" variant="danger-outline" className="flex-1" disabled={decide.pending} onClick={() => decide.run("reject")}>
         Reject
       </Button>
       <Button type="button" className="flex-1" disabled={decide.pending} onClick={() => decide.run("approve")}>
         Approve
       </Button>
-    </div>
+    </Actions>
   );
 }

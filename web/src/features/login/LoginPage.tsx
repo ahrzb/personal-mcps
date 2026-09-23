@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { AuthFrame } from "@/chrome/AuthFrame";
+import { PasskeyIcon } from "@/chrome/Icons";
 import { OtpBoxes } from "@/chrome/OtpBoxes";
 import { useDocumentTitle } from "@/chrome/Shell";
+import { Muted } from "@/chrome/Text";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Field, FieldError, FieldGroup } from "@/components/ui/field";
@@ -159,11 +161,11 @@ function TotpCard({
           Verify
         </Button>
       </form>
-      <p className="text-center text-sm text-muted-foreground">
+      <Muted render={<p />} className="text-center">
         <a href={loginUrl({ method: "backup-code", next: redirectTo })} className={SWITCH_LINK_NARROW}>
           Use a backup code instead
         </a>
-      </p>
+      </Muted>
     </Card>
   );
 }
@@ -204,9 +206,9 @@ function BackupCodeCard({
           Verify
         </Button>
       </form>
-      <p className="text-center text-sm text-muted-foreground">
+      <Muted render={<p />} className="text-center">
         <a href={loginUrl({ method: "totp", next: redirectTo })}>Use your authenticator app instead</a>
-      </p>
+      </Muted>
     </Card>
   );
 }
@@ -277,12 +279,3 @@ function encode(buffer: ArrayBuffer): string {
   return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function PasskeyIcon(): ReactNode {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="7.5" cy="15.5" r="3.5" />
-      <path d="m21 2-9.6 9.6" />
-      <path d="m15.5 7.5 3 3L22 7l-3-3" />
-    </svg>
-  );
-}

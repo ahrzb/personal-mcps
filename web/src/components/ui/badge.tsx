@@ -115,4 +115,15 @@ function BadgeRemove({ className, type = "button", ...props }: ComponentProps<"b
   )
 }
 
-export { Badge, BadgeDot, BadgeRemove, badgeVariants }
+/** `.badge-row`: badges side by side, 4px apart, wrapping when they run out of room. */
+function BadgeRow({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="badge-row"
+      className={cn("flex flex-wrap items-center gap-1", className)}
+      {...props}
+    />
+  )
+}
+
+export { Badge, BadgeDot, BadgeRemove, BadgeRow, badgeVariants }

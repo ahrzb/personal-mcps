@@ -5,8 +5,9 @@ import { cn } from "@/lib/cn";
 
 /**
  * The page frames every signed-in page draws inside `Shell` (legacy.css's `.page--*`,
- * `.page-head`, `.title-row`, `.crumb`, `.paned.paned--framed`, `.pane`): the `<main>` in one
- * of three shapes, the head over it, and the workspace's one framed box.
+ * `.page-head`, `.title-row`, `.crumb`, `.section`, `.paned.paned--framed`, `.pane`): the
+ * `<main>` in one of three shapes, the head over it, its titled sections, and the workspace's
+ * one framed box.
  *
  * NARROW LEVELS. A workspace page with levels passes `level`, which `Page` writes as
  * `data-level` on the `<main>`. Below 1024px that attribute is the whole switch: every frame
@@ -110,16 +111,22 @@ export function TitleRow({ split = false, className, ...props }: ComponentProps<
   return <div data-slot="title-row" className={cn("flex flex-wrap items-center gap-2.5", split && "w-full", className)} {...props} />;
 }
 
-/** The control at the end of a `split` title row; below 1024px on a page with levels, a line
- *  of its own under the rest. */
-export function TitleRowEnd({ className, ...props }: ComponentProps<"div">): ReactNode {
-  return (
-    <div
-      data-slot="title-row-end"
-      className={cn("ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full", className)}
-      {...props}
-    />
-  );
+/**
+ * The control at the end of a `split` title row; below 1024px on a page with levels, a line
+ * of its own under the rest. A `<div>` around the control, or the control itself with
+ * `render` (`render={<Link … />}`, `render={<Label … />}`), where a box around it would add a
+ * line box of its own.
+ */
+export function TitleRowEnd({ className, render, ...props }: useRender.ComponentProps<"div">): ReactNode {
+  return useRender({
+    defaultTagName: "div",
+    render,
+    props: mergeProps<"div">(
+      { className: cn("ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full", className) },
+      props,
+    ),
+    state: { slot: "title-row-end" },
+  });
 }
 
 /**
@@ -151,6 +158,17 @@ export function CrumbSep(): ReactNode {
       ›
     </span>
   );
+}
+
+/** `.section`: a titled run of a page's content — a `SectionTitle` over its cards or table,
+ *  12px apart. A `<section>`. */
+export function Section({ className, ...props }: ComponentProps<"section">): ReactNode {
+  return <section data-slot="section" className={cn("flex flex-col gap-3", className)} {...props} />;
+}
+
+/** `.section-title`: a `Section`'s `<h2>`, 16px semibold. */
+export function SectionTitle({ className, ...props }: ComponentProps<"h2">): ReactNode {
+  return <h2 data-slot="section-title" className={cn("text-lg font-semibold", className)} {...props} />;
 }
 
 /**

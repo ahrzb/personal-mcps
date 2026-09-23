@@ -16,6 +16,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { ApiError } from "@/lib/http";
 import { paths } from "@/lib/paths";
+import { Actions } from "@/chrome/Actions";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
 import { useOp } from "@/lib/queries";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
@@ -125,15 +126,14 @@ export function AgentNewPage(): ReactNode {
             error={errors.description}
             onChange={(description) => setForm({ ...form, description })}
           />
-          {/* Right-aligned; on a phone each action an equal share of the row. */}
-          <div className="flex flex-wrap items-center justify-end gap-3 max-md:*:flex-1">
+          <Actions grow>
             <Link className={buttonVariants({ variant: "ghost" })} to={paths.agents}>
               Cancel
             </Link>
             <Button type="submit" disabled={create.isPending}>
               {create.isPending ? "Creating…" : "Create agent"}
             </Button>
-          </div>
+          </Actions>
         </Card>
       </Page>
     </Shell>

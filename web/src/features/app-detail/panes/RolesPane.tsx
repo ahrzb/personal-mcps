@@ -23,7 +23,7 @@ import { ApiError } from "@/lib/http";
 import { BUILTIN_ROLE } from "@/lib/paths";
 import { useAppEditor } from "@/lib/queries";
 import type { FamilyPatterns, ListedAgent, RoleFamily, RolesResponse, Violation } from "@/lib/types";
-import { KvList } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
 import {
   Details,
   DetailsBody,
@@ -32,11 +32,14 @@ import {
   GroupHeadNote,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  ListRowType,
+  RowLink,
   SaveBar,
   SaveBarCount,
   SaveBarEnd,
@@ -44,6 +47,7 @@ import {
 } from "@/chrome/Listing";
 import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Eyebrow, Muted, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -122,7 +126,7 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Roles</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">named sets of what this app exposes</span>
+            <Note render={<span />}>named sets of what this app exposes</Note>
           </TitleRow>
         </ListingHead>
         <ListingScroll>
@@ -146,7 +150,7 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Roles</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">named sets of what this app exposes</span>
+            <Note render={<span />}>named sets of what this app exposes</Note>
             <Refreshing active={refreshing} />
           </TitleRow>
           <Sum>{summary}</Sum>
@@ -155,9 +159,9 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
           {names.map((role) => (
             <ListRow key={role}>
               <div>
-                <Link className="font-mono after:absolute after:inset-0" to="." search={{ sel: `role:${role}` }}>
+                <RowLink className="font-mono" render={<Link to="." search={{ sel: `role:${role}` }} />}>
                   {role}
-                </Link>{" "}
+                </RowLink>{" "}
                 <SourceBadge source={sourceOf(role, roles)} />
                 <ListRowDetail>
                   {role === BUILTIN_ROLE
@@ -197,28 +201,28 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
       ) : (
         <Details>
           <DetailsHead>
-            <div className="text-lg font-semibold">Roles</div>
-            <p className="max-w-[72ch] text-xs text-muted-foreground">
+            <ListingTitle>Roles</ListingTitle>
+            <Note>
               Select a role to see what it can do, or add one of your own.
-            </p>
+            </Note>
           </DetailsHead>
           <DetailsBody>
             <Card size="sm" render={<section />}>
-              <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+              <Eyebrow>
                 Two sources, one rule
-              </div>
+              </Eyebrow>
               <KvList>
-                <Pair k="The app's">
+                <Kv plainKey k="The app's">
                   {kind === "tunnel"
                     ? "declared at connect; read-only here — the app owns them"
                     : "none: a proxied app declares no roles"}
-                </Pair>
-                <Pair k="Yours">
+                </Kv>
+                <Kv plainKey k="Yours">
                   defined here by ticking items or adding patterns; usable in grants like any role
-                </Pair>
-                <Pair k="Collision">
+                </Kv>
+                <Kv plainKey k="Collision">
                   if the app later declares a name you defined, its declaration replaces yours — the row says so
-                </Pair>
+                </Kv>
               </KvList>
             </Card>
           </DetailsBody>
@@ -356,7 +360,7 @@ function RoleEditor({
               onChange={(event) => setEdit((current) => ({ ...current, role: event.target.value }))}
             />
           ) : (
-            <span className="font-mono text-lg font-semibold">{name}</span>
+            <ListingTitle render={<span />} className="font-mono">{name}</ListingTitle>
           )}
           <Badge variant={source === "yours" ? "success" : "muted"}>
             {source === "built-in" ? "built-in" : source === "yours" ? "yours" : "declared by the app"}
@@ -368,11 +372,11 @@ function RoleEditor({
             />
           </TitleRowEnd>
         </TitleRow>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">{explain(name, source, kind, appName, isNew)}</p>
+        <Note>{explain(name, source, kind, appName, isNew)}</Note>
         {nameViolations.length === 0 ? null : (
-          <p className="max-w-[72ch] text-xs text-muted-foreground" role="alert">
+          <Note role="alert">
             {nameViolations.map((each) => each.reason).join(" · ")}
-          </p>
+          </Note>
         )}
         {editable ? (
           <form
@@ -410,7 +414,7 @@ function RoleEditor({
           write. The rows and the save bar are laid out as the details column's own children. */}
       <div className="contents">
         <ListingScroll>
-          {catalogNote === null ? null : <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{catalogNote}</p>}
+          {catalogNote === null ? null : <ListingNote>{catalogNote}</ListingNote>}
           {listing.groups.map((group) => (
             <div key={group.title}>
               <GroupHead sticky>
@@ -466,7 +470,7 @@ function RoleEditor({
                   </ListRow>
                 ))
               ) : (
-                <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{group.state}</p>
+                <ListingNote>{group.state}</ListingNote>
               )}
             </div>
           ))}
@@ -479,7 +483,7 @@ function RoleEditor({
               {patterns.map((row) => (
                 <ListRow key={row.entry}>
                   <div>
-                    <span className="font-mono">{row.pattern}</span> <span className={TYPE}>{row.family}</span>
+                    <span className="font-mono">{row.pattern}</span> <ListRowType>{row.family}</ListRowType>
                     <ListRowDetail>{row.detail}</ListRowDetail>
                   </div>
                   <ListRowControl>
@@ -500,7 +504,7 @@ function RoleEditor({
               {offer === null ? null : (
                 <ListRow>
                   <div>
-                    <span className="font-mono">{offer.pattern}</span> <span className={TYPE}>{offer.family}</span>
+                    <span className="font-mono">{offer.pattern}</span> <ListRowType>{offer.family}</ListRowType>
                     <ListRowDetail>{offer.detail}</ListRowDetail>
                   </div>
                   <ListRowControl>
@@ -795,21 +799,6 @@ function holdersOf(role: string, slug: string, agents: ListedAgent[]): { agent: 
 
 /* ------------------------------------------------------------------- the bits --- */
 
-/** The small type label beside a pattern: which family it matches in. */
-const TYPE = "text-2xs text-ring";
-
-/**
- * One line of a details card's pairs: `KvList`'s row shape (stacking below 1024px on this
- * page), but the key at its natural width in the body colour rather than `Kv`'s fixed, muted
- * key column. That is what this pane has always drawn.
- */
-const Pair = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
-  <div className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5">
-    <span>{k}</span>
-    <span className="min-w-0 wrap-anywhere">{children}</span>
-  </div>
-);
-
 /** The small source badge: `built-in` / `app` / `app · replaced yours` / `yours`. */
 function SourceBadge({ source }: { source: RoleSource }): ReactNode {
   const title =
@@ -827,7 +816,7 @@ function SourceBadge({ source }: { source: RoleSource }): ReactNode {
 
 /** One agent that reaches a row: mono for allow, amber for `· ask`. */
 function Badges({ badges, empty }: { badges: { agent: string; ask: boolean }[]; empty: string }): ReactNode {
-  if (badges.length === 0) return <span className="text-sm text-muted-foreground">{empty}</span>;
+  if (badges.length === 0) return <Muted>{empty}</Muted>;
   return (
     <>
       {badges.map((badge) => (

@@ -14,7 +14,9 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Kv, KvList } from "@/chrome/Kv";
+import { Actions } from "@/chrome/Actions";
 import { Listing, ListingHead, ListingScroll, ListingTitle } from "@/chrome/Listing";
+import { Eyebrow, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge, BadgeDot } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -97,14 +99,14 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
             and the two must line up. */}
         <div className="flex max-w-pane flex-col gap-4 p-4">
           <Card render={<section />}>
-            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+            <Eyebrow>
               TypeScript aliases
-            </div>
-            <p className="max-w-[72ch] text-xs text-muted-foreground">
+            </Eyebrow>
+            <Note>
               Generated programs address this app through hub-local TypeScript names. The upstream keeps its
               canonical names — an alias never renames it — and a blank field keeps whatever name is already
               established.
-            </p>
+            </Note>
             {refusal === null ? null : (
               <Alert variant="danger" role="alert">
                 <AlertDescription>{refusal.reason}</AlertDescription>
@@ -167,9 +169,8 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
                 </FieldDescription>
                 <FieldErrors refusal={refusal} field="typescript_aliases.tools" />
               </Field>
-              <div className="flex flex-wrap items-center gap-3">
+              <Actions start grow>
                 <Button
-                  className="max-md:flex-1"
                   disabled={save.isPending}
                   onClick={() => {
                     save.mutate(
@@ -186,18 +187,18 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
                 >
                   Save aliases
                 </Button>
-              </div>
+              </Actions>
             </FieldGroup>
           </Card>
 
           <Card render={<section />}>
-            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Reserved names</div>
+            <Eyebrow>Reserved names</Eyebrow>
             <ReservedTable app={app} />
             <Diagnostics lines={diagnostics} />
-            <p className="max-w-[72ch] text-xs text-muted-foreground">
+            <Note>
               A retired name stays reserved, so a later member can never claim a path code was written against — and
               deleting then recreating an app keeps its old names, so a recreated app needs a new service alias.
-            </p>
+            </Note>
           </Card>
         </div>
       </ListingScroll>
@@ -254,10 +255,10 @@ function ReservedTable({ app }: { app: AppRow }): ReactNode {
   );
   if (rows.length === 0) {
     return (
-      <p className="max-w-[72ch] text-xs text-muted-foreground">
+      <Note>
         Nothing reserved yet — the hub reserves a name for every canonical member when it first reads this app's
         catalog.
-      </p>
+      </Note>
     );
   }
   return (
@@ -279,7 +280,7 @@ function ReservedTable({ app }: { app: AppRow }): ReactNode {
               </Badge>{" "}
               <span className="font-mono text-xs wrap-anywhere">{row.canonicalName}</span>
             </TableCell>
-            <TableCell className="font-mono text-xs wrap-anywhere">{row.typescriptName}</TableCell>
+            <TableCell variant="mono">{row.typescriptName}</TableCell>
             <TableCell className="text-muted-foreground">{row.source}</TableCell>
             <TableCell>
               {row.active ? (
@@ -311,11 +312,11 @@ function Diagnostics({ lines }: { lines: AliasDiagnostic[] }): ReactNode {
   if (lines.length === 0) return null;
   return (
     <div>
-      <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Diagnostics</div>
+      <Eyebrow>Diagnostics</Eyebrow>
       {lines.map((line) => (
-        <p className="max-w-[72ch] text-xs text-muted-foreground" key={`${line.family}/${line.canonicalName}/${line.message}`}>
+        <Note key={`${line.family}/${line.canonicalName}/${line.message}`}>
           {line.message}
-        </p>
+        </Note>
       ))}
     </div>
   );

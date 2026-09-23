@@ -22,15 +22,18 @@ import {
   DetailsHead,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  RowLink,
   Sum,
 } from "@/chrome/Listing";
 import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { TokenReveal } from "@/chrome/Reveal";
+import { Eyebrow, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -68,9 +71,9 @@ export function TokenPane(props: AppPaneProps): ReactNode {
           <ListingTitle render={<span />}>Token</ListingTitle>
         </ListingHead>
         <ListingScroll>
-          <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+          <ListingNote>
             Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.
-          </p>
+          </ListingNote>
         </ListingScroll>
       </Listing>
     );
@@ -88,7 +91,7 @@ export function TokenPane(props: AppPaneProps): ReactNode {
         <ListingHead>
           <TitleRow split>
             <ListingTitle render={<span />}>Token</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">what the app presents to dial in</span>
+            <Note render={<span />}>what the app presents to dial in</Note>
             <TitleRowEnd>
               <Button
                 variant="outline"
@@ -122,16 +125,16 @@ export function TokenPane(props: AppPaneProps): ReactNode {
         )}
         <ListingScroll>
           {tokens.length === 0 ? (
-            <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+            <ListingNote>
               No live token — the app cannot connect until one is issued.
-            </p>
+            </ListingNote>
           ) : (
             tokens.map((row) => (
               <ListRow key={row.id}>
                 <div>
-                  <Link className="font-mono after:absolute after:inset-0" to={base} search={{ sel: `token:${row.id}` }}>
+                  <RowLink className="font-mono" render={<Link to={base} search={{ sel: `token:${row.id}` }} />}>
                     {row.prefix}
-                  </Link>
+                  </RowLink>
                   {row.id === holdingSocket ? (
                     <>
                       {" "}
@@ -168,8 +171,8 @@ export function TokenPane(props: AppPaneProps): ReactNode {
       <Details>
         {selected === null ? (
           <DetailsHead>
-            <div className="text-lg font-semibold">Token</div>
-            <p className="max-w-[72ch] text-xs text-muted-foreground">Select a token for its details.</p>
+            <ListingTitle>Token</ListingTitle>
+            <Note>Select a token for its details.</Note>
           </DetailsHead>
         ) : (
           <Selected row={selected} slug={slug} now={now} holdingSocket={holdingSocket} minted={minted} />
@@ -202,21 +205,21 @@ function Selected({
     <>
       <DetailsHead>
         <TitleRow>
-          <span className="font-mono text-lg font-semibold">{row.prefix}</span>
+          <ListingTitle render={<span />} className="font-mono">{row.prefix}</ListingTitle>
           <Badge variant="muted">app token</Badge>
         </TitleRow>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">Only valid for opening the reverse WebSocket as {slug}.</p>
+        <Note>Only valid for opening the reverse WebSocket as {slug}.</Note>
       </DetailsHead>
       <DetailsBody>
         {reveal === null ? null : (
           <Card size="sm" render={<section />}>
-            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+            <Eyebrow>
               Shown once — copy it now
-            </div>
+            </Eyebrow>
             <TokenReveal token={reveal}>
-              <p className="max-w-[72ch] text-xs text-muted-foreground">
+              <Note>
                 The previous token keeps working until you revoke it.
-              </p>
+              </Note>
             </TokenReveal>
           </Card>
         )}

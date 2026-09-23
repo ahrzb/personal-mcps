@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { ConfirmActions } from "@/chrome/Actions";
 import { AuthFrame } from "@/chrome/AuthFrame";
 import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
+import { NoticeIcon } from "@/chrome/Notice";
 import { Failure, Skeleton } from "@/chrome/States";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -83,7 +85,7 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
 
       {read.clientSelfRegistered && (
         <Alert variant="warning">
-          <WarningIcon />
+          <NoticeIcon tone="warning" />
           <AlertDescription>This application registered itself — identity unverified.</AlertDescription>
         </Alert>
       )}
@@ -102,7 +104,7 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
         <input type="hidden" name="csrf" value={bootstrap.csrf} />
         <input type="hidden" name="oauth_query" value={read.oauthQuery} />
         {read.agents.length === 0 ? <NoAgents /> : <AgentPicker agents={read.agents} />}
-        <div className="flex gap-3 max-md:flex-col-reverse max-md:gap-2.5">
+        <ConfirmActions>
           {/* `formNoValidate`: the picker is `required`, and on the server page that blocked
               Deny until an agent was chosen — refusing needs no agent. */}
           <Button
@@ -110,7 +112,6 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
             name="decision"
             value="deny"
             variant="danger-outline"
-            className="flex-[1_1_auto]"
             formNoValidate
           >
             Deny
@@ -119,12 +120,11 @@ function ConsentCard({ read }: { read: ConsentRead }): ReactNode {
             type="submit"
             name="decision"
             value="accept"
-            className="flex-[1_1_auto]"
             disabled={read.agents.length === 0}
           >
             Allow
           </Button>
-        </div>
+        </ConfirmActions>
       </FieldGroup>
     </Card>
   );
@@ -162,12 +162,3 @@ function AgentPicker({ agents }: { agents: ConsentRead["agents"] }): ReactNode {
   );
 }
 
-function WarningIcon(): ReactNode {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}

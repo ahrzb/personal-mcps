@@ -27,8 +27,8 @@ export function ConfirmDialog({
 }: {
   title: string;
   text: string;
-  /** The actions — the caller's, because everything else about a confirmation is the same
-   *  question asked about a different row. */
+  /** The actions, in a `DialogFooter` — the caller's, because everything else about a
+   *  confirmation is the same question asked about a different row. */
   children: ReactNode;
   /** Called when the dialog is dismissed. The caller navigates the `?confirm=` key away, so
    *  the URL and what is on screen cannot disagree. */
@@ -41,11 +41,7 @@ export function ConfirmDialog({
         if (!open) onClose();
       }}
     >
-      {/* `[&_.actions]:gap-2` stands in for legacy.css's `dialog .actions { gap: 8px }`, which
-          keyed on the native element this box no longer is: every caller still wraps its
-          actions in a legacy `.actions` row (12px apart elsewhere). It goes when the last
-          caller passes a `DialogFooter` instead, in its family's pass-2 conversion. */}
-      <DialogContent className="[&_.actions]:gap-2">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{text}</DialogDescription>

@@ -19,7 +19,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { HOVER_RING, MORE, NOTE, OutcomeBadge, Titled } from "./parts";
+import { RowLink } from "@/chrome/Listing";
+import { Note } from "@/chrome/Text";
+import { HOVER_RING, MORE, OutcomeBadge, Titled } from "./parts";
 
 /** One page of rows, and the step **Load more** takes. 120 because that is roughly four
  *  screens of a dense 32px row — far enough to scroll for a while, short enough that the DOM
@@ -102,12 +104,12 @@ export function EventsView({
             Load more
           </Button>
         ) : null}
-        <span className={NOTE}>
+        <Note render={<span />}>
           {fmtCount(rows.length)} rows from {fmtCount(events)} events — related events merged, repeats collapsed.
           {merged.length > rows.length
             ? ` ${fmtCount(merged.length)} rows in all, ${EVENTS_PAGE} at a time.`
             : ""}
-        </span>
+        </Note>
       </div>
     </Card>
   );
@@ -170,13 +172,12 @@ function EventRow({
 
                 A chain row is titled by the call it is the story of; everything else by the
                 general rule. `titleOfMerged` is what knows the difference. */}
-            <button
-              type="button"
+            <RowLink
+              render={<button type="button" onClick={(event) => onOpenRecord(head, event.currentTarget)} />}
               className={ROW_LINK}
-              onClick={(event) => onOpenRecord(head, event.currentTarget)}
             >
               <Titled of={titleOfMerged(row)} />
-            </button>
+            </RowLink>
             {/* The badge sits ABOVE the stretched title (`RUN_TOGGLE` is raised), so it takes
                 its own click rather than the row's — the same trick the apps list uses to keep a
                 row control clickable inside a row-wide link. */}
@@ -199,7 +200,7 @@ function EventRow({
         </div>
         {/* What the run covers, under the title: the slot the chain sentence uses, so a row says
             what it stands for in one place whichever kind it is. */}
-        {isRun ? <div className={`${NOTE} mt-0.5`}>{runLine(row.group)}</div> : null}
+        {isRun ? <Note render={<div />} className="mt-0.5">{runLine(row.group)}</Note> : null}
         {words.length === 0 ? null : (
           <div className="mt-0.5 flex flex-wrap items-baseline gap-1.5 text-2xs text-muted-foreground">
             {words.map((word, index) => (
@@ -215,9 +216,9 @@ function EventRow({
           // EVIDENCE: the run signature splits on `argsHead`, so without it five
           // `news/search_news` cards read as the same card five times. A spill of whatever else
           // `detail` held is not the line that tells one card from the next, so that one goes.
-          <div className={previewIsEvidence(head) ? PREVIEW : `${PREVIEW} max-md:hidden`}>
+          <Note render={<div />} className={previewIsEvidence(head) ? PREVIEW : `${PREVIEW} max-md:hidden`}>
             {preview}
-          </div>
+          </Note>
         )}
         {/* The members hang INSIDE this cell, under the run line and behind a hairline — the
             board's shape. A band across all four columns would put them under WHEN, which is
@@ -249,10 +250,10 @@ function EventRow({
               <Button variant="outline" size="sm" onClick={onToggleRun}>
                 Hide
               </Button>
-              <span className={NOTE}>
+              <Note render={<span />}>
                 {fmtCount(Math.min(shownMembers, row.group.length))} of {fmtCount(row.group.length)} · each line opens
                 its own record.
-              </span>
+              </Note>
             </div>
           </div>
         ) : null}
@@ -270,12 +271,12 @@ const ROW =
   "relative cursor-pointer hover:bg-sunken max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-2 max-md:gap-y-1.5";
 
 /**
- * The row's title: a real button stretched over the whole row by its `::after`. Its focus ring
- * is the ROW's, drawn on that `::after`, not the title's: the button is the row, so a ring
- * around four words in the middle of it would point at the wrong thing.
+ * The row's title: a real button, the row's `RowLink`, stretched over the whole row by its
+ * `::after`. Its focus ring is the ROW's, drawn on that `::after`, not the title's: the button
+ * is the row, so a ring around four words in the middle of it would point at the wrong thing.
  */
 const ROW_LINK =
-  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] font-semibold text-inherit after:absolute after:inset-0 focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
+  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] font-semibold text-inherit focus-visible:shadow-none focus-visible:outline-none focus-visible:after:rounded-sm focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring";
 
 /**
  * The ×N badge is the run's DISCLOSURE, so a real button, raised above the title's row-wide
@@ -286,8 +287,8 @@ const ROW_LINK =
 const RUN_TOGGLE =
   "relative z-1 cursor-pointer py-0 font-[family-name:inherit] leading-[inherit] before:absolute before:-inset-x-1.5 before:-inset-y-3 hover:bg-muted aria-expanded:border-primary aria-expanded:bg-primary aria-expanded:text-primary-foreground";
 
-/** The arguments preview: one clipped mono line. */
-const PREVIEW = `${NOTE} mt-px truncate font-mono`;
+/** The arguments preview, a `Note`: one clipped mono line. */
+const PREVIEW = "mt-px truncate font-mono";
 
 /** A member of an unfolded run: a row-button of its own, whose record — and so whose bodies —
  *  is one click away. On the phone it takes the touch height rather than being hidden. */

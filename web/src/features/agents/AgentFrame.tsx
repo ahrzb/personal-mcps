@@ -42,15 +42,6 @@ import {
 } from "./derive";
 import type { AgentAccess, AgentClient, AgentToken } from "./derive";
 
-/**
- * The page's three text styles, shared by every pane: a 12px muted aside capped at a reading
- * measure (legacy.css's `.note`), an 11px uppercase card label (`.eyebrow`), and a 13px muted
- * figure (`.muted`). Each also sets its size, so each reads the same whatever it sits in.
- */
-export const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
-export const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
-export const MUTED = "text-sm text-muted-foreground";
-
 /** The accessible name of this page's pane navigation. The pill row every OTHER paned page
  *  draws below the breakpoint is deliberately absent here: this page's narrow level 1 is the
  *  rail itself, as a list, which is the same destinations said once. */

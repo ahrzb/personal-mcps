@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Page, PageTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
+import { Note } from "@/chrome/Text";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -40,7 +41,7 @@ import { EVENTS_PAGE, EventsView } from "./EventsView";
 import { RecordDrawer } from "./RecordDrawer";
 import { SESSIONS_PAGE, SessionsView } from "./SessionsView";
 import { GRID3, SUMMARY, SummaryView } from "./SummaryView";
-import { BACK, LEVEL_HEAD, NOTE, SearchBox, SkelBar, useNarrow, useSlashFocus } from "./parts";
+import { BACK, LEVEL_HEAD, SearchBox, SkelBar, useNarrow, useSlashFocus } from "./parts";
 
 /**
  * `/audit` — the audit ledger as an explorer: three readings of one filtered set, a per-principal
@@ -439,7 +440,7 @@ function Header({
   return (
     <div className={HEAD}>
       <PageTitle className="[grid-area:ttl]">Audit log</PageTitle>
-      <p className={`${NOTE} [grid-area:sub]`}>{subtitle}</p>
+      <Note className="[grid-area:sub]">{subtitle}</Note>
       {/* Two labels, one accessible name. At 375px "Export JSONL" is a third of the title row,
           and the format is on the file it downloads — so the visible word shortens and
           `aria-label` keeps the full one for anyone not reading the pixels. */}

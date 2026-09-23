@@ -5,7 +5,8 @@ import type { FilterField, Filter, Insight } from "./derive";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
-import { EYEBROW, FROW, HOVER_RING, NOTE, SECONDARY } from "./parts";
+import { Eyebrow, Note } from "@/chrome/Text";
+import { FROW, FROW_FIGURE, FROW_VALUE, HOVER_RING, SECONDARY } from "./parts";
 
 /** How many recent changes the panel lists. Five, because it sits beside a four-bar chart and
  *  the point is "what did I change lately", not a second log. */
@@ -60,7 +61,7 @@ export function SummaryView({
 
       {insights.length === 0 ? null : (
         <div className="rounded-lg border border-warning-border bg-warning-bg px-3.5 py-3">
-          <p className={cn(EYEBROW, "mb-1 text-warning")}>Worth a look</p>
+          <Eyebrow render={<p />} className="mb-1 text-warning">Worth a look</Eyebrow>
           <ul className="m-0 list-disc pl-[18px]">
             {insights.map((insight, index) => (
               <li key={index} className="text-sm leading-[1.75] max-md:leading-[1.9]">
@@ -96,13 +97,13 @@ export function SummaryView({
 
       <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-3 md:max-lg:grid-cols-2 max-md:grid-cols-1">
         <div>
-          <p className={EYEBROW}>Refusals</p>
+          <Eyebrow render={<p />}>Refusals</Eyebrow>
           <Refusals rows={rows} onPick={onToggleFilter} />
         </div>
         <div>
-          <p className={EYEBROW}>Changes you made</p>
+          <Eyebrow render={<p />}>Changes you made</Eyebrow>
           {changes.length === 0 ? (
-            <p className={NOTE}>None this window.</p>
+            <Note>None this window.</Note>
           ) : (
             <div className="flex flex-col gap-0.5">
               {changes.map((row) => (
@@ -112,8 +113,8 @@ export function SummaryView({
                   className={cn(FROW, "h-auto py-[3px]")}
                   onClick={(event) => onOpenRecord(row, event.currentTarget)}
                 >
-                  <span className="relative truncate font-mono">{row.event}</span>
-                  <span className="relative ml-auto pl-1.5 text-2xs text-muted-foreground">{fmtDayTime(row.ts)}</span>
+                  <span className={FROW_VALUE}>{row.event}</span>
+                  <span className={FROW_FIGURE}>{fmtDayTime(row.ts)}</span>
                 </button>
               ))}
             </div>
@@ -122,7 +123,7 @@ export function SummaryView({
       </div>
 
       <div className="flex flex-wrap items-center gap-2.5 border-t pt-3">
-        <span className={NOTE}>The log itself is a click away — this page is the answer, not the record.</span>
+        <Note render={<span />}>The log itself is a click away — this page is the answer, not the record.</Note>
         <Button size="sm" className="ml-auto" onClick={onShowEvents}>
           All {fmtCount(stats.events)} events →
         </Button>
@@ -160,9 +161,9 @@ function Bars({
   const top = topOf(rows, field, BARS);
   return (
     <div>
-      <p className={EYEBROW}>{label}</p>
+      <Eyebrow render={<p />}>{label}</Eyebrow>
       <div className={TOPN}>
-        {top.rows.length === 0 ? <p className={NOTE}>None.</p> : null}
+        {top.rows.length === 0 ? <Note>None.</Note> : null}
         {top.rows.map((bar) => (
           <button
             key={bar.value}
@@ -172,7 +173,7 @@ function Bars({
             onClick={() => onPick({ field, value: bar.value })}
           >
             <span className={TOPN_BAR} style={{ width: `${(bar.count / top.max) * 100}%` }} />
-            <span className="relative truncate font-mono">{bar.value}</span>
+            <span className={FROW_VALUE}>{bar.value}</span>
             <span className={TOPN_COUNT}>{fmtCount(bar.count)}</span>
           </button>
         ))}
@@ -188,7 +189,7 @@ function Bars({
  */
 function Refusals({ rows, onPick }: { rows: AuditWindowRow[]; onPick: (filter: Filter) => void }): ReactNode {
   const pairs = refusalPairsOf(rows, BARS);
-  if (pairs.length === 0) return <p className={NOTE}>None.</p>;
+  if (pairs.length === 0) return <Note>None.</Note>;
   return (
     <div className={TOPN}>
       {pairs.map((pair) => (
@@ -200,7 +201,7 @@ function Refusals({ rows, onPick }: { rows: AuditWindowRow[]; onPick: (filter: F
           onClick={() => onPick({ field: "principal", value: pair.principal })}
         >
           <span className={TOPN_BAR} style={{ width: `${(pair.count / pair.max) * 100}%` }} />
-          <span className="relative truncate font-mono">
+          <span className={FROW_VALUE}>
             {pair.principal} → {pair.target}
             {/* Why, in the same short words the list rows use — dim, because the pair is what
                 the line is about and the cause is what it adds. */}

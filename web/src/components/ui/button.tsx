@@ -39,16 +39,20 @@ const buttonVariants = cva(
         /** `.btn--sm.btn--mini`: 24px in a dense row (/audit's strip), the same on a phone,
          *  with no shadow and so no focus ring */
         xs: "h-control-xs px-2 text-2xs shadow-none",
+        /** `.table .cell-actions .btn`: a row's control in a table's actions cell, `sm` at
+         *  10px sides and 4px apart; on a phone an equal 44px share of the row's own action
+         *  line. */
+        cell: "ml-1 h-control-sm px-2.5 text-sm max-md:ml-0 max-md:h-control-touch max-md:flex-1 max-md:px-3 max-md:text-base",
       },
     },
     compoundVariants: [
       // Each ring or shadow below is the one legacy.css draws. On focus it draws the global
       // `:focus-visible` ring. `.btn--outline`'s own box-shadow outranks that ring, and so does
       // `.btn--mini`'s `none`, so a focused outline or mini button looks as it does at rest.
-      { variant: "outline", size: ["default", "sm"], class: "shadow-xs" },
+      { variant: "outline", size: ["default", "sm", "cell"], class: "shadow-xs" },
       {
         variant: ["default", "ghost", "danger", "danger-outline", "danger-ghost"],
-        size: ["default", "sm"],
+        size: ["default", "sm", "cell"],
         class: "focus-visible:ring-3 focus-visible:ring-ring/35",
       },
     ],

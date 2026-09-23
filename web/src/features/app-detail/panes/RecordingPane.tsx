@@ -25,7 +25,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/lib/http";
 import { useAppEditor } from "@/lib/queries";
 import type { Violation } from "@/lib/types";
-import { KvList } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
 import {
   Details,
   DetailsBody,
@@ -34,17 +34,20 @@ import {
   GroupHeadNote,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  ListRowType,
   SaveBar,
   SaveBarEnd,
   Sum,
 } from "@/chrome/Listing";
-import { TitleRow } from "@/chrome/Page";
+import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Eyebrow, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -125,7 +128,7 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
         <ListingHead>
           <TitleRow split>
             <ListingTitle render={<span />}>Recording</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">what the audit trail keeps, and what it masks</span>
+            <Note render={<span />}>what the audit trail keeps, and what it masks</Note>
           </TitleRow>
         </ListingHead>
         <ListingScroll>
@@ -201,17 +204,21 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
         <ListingHead>
           <TitleRow split>
             <ListingTitle render={<span />}>Recording</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">what the audit trail keeps, and what it masks</span>
+            <Note render={<span />}>what the audit trail keeps, and what it masks</Note>
             <Refreshing active={refreshing} />
-            {/* The label is visible text, so the state is readable without the colour. It
-                takes `TitleRowEnd`'s placement itself rather than sitting in a wrapper. */}
-            <Label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs font-normal whitespace-nowrap text-muted-foreground [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full">
+            {/* The label is visible text, so the state is readable without the colour. It is
+                the row's end itself rather than sitting in a wrapper. */}
+            <TitleRowEnd
+              render={
+                <Label className="inline-flex cursor-pointer items-center gap-2 text-xs font-normal whitespace-nowrap text-muted-foreground" />
+              }
+            >
               <span>Record call bodies</span>
               <Switch
                 checked={draft.logBodies}
                 onCheckedChange={(checked) => setDraft((current) => ({ ...current, logBodies: checked }))}
               />
-            </Label>
+            </TitleRowEnd>
           </TitleRow>
           <Sum>{summary}</Sum>
           <form
@@ -272,12 +279,12 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
       </Listing>
       <Details>
         <DetailsHead>
-          <div className="text-lg font-semibold">Masked before recording</div>
-          <p className="max-w-[72ch] text-xs text-muted-foreground">
+          <ListingTitle>Masked before recording</ListingTitle>
+          <Note>
             {app.logBodies
               ? "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent."
               : "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on."}
-          </p>
+          </Note>
         </DetailsHead>
         <DetailsBody>
           {DIRECTIONS.map((dir) => (
@@ -289,31 +296,31 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
             />
           ))}
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>What a recorded call keeps</div>
+            <Eyebrow>What a recorded call keeps</Eyebrow>
             <KvList>
-              <Pair k="Arguments">
+              <Kv plainKey k="Arguments">
                 <span className="font-mono">params.arguments</span>, post-redaction
-              </Pair>
-              <Pair k="Results">
+              </Kv>
+              <Kv plainKey k="Results">
                 <span className="font-mono">structuredContent</span> post-redaction; text, image and resource blocks
                 become size stubs, never bytes
-              </Pair>
-              <Pair k="Cap">
+              </Kv>
+              <Kv plainKey k="Cap">
                 16 KiB per body — an over-cap body is one <span className="font-mono">oversize</span> stub
-              </Pair>
-              <Pair k="Kept for">
+              </Kv>
+              <Kv plainKey k="Kept for">
                 7 days, then pruned with the rest of the audit table ·{" "}
                 <a href={`/audit/export.jsonl?app=${encodeURIComponent(slug)}`}>Export JSONL</a> to keep longer
-              </Pair>
-              <Pair k="Never">
+              </Kv>
+              <Kv plainKey k="Never">
                 refused calls, token material, <span className="font-mono">writeOnly</span> and config-masked fields
-              </Pair>
+              </Kv>
             </KvList>
           </Card>
-          <p className="max-w-[72ch] text-xs text-muted-foreground">
+          <Note>
             A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed.
             Masking applies to the approval record too.
-          </p>
+          </Note>
         </DetailsBody>
       </Details>
     </>
@@ -484,7 +491,7 @@ function Section({
           <div key={row.path}>
             <ListRow>
               <div>
-                <span className="font-mono">{row.path}</span> <span className={TYPE}>{row.type}</span>
+                <span className="font-mono">{row.path}</span> <ListRowType>{row.type}</ListRowType>
                 <ListRowDetail>
                   {row.detail}
                   {row.expandable ? (
@@ -551,10 +558,10 @@ function Section({
           </div>
         ))
       ) : (
-        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{section.state}</p>
+        <ListingNote>{section.state}</ListingNote>
       )}
       {section.noSchema === null ? null : (
-        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{section.noSchema}</p>
+        <ListingNote>{section.noSchema}</ListingNote>
       )}
     </>
   );
@@ -596,13 +603,13 @@ function MaskedCard({
     }));
   return (
     <Card size="sm" render={<section />}>
-      <div className={EYEBROW}>
+      <Eyebrow>
         {dir === "args" ? "Arguments" : "Results"} · {rows.length} masked
-      </div>
+      </Eyebrow>
       {rows.length === 0 ? (
-        <p className="max-w-[72ch] text-xs text-muted-foreground">
+        <Note>
           nothing masked — {dir === "args" ? "arguments" : "results"} are recorded whole
-        </p>
+        </Note>
       ) : (
         // A path is long and who masks it is longer: the two stack rather than sitting either
         // side of a narrow key column.
@@ -671,23 +678,3 @@ function names(tools: string[]): string {
   const sorted = [...new Set(tools)].sort();
   return sorted.length > 3 ? plural(sorted.length, "tool") : sorted.join(", ");
 }
-
-/* ------------------------------------------------------------------- the bits --- */
-
-/** A details card's small caps heading. */
-const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
-
-/** The small type label beside a path: what it is, not what it does. */
-const TYPE = "text-2xs text-ring";
-
-/**
- * One line of a details card's pairs: `KvList`'s row shape (stacking below 1024px on this
- * page), but the key at its natural width in the body colour rather than `Kv`'s fixed, muted
- * key column. That is what this pane has always drawn.
- */
-const Pair = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
-  <div className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5">
-    <span>{k}</span>
-    <span className="min-w-0 wrap-anywhere">{children}</span>
-  </div>
-);

@@ -10,6 +10,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { paths } from "@/lib/paths";
 import { useOp } from "@/lib/queries";
+import { Actions } from "@/chrome/Actions";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { DELETE_AGENT_TEXT } from "../AgentsPage";
 import type { AgentPageData } from "../AgentFrame";
@@ -45,21 +46,20 @@ export function DangerPane({ data, confirming }: { data: AgentPageData; confirmi
           <Card render={<section />} className="border-danger-border">
             <CardTitle render={<h2 />}>Delete agent</CardTitle>
             <CardDescription render={<p />}>{DELETE_AGENT_FULL}</CardDescription>
-            {/* The action row: wrapping, its button the row's full width on a phone. */}
-            <div className="flex flex-wrap items-center gap-3 max-md:*:flex-1">
+            <Actions start grow>
               <Button
                 variant="danger-outline"
                 onClick={() => void navigate({ to: paths.agentPane(agent, "danger"), search: { confirm: "delete-agent" } })}
               >
                 Delete {agent}
               </Button>
-            </div>
+            </Actions>
           </Card>
         </ListingScroll>
       </Listing>
       <Details>
         <DetailsHead>
-          <div className="text-lg font-semibold">What deletion removes</div>
+          <ListingTitle>What deletion removes</ListingTitle>
         </DetailsHead>
         <DetailsBody>
           <Card size="sm" render={<section />}>

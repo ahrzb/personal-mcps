@@ -35,11 +35,23 @@ export function KvList({
 }
 
 /** One pair: `k` in the key column, `children` the value. Its shape is its `KvList`'s. */
-export function Kv({ k, children }: { k: ReactNode; children?: ReactNode }): ReactNode {
+export function Kv({
+  k,
+  plainKey = false,
+  children,
+}: {
+  k: ReactNode;
+  /** The key as the row's own subject rather than a label for it — a tool's name, a source
+   *  of roles — so drawn at its natural width in the body colour, where a label is muted in
+   *  the key column: the pages' unstyled `.k`, where a label was `.kv-key`. The app page's
+   *  explanatory cards and its per-tool reach draw it so. */
+  plainKey?: boolean;
+  children?: ReactNode;
+}): ReactNode {
   const shape = SHAPES[useContext(KvContext)];
   return (
     <div data-slot="kv-row" className={shape.row}>
-      <div className={shape.key}>{k}</div>
+      <div className={plainKey ? undefined : shape.key}>{k}</div>
       <div className={shape.value}>{children}</div>
     </div>
   );

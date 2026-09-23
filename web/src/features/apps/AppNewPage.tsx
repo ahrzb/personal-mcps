@@ -1,6 +1,7 @@
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { Actions, NarrowActions } from "@/chrome/Actions";
 import { AuthFrame } from "@/chrome/AuthFrame";
 import { TokenReveal } from "@/chrome/Reveal";
 import { useDocumentTitle } from "@/chrome/Shell";
@@ -128,10 +129,6 @@ export function AppNewPage(): ReactNode {
     </AuthFrame>
   );
 }
-
-/** legacy.css's `.actions`: a card's closing buttons, right-aligned; below 768px each an
- *  equal share of the row. */
-const ACTIONS = "flex flex-wrap items-center justify-end gap-3 max-md:*:flex-1";
 
 /**
  * The draft as `POST /api/hub/apps` takes it.
@@ -330,22 +327,22 @@ function FormCard({
 
       {/* The same two actions in each artboard's order: Cancel first beside the row wide,
           the submit first and full width on a phone. */}
-      <div className={`${ACTIONS} max-md:hidden`}>
+      <Actions grow className="max-md:hidden">
         <Link className={buttonVariants({ variant: "ghost" })} to={paths.apps}>
           Cancel
         </Link>
         <Button type="submit" disabled={pending}>
           <span data-submit-label>{submitLabel}</span>
         </Button>
-      </div>
-      <div className="hidden flex-col gap-2.5 max-md:flex">
+      </Actions>
+      <NarrowActions>
         <Button type="submit" className="w-full" disabled={pending}>
           <span data-submit-label>{submitLabel}</span>
         </Button>
         <Link className={buttonVariants({ variant: "outline", className: "w-full" })} to={paths.apps}>
           Cancel
         </Link>
-      </div>
+      </NarrowActions>
     </Card>
   );
 }
@@ -429,11 +426,11 @@ function CreatedCard({ slug, token }: { slug: string; token: string | null }): R
           definition, so the two renders of one warning cannot drift apart. */}
       {token === null ? null : <TokenReveal token={token} />}
 
-      <div className={ACTIONS}>
+      <Actions grow>
         <Link className={buttonVariants()} to={paths.apps}>
           Done
         </Link>
-      </div>
+      </Actions>
     </Card>
   );
 }
@@ -465,14 +462,14 @@ function ConnectingCard({
         <CardDescription>Finish signing in at {name} — this link expires in about 10 minutes.</CardDescription>
       </div>
 
-      <div className={ACTIONS}>
+      <Actions grow>
         <Link className={buttonVariants({ variant: "ghost" })} to={paths.appPane(slug, "overview")}>
           Not now
         </Link>
         <a className={buttonVariants()} href={authorizeUrl}>
           Continue to {name}
         </a>
-      </div>
+      </Actions>
     </Card>
   );
 }

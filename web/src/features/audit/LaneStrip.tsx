@@ -13,7 +13,8 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FILL, NOTE, SkelBar, Swatch, WarnIcon } from "./parts";
+import { Note } from "@/chrome/Text";
+import { FILL, SkelBar, Swatch, WarnIcon } from "./parts";
 
 /**
  * The lane strip: what happened, to whom, when — one lane per principal, one cell per hour of
@@ -127,9 +128,9 @@ export function LaneStrip({
           <Preset on={selection.until - selection.since === 24 * HOUR} label="24h" onPick={() => back(24)} />
           <Preset on={!selection.brushed} label={`${retentionDays}d`} onPick={() => onBrush(null)} />
         </div>
-        <span className={`${NOTE} max-md:hidden`}>
+        <Note render={<span />} className="max-md:hidden">
           an hour per cell, coloured by the worst outcome in it — drag to select
-        </span>
+        </Note>
         {selection.brushed ? (
           <Button variant="outline" size="xs" className="ml-auto" onClick={() => onBrush(null)}>
             Whole window

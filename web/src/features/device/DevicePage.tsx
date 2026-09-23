@@ -2,10 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { ConfirmActions } from "@/chrome/Actions";
 import { AuthFrame } from "@/chrome/AuthFrame";
 import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
+import { NoticeIcon } from "@/chrome/Notice";
 import { Failure, Skeleton } from "@/chrome/States";
+import { Eyebrow, Muted } from "@/chrome/Text";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
@@ -141,7 +144,7 @@ function ConfirmCard({ request }: { request: DeviceRequest }): ReactNode {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Device code</div>
+        <Eyebrow>Device code</Eyebrow>
         <div className="flex h-11 items-center justify-center rounded-md bg-muted font-mono text-lg font-semibold tracking-[3px] max-md:h-code-display-touch">
           {request.userCode}
         </div>
@@ -156,7 +159,7 @@ function ConfirmCard({ request }: { request: DeviceRequest }): ReactNode {
       </KvList>
 
       <Alert variant="warning">
-        <WarningIcon />
+        <NoticeIcon tone="warning" />
         <div>
           <AlertTitle>Grants full admin access</AlertTitle>
           <AlertDescription>
@@ -166,20 +169,19 @@ function ConfirmCard({ request }: { request: DeviceRequest }): ReactNode {
         </div>
       </Alert>
 
-      <div className="flex gap-3 max-md:flex-col-reverse max-md:gap-2.5">
+      <ConfirmActions>
         <Button
           type="button"
           variant="danger-outline"
-          className="flex-auto"
           disabled={pending}
           onClick={() => void decide("deny")}
         >
           Deny
         </Button>
-        <Button type="button" className="flex-auto" disabled={pending} onClick={() => void decide("approve")}>
+        <Button type="button" disabled={pending} onClick={() => void decide("approve")}>
           Approve
         </Button>
-      </div>
+      </ConfirmActions>
     </Card>
   );
 }
@@ -194,25 +196,16 @@ function DecidedCard({ decision }: { decision: "approved" | "denied" }): ReactNo
       {decision === "approved" ? <ApprovedIcon /> : <DeniedIcon />}
       <div className="flex flex-col items-center gap-1.5">
         <CardTitle>{decision === "approved" ? "Device approved" : "Device denied"}</CardTitle>
-        <div className="text-sm leading-normal text-muted-foreground">
+        <Muted render={<div />} className="leading-normal">
           {decision === "approved"
             ? "You can return to your terminal — the CLI finishes sign-in on its own."
             : "You can close this tab. The CLI sign-in was cancelled."}
-        </div>
+        </Muted>
       </div>
     </Card>
   );
 }
 
-function WarningIcon(): ReactNode {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
 
 function ApprovedIcon(): ReactNode {
   return (

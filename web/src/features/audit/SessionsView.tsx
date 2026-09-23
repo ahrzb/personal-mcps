@@ -16,7 +16,8 @@ import {
 import type { Session } from "./derive";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { FILL, HOVER_RING, MORE, NOTE, OutcomeBadge, Swatch, Titled } from "./parts";
+import { Note } from "@/chrome/Text";
+import { CLOCK, FILL, HOVER_RING, MORE, OutcomeBadge, Swatch, Titled } from "./parts";
 
 /** One page of sessions, and the step **Load more** takes. Fewer than Events' page because a
  *  session header is three lines' worth of metadata, not one row. */
@@ -51,7 +52,7 @@ export function SessionsView({
     <Card size="flush">
       <div className="flex flex-wrap items-center gap-2.5 border-b px-3.5 py-3">
         <b className="font-semibold">{fmtCount(sessions.length)} sessions</b>
-        <span className={NOTE}>newest first · runs of ok fold away inside</span>
+        <Note render={<span />}>newest first · runs of ok fold away inside</Note>
       </div>
       {drawn.map((session) => {
         const open = openId === session.id;
@@ -94,12 +95,12 @@ export function SessionsView({
             <Button variant="outline" size="sm" className="max-md:flex-1" onClick={onShowMore}>
               Load more
             </Button>
-            <span className={NOTE}>
+            <Note render={<span />}>
               {fmtCount(drawn.length)} of {fmtCount(sessions.length)} sessions — {SESSIONS_PAGE} at a time.
-            </span>
+            </Note>
           </>
         ) : (
-          <span className={NOTE}>All {fmtCount(sessions.length)} sessions in this window.</span>
+          <Note render={<span />}>All {fmtCount(sessions.length)} sessions in this window.</Note>
         )}
       </div>
     </Card>
@@ -191,7 +192,7 @@ function Waterfall({
           </button>
         );
       })}
-      <p className={NOTE}>Any line opens its record. Folded runs are ok calls only.</p>
+      <Note>Any line opens its record. Folded runs are ok calls only.</Note>
     </div>
   );
 }
@@ -201,7 +202,8 @@ function Waterfall({
 const LINE =
   "flex min-h-control-xs w-full items-center gap-2.5 rounded-[5px] border-0 bg-transparent px-1 py-0 text-left font-[family-name:inherit] text-xs text-inherit max-md:flex-wrap max-md:gap-x-2.5 max-md:gap-y-0.5 max-md:py-1.5";
 
-const TIME = "w-[52px] flex-none font-mono text-muted-foreground max-md:order-1";
+/** A line's `CLOCK`, first on the phone. */
+const TIME = `${CLOCK} max-md:order-1`;
 
 const LABEL = "w-[230px] flex-none truncate font-mono max-md:order-2 max-md:w-auto max-md:flex-[1_1_auto]";
 

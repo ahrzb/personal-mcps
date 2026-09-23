@@ -13,6 +13,7 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { Actions } from "@/chrome/Actions";
 import { DetailsBody, Listing, ListingHead, ListingScroll, ListingTitle } from "@/chrome/Listing";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -49,12 +50,11 @@ export function DangerPane(props: AppPaneProps): ReactNode {
                 ? "It accepts connections again, with everything it kept while archived."
                 : "It refuses connections and leaves the list — tokens, grants and history are kept."}
             </CardDescription>
-            <div className={ACTIONS}>
+            <Actions start grow>
               {app.archived ? (
                 <Button
                   variant="outline"
                   size="sm"
-                  className="max-md:flex-1"
                   disabled={unarchive.isPending}
                   onClick={() => unarchive.mutate({ slug })}
                 >
@@ -62,14 +62,14 @@ export function DangerPane(props: AppPaneProps): ReactNode {
                 </Button>
               ) : (
                 <Link
-                  className={buttonVariants({ variant: "outline", size: "sm", className: "max-md:flex-1" })}
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
                   to={base}
                   search={{ confirm: "archive" }}
                 >
                   Archive {slug}
                 </Link>
               )}
-            </div>
+            </Actions>
           </Card>
           <Card size="sm" render={<section />} className="border-danger-border">
             <CardTitle render={<h2 />}>Delete {slug}</CardTitle>
@@ -77,15 +77,15 @@ export function DangerPane(props: AppPaneProps): ReactNode {
               Revokes its {plural(tokens.length, "token")}, closes the live connection and removes every grant (
               {plural(granted.agents.length, "agent")}). This cannot be undone.
             </CardDescription>
-            <div className={ACTIONS}>
+            <Actions start grow>
               <Link
-                className={buttonVariants({ variant: "danger-outline", size: "sm", className: "max-md:flex-1" })}
+                className={buttonVariants({ variant: "danger-outline", size: "sm" })}
                 to={base}
                 search={{ confirm: "delete" }}
               >
                 Delete {slug}
               </Link>
-            </div>
+            </Actions>
           </Card>
         </DetailsBody>
       </ListingScroll>
@@ -93,6 +93,3 @@ export function DangerPane(props: AppPaneProps): ReactNode {
   );
 }
 
-/** A card's row of actions, at its start; each action takes an equal share of a phone's width
- *  (its `max-md:flex-1`, per action rather than per child, as legacy `.actions .btn` was). */
-const ACTIONS = "flex flex-wrap items-center gap-3";

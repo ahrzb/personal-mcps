@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/cn";
+import { Note } from "@/chrome/Text";
 import { fmtCount } from "./derive";
 import type { OutcomeClass } from "./derive";
 
@@ -16,12 +17,6 @@ import type { OutcomeClass } from "./derive";
  * live at the bottom.
  */
 
-/** A small muted line: a count, a caption, a hint. At most 72 characters a line, like prose. */
-export const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
-
-/** A small uppercase label over a group: a facet, a panel, a body section. */
-export const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
-
 /** A box's hover outline, drawn inside it so the row it sits in does not move. */
 export const HOVER_RING = "hover:shadow-[inset_0_0_0_1px_var(--color-border)]";
 
@@ -31,6 +26,15 @@ export const HOVER_RING = "hover:shadow-[inset_0_0_0_1px_var(--color-border)]";
  * positioned, so every label in it says `relative`.
  */
 export const FROW = `relative flex w-full cursor-pointer items-center gap-[7px] rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit aria-pressed:bg-border aria-pressed:font-semibold ${HOVER_RING}`;
+
+/** A bar-backed row's value, in mono, clipped to the row. */
+export const FROW_VALUE = "relative truncate font-mono";
+
+/** A bar-backed row's figure — a count, a time — muted at 11px against the row's end. */
+export const FROW_FIGURE = "relative ml-auto pl-1.5 text-2xs text-muted-foreground";
+
+/** A timeline line's clock: a 52px mono column, so the lines' words start level. */
+export const CLOCK = "w-[52px] flex-none font-mono text-muted-foreground";
 
 /** A list card's foot: Load more and what the list holds. The foot wraps on the phone rather
  *  than pushing the card wider on its one long sentence. */
@@ -201,9 +205,7 @@ export function SearchBox({
       {/* Inside the box, because the box is what the reader is looking at while they wait —
           and announced, because the only other sign is rows that have not changed yet. */}
       {busy ? (
-        <InputGroupAddon className={NOTE} role="status">
-          Searching…
-        </InputGroupAddon>
+        <Note render={<InputGroupAddon role="status" />}>Searching…</Note>
       ) : null}
     </InputGroup>
   );

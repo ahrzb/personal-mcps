@@ -19,19 +19,20 @@ import type { ReactNode } from "react";
 import { useApi } from "@/lib/api-context";
 import { agentsQuery, appsQuery, keys, tokensQuery, useOp } from "@/lib/queries";
 import { paths } from "@/lib/paths";
-import { cn } from "@/lib/cn";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
 import { formatStamp } from "@/lib/format";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
+import { RowLink } from "@/chrome/Listing";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Note, RowMeta, RowTitle } from "@/chrome/Text";
 import { Alert } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableRowChevron } from "@/components/ui/table";
 import type { AgentsResponse, ListedAgent } from "@/lib/types";
 import { accessOf, accessText, agentTokensOf, oneOf, tokensText } from "./derive";
 import type { AgentAccess, AgentToken } from "./derive";
@@ -163,7 +164,7 @@ export function AgentsPage(): ReactNode {
             )
           }
         </QueryState>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">{DELETE_AGENT_TEXT}</p>
+        <Note>{DELETE_AGENT_TEXT}</Note>
       </Page>
       {confirmed === undefined ? null : (
         <ConfirmDialog
@@ -188,57 +189,29 @@ export function AgentsPage(): ReactNode {
 function AgentRowView({ row, now }: { row: AgentRow; now: number }): ReactNode {
   const { agent } = row;
   return (
-    <TableRow className="relative cursor-pointer hover:bg-muted">
+    <TableRow link>
       <TableCell>
-        <div className="font-mono text-base font-medium">
-          {/* The row's link: its `after:` overlay fills the nearest positioned box, the row. */}
-          <Link className="after:absolute after:inset-0" to={paths.agentDetail(agent.slug)}>
-            {agent.slug}
-          </Link>
-        </div>
-        {agent.description === "" ? null : <div className="text-xs text-muted-foreground">{agent.description}</div>}
+        <RowTitle className="font-mono">
+          <RowLink render={<Link to={paths.agentDetail(agent.slug)} />}>{agent.slug}</RowLink>
+        </RowTitle>
+        {agent.description === "" ? null : <RowMeta>{agent.description}</RowMeta>}
       </TableCell>
       <TableCell className="text-muted-foreground">{accessText(row.access)}</TableCell>
       <TableCell className="text-muted-foreground">{tokensText(row.tokens, now)}</TableCell>
       <TableCell className="text-muted-foreground">{formatStamp(agent.createdAt)}</TableCell>
       {/* Right-aligned beside the row wide; its own row under the card on a phone, the
-          button a 44px share of it beside the chevron. `z-1` raises it over the row's link. */}
-      <TableCell className="relative z-1 text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left">
+          button a 44px share of it beside the chevron. */}
+      <TableCell variant="actions">
         {/* Delete never mutates directly — it opens this page with the confirm dialog. */}
         <Link
-          className={cn(
-            buttonVariants({ variant: "danger-outline", size: "sm" }),
-            "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3",
-          )}
+          className={buttonVariants({ variant: "danger-outline", size: "cell" })}
           to={paths.agents}
           search={{ confirm: "delete-agent", slug: agent.slug }}
         >
           Delete
         </Link>
-        <span className="inline-flex items-center text-ring">
-          <Chevron />
-        </span>
+        <TableRowChevron />
       </TableCell>
     </TableRow>
-  );
-}
-
-/** The chevron at the row's end — decoration for where the row goes; the anchor is the thing
- *  that goes there, so this is hidden from anyone listing the page's links. */
-function Chevron(): ReactNode {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m9 6 6 6-6 6" />
-    </svg>
   );
 }

@@ -42,6 +42,7 @@ import {
   GroupHead,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
@@ -58,7 +59,6 @@ import {
   AgentPageFailed,
   AgentPageNotFound,
   AgentPagePending,
-  NOTE,
   useAgentPage,
 } from "./AgentFrame";
 import type { AgentPageData } from "./AgentFrame";
@@ -67,7 +67,7 @@ import { draftOf, grantEditorOf, useGrantFamilies } from "./grant-editor";
 import type { GrantDraft } from "./grant-editor";
 import { effectiveRolesOf } from "./door";
 import { GrantGroup, reachLine } from "./GrantRows";
-import type { GrantChoice, RowLink } from "./GrantRows";
+import type { GrantChoice, RowLinkTo } from "./GrantRows";
 import { AppGrantDetails } from "./AppGrantDetails";
 import { FilterForm } from "./panes/FilterForm";
 
@@ -177,7 +177,7 @@ export function AgentAppView({
   const base = paths.agentApp(agent, app);
   // A row's details are this page's own URL plus `?sel=`, the filter kept: picking a row does
   // not drop the listing the reader picked it from.
-  const link: RowLink = (picked) => ({ to: base, search: { ...(q === "" ? {} : { q }), sel: picked } });
+  const link: RowLinkTo = (picked) => ({ to: base, search: { ...(q === "" ? {} : { q }), sel: picked } });
 
   const rail = agentRailOf({
     slug: agent,
@@ -286,7 +286,7 @@ export function AgentAppView({
               </ListRow>
             </>
           )}
-          {editor.nothingMatches ? <p className={`${NOTE} p-4`}>Nothing matches “{q}”.</p> : null}
+          {editor.nothingMatches ? <ListingNote>Nothing matches “{q}”.</ListingNote> : null}
         </ListingScroll>
 
         <SaveBar>

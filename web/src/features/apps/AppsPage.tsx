@@ -3,17 +3,19 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
-import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
+import { PlusIcon } from "@/chrome/Icons";
+import { RowLink } from "@/chrome/Listing";
+import { Page, PageHead, PageSubtitle, PageTitle, Section, SectionTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Refreshing, Skeleton } from "@/chrome/States";
-import { Badge, BadgeDot } from "@/components/ui/badge";
+import { Note, RowMeta, RowTitle } from "@/chrome/Text";
+import { Badge, BadgeDot, BadgeRow } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableRowChevron } from "@/components/ui/table";
 import { useApi, useAppEnv } from "@/lib/api-context";
-import { cn } from "@/lib/cn";
 import { formatLastSeen } from "@/lib/format";
 import { paths } from "@/lib/paths";
 import { appsQuery, keys, tokensQuery, useOp } from "@/lib/queries";
@@ -142,19 +144,19 @@ function Board({
       {active.length > 0 ? <AppTable rows={active} now={now} /> : null}
 
       {archived.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-lg font-semibold">Archived</h2>
+        <Section>
+          <SectionTitle>Archived</SectionTitle>
           <AppTable rows={archived} now={now} />
-        </section>
+        </Section>
       )}
 
-      <p className={`${NOTE} max-md:hidden`}>
+      <Note className="max-md:hidden">
         Deleting an app revokes its tokens and removes its grants. Archived apps keep everything and refuse
         connections.
-      </p>
-      <p className={`${NOTE} hidden text-center max-md:block`}>
+      </Note>
+      <Note className="hidden text-center max-md:block">
         Deleting revokes tokens and removes grants. Archived apps keep everything.
-      </p>
+      </Note>
 
       {confirmed !== undefined && countsKnown && (
         <DeleteConfirmDialog
@@ -190,13 +192,6 @@ const AppTable = ({ rows, now }: { rows: AppRow[]; now: number }): ReactNode => 
     </Table>
   </Card>
 );
-
-/** legacy.css's `.note`: the 12px muted aside, capped at a readable measure. */
-const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
-
-/** A row action's size in `.cell-actions`: 32px and 13px beside the row; below 768px an
- *  equal 44px share of the row's own action line. */
-const ROW_ACTION = "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3";
 
 /**
  * One row: the name as the row-wide link, the kind, the status badge, the declared roles,
@@ -240,23 +235,21 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
   };
 
   return (
-    <TableRow className="relative cursor-pointer hover:bg-muted">
+    <TableRow link>
       <TableCell>
         {/* Every row IS the link to its detail page, archived rows included — the anchor's
             `after:` overlay fills the nearest positioned box, the row; the row's own actions
             are raised above it, so they still act. */}
-        <div className="text-base font-medium">
-          <Link className="after:absolute after:inset-0" to={paths.appDetail(row.slug)}>
-            {row.name}
-          </Link>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground max-md:hidden">{row.slug}</div>
+        <RowTitle>
+          <RowLink render={<Link to={paths.appDetail(row.slug)} />}>{row.name}</RowLink>
+        </RowTitle>
+        <RowMeta className="font-mono max-md:hidden">{row.slug}</RowMeta>
         <div className="hidden max-md:block">
-          <div className="flex flex-wrap items-center gap-1">
+          <BadgeRow>
             <Badge variant="mono">{row.kind}</Badge>
             {badge}
-          </div>
-          <div className={NOTE}>{metaLine(row, now)}</div>
+          </BadgeRow>
+          <Note render={<div />}>{metaLine(row, now)}</Note>
         </div>
       </TableCell>
       <TableCell className="max-md:hidden">
@@ -267,16 +260,15 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
       <TableCell className="text-muted-foreground max-md:hidden">
         {formatLastSeen(lastConnectedAt(row), now)}
       </TableCell>
-      {/* Right-aligned beside the row wide; its own line under the card on a phone. `z-1`
-          raises it over the row's link. */}
-      <TableCell className="relative z-1 text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left">
+      {/* Right-aligned beside the row wide; its own line under the card on a phone. */}
+      <TableCell variant="actions">
         {/* Connect and Reconnect are the one row action that is still a form: `/apps/connect`
             answers a 303 into a third party's address bar. `contents` lets its button sit as
             a flex item of the cell beside the others, matching both artboards' row. */}
         {connect !== null && connect.action === "connect" && (
           <form method="post" action={paths.appConnect(row.slug)} className="contents">
             <input type="hidden" name="csrf" value={bootstrap.csrf} />
-            <Button type="submit" variant="outline" size="sm" className={ROW_ACTION}>
+            <Button type="submit" variant="outline" size="cell">
               {connect.label}
             </Button>
           </form>
@@ -285,8 +277,7 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className={ROW_ACTION}
+            size="cell"
             onClick={() => {
               disconnect.mutate(
                 { slug: row.slug },
@@ -300,8 +291,7 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
         <Button
           type="button"
           variant={row.archived ? "outline" : "ghost"}
-          size="sm"
-          className={ROW_ACTION}
+          size="cell"
           onClick={() => void toggleArchive()}
         >
           {row.archived ? "Unarchive" : "Archive"}
@@ -309,15 +299,13 @@ function AppTableRow({ row, now }: { row: AppRow; now: number }): ReactNode {
         {/* Delete never mutates directly — it opens the same page with the confirm dialog,
             which is a URL and therefore shareable and previewable. */}
         <Link
-          className={cn(buttonVariants({ variant: "danger-outline", size: "sm" }), ROW_ACTION)}
+          className={buttonVariants({ variant: "danger-outline", size: "cell" })}
           to={paths.apps}
           search={{ confirm: "delete", slug: row.slug }}
         >
           Delete
         </Link>
-        <span className="inline-flex items-center text-ring">
-          <Chevron />
-        </span>
+        <TableRowChevron />
       </TableCell>
     </TableRow>
   );
@@ -445,39 +433,6 @@ function useRefusalFlash(): (op: string, reason: string) => void {
   };
 }
 
-/** The chevron at the row's end — decoration for where the row goes; the anchor is the thing
- *  that goes there, so this is hidden from anyone listing the page's links. */
-const Chevron = (): ReactNode => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="m9 6 6 6-6 6" />
-  </svg>
-);
-
-const PlusIcon = (): ReactNode => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <path d="M5 12h14"></path>
-    <path d="M12 5v14"></path>
-  </svg>
-);
 
 /** A fresh namespace (EmptyStates "Apps — empty"): the two kinds named, and the one control
  *  that does anything about it. */

@@ -30,16 +30,19 @@ import {
   GroupHeadNote,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  RowLink,
   Sum,
 } from "@/chrome/Listing";
 import { TitleRow } from "@/chrome/Page";
 import { Copyable } from "@/chrome/Reveal";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Eyebrow, Muted, Note } from "@/chrome/Text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -108,7 +111,7 @@ export function CatalogPane(props: AppPaneProps): ReactNode {
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Catalog</ListingTitle>
-            <span className="max-w-[72ch] text-xs text-muted-foreground">{subtitle}</span>
+            <Note render={<span />}>{subtitle}</Note>
             {/* Bare, as every other pane's is: `Refreshing` renders nothing when it is not
                 refreshing, and a wrapper span would be an empty flex item that the narrow
                 `TitleRowEnd` rule (a line of its own) would push down, adding a row gap the
@@ -212,13 +215,13 @@ function FamilyGroup({
           <span>{title} · 0</span>
           <GroupHeadNote render={<span />}>none advertised</GroupHeadNote>
         </GroupHead>
-        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+        <ListingNote>
           {view.state === "pending"
             ? `Reading ${family}…`
             : kind === "tunnel"
               ? `This app declared no ${family} capability on its last connect.`
               : `The capabilities configured for this app omit ${family}.`}
-        </p>
+        </ListingNote>
       </>
     );
   }
@@ -252,18 +255,17 @@ function FamilyGroup({
         </span>
       </GroupHead>
       {rows.length === 0 ? (
-        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">no match</p>
+        <ListingNote>no match</ListingNote>
       ) : (
         rows.map((row) => (
           <ListRow key={row.name}>
             <div>
-              <Link
-                className="font-mono after:absolute after:inset-0"
-                to={base}
-                search={q === "" ? { sel: `${one}:${row.name}` } : { q, sel: `${one}:${row.name}` }}
+              <RowLink
+                className="font-mono"
+                render={<Link to={base} search={q === "" ? { sel: `${one}:${row.name}` } : { q, sel: `${one}:${row.name}` }} />}
               >
                 {row.name}
-              </Link>
+              </RowLink>
               {row.mime === null ? (
                 // The renderer's whitelist strips id/class/style and escapes raw HTML, and
                 // it is the hub's ONE audited renderer of untrusted app prose — which is
@@ -286,7 +288,7 @@ function FamilyGroup({
 
 /** One agent that reaches a row: mono for allow, amber for `· ask` (§3/§4). */
 function Badges({ reached, empty }: { reached: Reach[]; empty: string }): ReactNode {
-  if (reached.length === 0) return <span className="text-sm text-muted-foreground">{empty}</span>;
+  if (reached.length === 0) return <Muted>{empty}</Muted>;
   return (
     <>
       {reached.map((entry) => (
@@ -330,12 +332,12 @@ function CatalogDetails({
     return (
       <Details>
         <DetailsHead>
-          <div className="text-lg font-semibold">Catalog</div>
-          <p className="max-w-[72ch] text-xs text-muted-foreground">Select a tool, prompt or resource for its details.</p>
+          <ListingTitle>Catalog</ListingTitle>
+          <Note>Select a tool, prompt or resource for its details.</Note>
         </DetailsHead>
         <DetailsBody>
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>Where this comes from</div>
+            <Eyebrow>Where this comes from</Eyebrow>
             <KvList>
               <Kv k="Schemas">
                 {kind === "tunnel"
@@ -373,22 +375,19 @@ function CatalogDetails({
     <Details>
       <DetailsHead>
         <TitleRow>
-          <span className="font-mono text-lg font-semibold">{name}</span>
+          <ListingTitle render={<span />} className="font-mono">{name}</ListingTitle>
           <Badge variant="muted">{group.one}</Badge>
         </TitleRow>
         {derived.description.block === "" ? null : (
           // The details card is the BLOCK form: paragraphs and lists, where a row gets one
           // line. Both come from `pages/markdown`, the hub's one audited renderer.
-          <div
-            className="md max-w-[72ch] text-xs text-muted-foreground"
-            dangerouslySetInnerHTML={{ __html: derived.description.block }}
-          />
+          <Note render={<div />} className="md" dangerouslySetInnerHTML={{ __html: derived.description.block }} />
         )}
       </DetailsHead>
       <DetailsBody>
         {isResource ? (
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>Resource</div>
+            <Eyebrow>Resource</Eyebrow>
             <KvList>
               <Kv k="URI">
                 <span className="font-mono">{name}</span>
@@ -405,7 +404,7 @@ function CatalogDetails({
         {declared === null ? null : <DeclaredCard rows={declared} />}
         {results === null ? null : <LeafCard title="Result · outputSchema" rows={results} />}
         <Card size="sm" render={<section />}>
-          <div className={EYEBROW}>What only the hub knows</div>
+          <Eyebrow>What only the hub knows</Eyebrow>
           <KvList>
             <Kv k="Scoped MCP identity">
               <div>
@@ -447,11 +446,11 @@ function CatalogDetails({
             {isResource ? null : <Kv k="Redaction">{redactionText(redactedArgs, redactedResults)}</Kv>}
           </KvList>
         </Card>
-        <p className="max-w-[72ch] text-xs text-muted-foreground">
+        <Note>
           The same block the audit row and the agent page show for this {group.one}. Editing reach happens on{" "}
           <Link to={paths.appPane(slug, "access")}>Agents</Link>, masking on{" "}
           <Link to={paths.appPane(slug, "recording")}>Recording</Link>.
-        </p>
+        </Note>
       </DetailsBody>
     </Details>
   );
@@ -467,9 +466,6 @@ function redactionText(args: string[], results: string[]): string {
     .join(" · ");
 }
 
-/** A details card's small caps heading. */
-const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
-
 /**
  * One schema row of the Arguments / Result card: path, type, and whatever the third column has
  * to say, on one baseline, over a hairline (none under the last). The path yields and breaks
@@ -484,14 +480,14 @@ const ARG_ROW =
 function LeafCard({ title, rows }: { title: string; rows: SchemaLeaf[] }): ReactNode {
   return (
     <Card size="sm" render={<section />}>
-      <div className={EYEBROW}>{title}</div>
+      <Eyebrow>{title}</Eyebrow>
       {rows.length === 0 ? (
-        <p className="max-w-[72ch] text-xs text-muted-foreground">none</p>
+        <Note>none</Note>
       ) : (
         rows.map((row) => (
           <div className={ARG_ROW} key={row.path}>
             <div className="font-mono">{row.path}</div>
-            <div className="text-sm text-muted-foreground">{row.type}</div>
+            <Muted render={<div />}>{row.type}</Muted>
             <div>{row.writeOnly ? <Badge variant="warning">writeOnly · masked</Badge> : null}</div>
           </div>
         ))
@@ -509,22 +505,19 @@ function LeafCard({ title, rows }: { title: string; rows: SchemaLeaf[] }): React
 function DeclaredCard({ rows }: { rows: CatalogDerivation["promptArguments"] }): ReactNode {
   return (
     <Card size="sm" render={<section />}>
-      <div className={EYEBROW}>Arguments</div>
+      <Eyebrow>Arguments</Eyebrow>
       {rows.length === 0 ? (
-        <p className="max-w-[72ch] text-xs text-muted-foreground">none</p>
+        <Note>none</Note>
       ) : (
         rows.map((row) => (
           <div className={ARG_ROW} key={row.name}>
             <div className="font-mono">{row.name}</div>
             {row.description.inline === "" ? (
-              <div className="md text-sm text-muted-foreground">—</div>
+              <Muted render={<div />} className="md">—</Muted>
             ) : (
-              <div
-                className="md text-sm text-muted-foreground"
-                dangerouslySetInnerHTML={{ __html: row.description.inline }}
-              />
+              <Muted render={<div />} className="md" dangerouslySetInnerHTML={{ __html: row.description.inline }} />
             )}
-            <div className="text-sm text-muted-foreground">{row.required ? "required" : "optional"}</div>
+            <Muted render={<div />}>{row.required ? "required" : "optional"}</Muted>
           </div>
         ))
       )}

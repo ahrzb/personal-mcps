@@ -34,8 +34,8 @@ export function AuthFrame({
   );
 }
 
-/** The hub mark from the artboards — a node with three spokes. The same glyph `Shell` draws in
- *  the header. */
+/** The hub mark from the artboards — a node with three spokes, 20px in the text colour. Also
+ *  `Shell`'s, in the header and the drawer. */
 export function BrandMark(): ReactNode {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">

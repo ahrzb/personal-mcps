@@ -25,7 +25,6 @@ import { TokenReveal } from "@/chrome/Reveal";
 import { Skeleton } from "@/chrome/States";
 import { usePreviewTransient } from "@/preview/transient";
 import type { AgentClient, AgentToken } from "../derive";
-import { EYEBROW, MUTED, NOTE } from "../AgentFrame";
 import type { AgentPageData } from "../AgentFrame";
 import { Kv, KvList } from "@/chrome/Kv";
 import {
@@ -36,14 +35,17 @@ import {
   GroupHeadNote,
   Listing,
   ListingHead,
+  ListingNote,
   ListingScroll,
   ListingTitle,
   ListRow,
   ListRowControl,
   ListRowDetail,
+  RowLink,
   Sum,
 } from "@/chrome/Listing";
 import { TitleRow } from "@/chrome/Page";
+import { Eyebrow, Muted, Note } from "@/chrome/Text";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -119,7 +121,7 @@ export function CredentialsPane({
         <ListingHead>
           <TitleRow>
             <ListingTitle render={<span />}>Credentials</ListingTitle>
-            <span className={NOTE}>what {agent} presents to get in</span>
+            <Note render={<span />}>what {agent} presents to get in</Note>
           </TitleRow>
           <Sum>
             Any of these carries the grants in the Apps list. A token expires on its date; a client stays in until
@@ -129,7 +131,7 @@ export function CredentialsPane({
         {minted === null ? null : (
           <ListingHead>
             <TokenReveal token={minted.token}>
-              <p className={NOTE}>Any earlier key keeps working until you revoke it.</p>
+              <Note>Any earlier key keeps working until you revoke it.</Note>
             </TokenReveal>
           </ListingHead>
         )}
@@ -189,7 +191,7 @@ export function CredentialsPane({
             </GroupHeadNote>
           </GroupHead>
           {data.tokens.length === 0 ? (
-            <p className={`${NOTE} p-4`}>No key yet — this agent cannot call anything until one is issued.</p>
+            <ListingNote>No key yet — this agent cannot call anything until one is issued.</ListingNote>
           ) : (
             data.tokens.map((row) => (
               <TokenRow key={row.id} row={row} agent={agent} now={data.now} isNew={row.id === minted?.id} />
@@ -202,10 +204,10 @@ export function CredentialsPane({
           {data.clients.map((row) => (
             <ClientRow key={row.id} row={row} agent={agent} now={data.now} />
           ))}
-          <p className={`${NOTE} p-4`}>
+          <ListingNote>
             One OAuth client signs in as this agent, so its calls carry these grants. Revoking lives with the other
             credentials in <a href="/settings/clients">Settings → Connected clients</a>.
-          </p>
+          </ListingNote>
         </ListingScroll>
       </Listing>
       <CredentialsDetails data={data} token={token} client={client} />
@@ -267,13 +269,12 @@ function TokenRow({
   return (
     <ListRow dim={row.expired}>
       <div>
-        <Link
-          className="font-mono after:absolute after:inset-0"
-          to={paths.agentPane(agent, "credentials")}
-          search={{ sel: `token:${row.id}` }}
+        <RowLink
+          className="font-mono"
+          render={<Link to={paths.agentPane(agent, "credentials")} search={{ sel: `token:${row.id}` }} />}
         >
           {row.prefix}
-        </Link>
+        </RowLink>
         {row.expired ? (
           <>
             {" "}
@@ -312,14 +313,10 @@ function ClientRow({ row, agent, now }: { row: AgentClient; agent: string; now: 
   return (
     <ListRow>
       <div>
-        <Link
-          className="after:absolute after:inset-0"
-          to={paths.agentPane(agent, "credentials")}
-          search={{ sel: `client:${row.id}` }}
-        >
+        <RowLink render={<Link to={paths.agentPane(agent, "credentials")} search={{ sel: `client:${row.id}` }} />}>
           {row.name}
-        </Link>{" "}
-        <span className={`font-mono ${MUTED}`}>{row.origin}</span>
+        </RowLink>{" "}
+        <Muted className="font-mono">{row.origin}</Muted>
         <ListRowDetail>
           consented {formatStamp(row.createdAt)} · used{" "}
           {row.lastUsedAt === null ? "never" : formatLastSeen(row.lastUsedAt, now)}
@@ -351,13 +348,13 @@ function CredentialsDetails({
       <Details>
         <DetailsHead>
           <TitleRow>
-            <span className="font-mono text-lg font-semibold">{token.prefix}</span>
+            <ListingTitle render={<span />} className="font-mono">{token.prefix}</ListingTitle>
             <Badge variant="muted">token</Badge>
           </TitleRow>
         </DetailsHead>
         <DetailsBody>
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>This key</div>
+            <Eyebrow>This key</Eyebrow>
             <KvList>
               <Kv k="Created">{formatStamp(token.createdAt)}</Kv>
               <Kv k="Expires">{token.expiresAt === null ? "never" : formatStamp(token.expiresAt)}</Kv>
@@ -377,13 +374,13 @@ function CredentialsDetails({
       <Details>
         <DetailsHead>
           <TitleRow>
-            <span className="text-lg font-semibold">{client.name}</span>
+            <ListingTitle render={<span />}>{client.name}</ListingTitle>
             <Badge variant="muted">OAuth client</Badge>
           </TitleRow>
         </DetailsHead>
         <DetailsBody>
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>This client</div>
+            <Eyebrow>This client</Eyebrow>
             <KvList>
               <Kv k="Redirect origin">
                 <span className="font-mono">{client.origin}</span>
@@ -404,12 +401,12 @@ function CredentialsDetails({
   return (
     <Details>
       <DetailsHead>
-        <div className="text-lg font-semibold">Credentials</div>
-        <p className={NOTE}>Select a token or a client for its details.</p>
+        <ListingTitle>Credentials</ListingTitle>
+        <Note>Select a token or a client for its details.</Note>
       </DetailsHead>
       <DetailsBody>
         <Card size="sm" render={<section />}>
-          <div className={EYEBROW}>Summary</div>
+          <Eyebrow>Summary</Eyebrow>
           <KvList>
             <Kv k="Tokens">{data.tokens.length}</Kv>
             <Kv k="Clients">{data.clients.length}</Kv>
@@ -436,11 +433,11 @@ function RecentUse({ agent, now }: { agent: string; now: number }): ReactNode {
   const rows = trail.data?.page.rows ?? [];
   return (
     <Card size="sm" render={<section />}>
-      <div className={EYEBROW}>Recent use · the agent's last three calls</div>
+      <Eyebrow>Recent use · the agent's last three calls</Eyebrow>
       {trail.isPending ? (
         <Skeleton rows={3} />
       ) : rows.length === 0 ? (
-        <p className={NOTE}>no calls yet</p>
+        <Note>no calls yet</Note>
       ) : (
         <KvList>
           {rows.map((row) => (

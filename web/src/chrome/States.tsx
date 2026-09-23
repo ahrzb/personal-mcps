@@ -4,6 +4,7 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton as Block } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/http";
+import { Muted } from "./Text";
 
 /**
  * The five states every read on every pane renders, in one place so no pane invents a sixth
@@ -78,9 +79,5 @@ export function Failure({ message, onRetry }: { message: string; onRetry: () => 
  * that anything happened.
  */
 export function Refreshing({ active }: { active: boolean }): ReactNode {
-  return active ? (
-    <span className="text-sm text-muted-foreground" aria-live="polite">
-      refreshing…
-    </span>
-  ) : null;
+  return active ? <Muted aria-live="polite">refreshing…</Muted> : null;
 }

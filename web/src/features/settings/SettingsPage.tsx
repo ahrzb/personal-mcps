@@ -3,7 +3,9 @@ import type { QueryKey } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { Actions, NarrowActions } from "@/chrome/Actions";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
+import { PasskeyIcon, PlusIcon } from "@/chrome/Icons";
 import { useFlashParams } from "@/chrome/Notice";
 import { OtpBoxes } from "@/chrome/OtpBoxes";
 import { Page, PageHead, PageSubtitle, PageTitle, Pane as PaneFrame, Workspace } from "@/chrome/Page";
@@ -11,6 +13,7 @@ import { PanePills, PaneRail, paneGroups } from "@/chrome/Panes";
 import type { PaneEntry } from "@/chrome/Panes";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Muted, Note, RowMeta, RowTitle } from "@/chrome/Text";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge, BadgeDot } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -175,29 +178,6 @@ function SettingsNotice({ notice }: { notice: Notice }): ReactNode {
 
 /* ---------------------------------------------------------- shared looks --- */
 
-/** `.actions.actions--start`: a row of controls 12px apart, from the left. */
-const ACTIONS = "flex flex-wrap items-center gap-3";
-
-/** legacy.css's narrow `.actions .btn { flex: 1 }`: each button in an `ACTIONS` row takes an
- *  equal share of the phone's width. Written on the button, since the row may hold other
- *  things (a hint) that do not grow. */
-const GROW = "max-md:flex-1";
-
-/** `.note`: the muted small print under a card, capped at a readable measure. */
-const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
-
-/** `.table .cell-*`, spelled as `preview/fixtures/primitives/table.tsx` spells them. */
-const CELL = {
-  /** `.cell-muted` */
-  muted: "text-muted-foreground",
-  /** `.cell-mono`: breaks anywhere, so a key prefix or slug never widens the card. */
-  mono: "font-mono text-xs wrap-anywhere",
-  /** `.cell-actions`: right-aligned wide; its own row, left-aligned, under the card on a phone. */
-  actions: "text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left",
-  /** `.table .cell-actions .btn`, over a `sm` button: 10px sides wide, a 44px half-row on a phone. */
-  button: "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3",
-};
-
 /** The flush card's head above a table: `.card-head` at 24px sides and top, 16px under. */
 const TABLE_CARD_HEAD = "px-6 pt-6 pb-4";
 
@@ -236,9 +216,9 @@ function Pane({
       return (
         <>
           <TokensCard tokens={read.tokens} kind={kind} />
-          <p className={NOTE}>
+          <Note>
             Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.
-          </p>
+          </Note>
         </>
       );
     case "execution":
@@ -247,11 +227,11 @@ function Pane({
       return (
         <>
           <ClientsCard connections={read.connections} />
-          <p className={NOTE}>
+          <Note>
             A client registers itself the first time you approve it on the consent screen — that screen is a step
             inside the sign-in redirect, never a page you navigate to. Revoking stops its tokens working; the agent it
             acted as, and that agent's grants, are untouched.
-          </p>
+          </Note>
         </>
       );
   }
@@ -364,14 +344,15 @@ function PasswordCard({
           CLI sessions included — each machine runs <code className={CODE_INLINE}>pmcp login</code> again. This
           browser stays signed in.
         </FieldDescription>
-        <div className={ACTIONS}>
-          <Button type="submit" className={GROW} disabled={write.pending}>
+        {/* The hint beside the button does not grow, so the button grows alone. */}
+        <Actions start>
+          <Button type="submit" className="max-md:flex-1" disabled={write.pending}>
             Update password
           </Button>
           {confirmedAt === null ? null : (
             <FieldDescription render={<p />}>{confirmedLine(confirmedAt, Date.now())}</FieldDescription>
           )}
-        </div>
+        </Actions>
       </FieldGroup>
     </Card>
   );
@@ -384,11 +365,11 @@ const CODE_INLINE = "rounded-sm bg-muted px-2 py-[3px] font-mono text-sm";
 function PasswordFooter(): ReactNode {
   const { bootstrap } = useAppEnv();
   return (
-    <p className={NOTE}>
+    <Note>
       No email is on file, so there is no reset link: a forgotten password is recovered on the server with{" "}
       <span className={CODE_INLINE}>pnpm users reset-password {bootstrap.username}</span> (§12). Changing it here needs
       the current one.
-    </p>
+    </Note>
   );
 }
 
@@ -461,11 +442,11 @@ function TwoFactorPane({ enabled }: { enabled: boolean }): ReactNode {
               enabling destroys nothing (settings.tsx's own note). */}
           <FieldGroup render={<form onSubmit={enable} />}>
             <ConfirmPasswordField />
-            <div className={ACTIONS}>
-              <Button type="submit" className={GROW} disabled={write.pending}>
+            <Actions start grow>
+              <Button type="submit" disabled={write.pending}>
                 Enable two-factor
               </Button>
-            </div>
+            </Actions>
           </FieldGroup>
         </Card>
       ) : (
@@ -483,7 +464,7 @@ function TwoFactorPane({ enabled }: { enabled: boolean }): ReactNode {
           {/* Two layouts, not one flexing row: the two long labels overflow a phone's
               half-width buttons, so the phone stacks them full width. Bottom-aligned wide, so
               Disable sits beside the Regenerate BUTTON and not beside its field. */}
-          <div className={cn(ACTIONS, "items-end max-md:hidden")}>
+          <Actions start className="items-end max-md:hidden">
             <FieldGroup render={<form onSubmit={regenerate} />}>
               <ConfirmPasswordField />
               <Button type="submit" variant="outline" size="sm" disabled={write.pending}>
@@ -496,8 +477,8 @@ function TwoFactorPane({ enabled }: { enabled: boolean }): ReactNode {
             >
               Disable two-factor
             </Link>
-          </div>
-          <div className="hidden flex-col gap-2.5 max-md:flex">
+          </Actions>
+          <NarrowActions>
             <FieldGroup render={<form onSubmit={regenerate} />}>
               <ConfirmPasswordField />
               <Button type="submit" variant="outline" className="w-full" disabled={write.pending}>
@@ -510,7 +491,7 @@ function TwoFactorPane({ enabled }: { enabled: boolean }): ReactNode {
             >
               Disable two-factor
             </Link>
-          </div>
+          </NarrowActions>
         </Card>
       )}
       {codes === null ? null : <BackupCodesCard codes={codes} onDone={forget} />}
@@ -563,18 +544,14 @@ function EnrollmentCard({
             {enrollment.error}
           </FieldError>
         )}
-        <div className={ACTIONS}>
-          <Button type="submit" className={GROW} disabled={pending}>
+        <Actions start grow>
+          <Button type="submit" disabled={pending}>
             Verify
           </Button>
-          <Link
-            className={`${buttonVariants({ variant: "ghost" })} ${GROW}`}
-            to={paths.settingsPane("two-factor")}
-            onClick={onCancel}
-          >
+          <Link className={buttonVariants({ variant: "ghost" })} to={paths.settingsPane("two-factor")} onClick={onCancel}>
             Cancel
           </Link>
-        </div>
+        </Actions>
       </FieldGroup>
     </Card>
   );
@@ -595,15 +572,15 @@ function BackupCodesCard({ codes, onDone }: { codes: string[]; onDone: () => voi
       <FieldDescription render={<p />} className="text-warning">
         Store these somewhere safe — they are shown only once.
       </FieldDescription>
-      <div className={ACTIONS}>
+      <Actions start grow>
         {/* Newline-joined, the reveal's own shape, so the pasted set matches the screen. */}
-        <Button variant="outline" className={GROW} onClick={() => void navigator.clipboard.writeText(codes.join("\n"))}>
+        <Button variant="outline" onClick={() => void navigator.clipboard.writeText(codes.join("\n"))}>
           Copy codes
         </Button>
-        <Link className={`${buttonVariants()} ${GROW}`} to={paths.settingsPane("two-factor")} onClick={onDone}>
+        <Link className={buttonVariants()} to={paths.settingsPane("two-factor")} onClick={onDone}>
           Done
         </Link>
-      </div>
+      </Actions>
     </Card>
   );
 }
@@ -628,7 +605,7 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
     );
   };
   const addButton = (
-    <Button type="button" variant="outline" size="sm" className={GROW} onClick={add}>
+    <Button type="button" variant="outline" size="sm" onClick={add}>
       <PlusIcon />
       <span>Add passkey</span>
     </Button>
@@ -642,10 +619,10 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
       </div>
       {passkeys.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-2">
-          <p className="max-w-[280px] text-center text-sm text-muted-foreground">
+          <Muted render={<p />} className="max-w-[280px] text-center">
             No passkeys yet. Add one to sign in without a password.
-          </p>
-          <div className={ACTIONS}>{addButton}</div>
+          </Muted>
+          <Actions start grow>{addButton}</Actions>
         </div>
       ) : (
         <>
@@ -653,13 +630,13 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
             {passkeys.map((pk) => (
               <div className={LIST_ITEM} key={pk.id}>
                 <div className="flex items-center gap-3">
-                  <KeyIcon />
+                  <PasskeyIcon className="shrink-0 text-muted-foreground" />
                   <div>
-                    <div className={LIST_TITLE}>{pk.name}</div>
-                    <div className={LIST_META}>
+                    <RowTitle>{pk.name}</RowTitle>
+                    <RowMeta>
                       Added {formatDate(pk.addedAt)} ·{" "}
                       {pk.lastUsedAt === null ? "never used" : `last used ${formatRelative(pk.lastUsedAt, now)}`}
-                    </div>
+                    </RowMeta>
                   </div>
                 </div>
                 <Link
@@ -671,7 +648,7 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
               </div>
             ))}
           </div>
-          <div className={ACTIONS}>{addButton}</div>
+          <Actions start grow>{addButton}</Actions>
         </>
       )}
     </Card>
@@ -681,10 +658,6 @@ function PasskeysCard({ passkeys }: { passkeys: PasskeyRow[] }): ReactNode {
 /** `.list-item`: a plain row inside a padded card — the thing on the left, its control on the
  *  right — ruled from the next, the last unruled against the card's edge. */
 const LIST_ITEM = "flex items-center justify-between gap-3 border-b border-row-border py-3 last:border-b-0";
-
-/** `.list-title` and `.list-meta`: a row's name, and the muted line under it. */
-const LIST_TITLE = "text-base font-medium";
-const LIST_META = "text-xs text-muted-foreground";
 
 /**
  * One WebAuthn registration against better-auth's two endpoints. Base64url is the only wire
@@ -791,12 +764,12 @@ function SessionsCard({ sessions }: { sessions: SessionRow[] }): ReactNode {
                   {session.current ? <Badge variant="outline">current</Badge> : null}
                 </div>
               </TableCell>
-              <TableCell className={CELL.muted}>{formatDate(session.createdAt)}</TableCell>
-              <TableCell className={CELL.muted}>{formatRelative(session.lastActiveAt, now)}</TableCell>
-              <TableCell className={CELL.actions}>
+              <TableCell className="text-muted-foreground">{formatDate(session.createdAt)}</TableCell>
+              <TableCell className="text-muted-foreground">{formatRelative(session.lastActiveAt, now)}</TableCell>
+              <TableCell variant="actions">
                 {session.current ? null : (
                   <Link
-                    className={cn(buttonVariants({ variant: "danger-ghost", size: "sm" }), CELL.button)}
+                    className={buttonVariants({ variant: "danger-ghost", size: "cell" })}
                     to={paths.settingsConfirm("sessions", "revoke-session", session.id)}
                   >
                     Revoke
@@ -823,12 +796,12 @@ function SessionsCard({ sessions }: { sessions: SessionRow[] }): ReactNode {
             <div className={LIST_ITEM} key={session.id}>
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-2">
-                  <span className={LIST_TITLE}>{sessionLabel(session)}</span>
+                  <RowTitle render={<span />}>{sessionLabel(session)}</RowTitle>
                   {session.current ? <Badge variant="outline">current</Badge> : null}
                 </div>
-                <div className={LIST_META}>
+                <RowMeta>
                   Created {formatDate(session.createdAt)} · active {formatRelative(session.lastActiveAt, now)}
-                </div>
+                </RowMeta>
               </div>
               {session.current ? null : (
                 <Link
@@ -920,17 +893,17 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
               /* An expired row recedes behind the live ones — every cell and link, over their
                  own colours; the amber badge is the one thing in it still at full contrast. */
               <TableRow key={token.id} className={token.expired ? "[&>td]:text-ring [&>td_a]:text-ring" : undefined}>
-                <TableCell className={CELL.mono}>{token.prefix}</TableCell>
+                <TableCell variant="mono">{token.prefix}</TableCell>
                 <TableCell>
                   <Badge variant="mono">{token.kind}</Badge>
                 </TableCell>
-                <TableCell className={CELL.mono}>
+                <TableCell variant="mono">
                   <Link to={token.kind === "app" ? paths.appDetail(token.boundTo) : paths.agentDetail(token.boundTo)}>
                     {token.boundTo}
                   </Link>
                 </TableCell>
-                <TableCell className={CELL.muted}>{formatStamp(token.createdAt)}</TableCell>
-                <TableCell className={CELL.muted}>
+                <TableCell className="text-muted-foreground">{formatStamp(token.createdAt)}</TableCell>
+                <TableCell className="text-muted-foreground">
                   {token.expired ? (
                     <Badge variant="warning">expired</Badge>
                   ) : token.expiresAt === null ? (
@@ -939,10 +912,10 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
                     formatStamp(token.expiresAt)
                   )}
                 </TableCell>
-                <TableCell className={CELL.muted}>
+                <TableCell className="text-muted-foreground">
                   {token.lastUsedAt === null ? "never" : formatStamp(token.lastUsedAt)}
                 </TableCell>
-                <TableCell className={CELL.actions}>
+                <TableCell variant="actions">
                   {/* Still a <form> around the button, as the server drew it — and that is
                       layout, not habit: the form is the cell's flex item, so the phone's
                       `flex-1` on a cell's button does not stretch this one across. */}
@@ -958,8 +931,7 @@ function TokensCard({ tokens, kind }: { tokens: SettingsTokenRow[]; kind: Settin
                     <Button
                       type="submit"
                       variant="danger-outline"
-                      size="sm"
-                      className={CELL.button}
+                      size="cell"
                       disabled={write.pending}
                     >
                       {token.expired ? "Remove" : "Revoke"}
@@ -1007,17 +979,17 @@ function ClientsCard({ connections }: { connections: ConnectionRow[] }): ReactNo
               <TableRow key={row.id}>
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <span className="text-base font-medium">{row.clientName ?? row.clientId}</span>
+                    <RowTitle render={<span />}>{row.clientName ?? row.clientId}</RowTitle>
                     {/* Nobody vouched for this name but the client that chose it (§19.5). */}
                     {row.selfRegistered ? <Badge variant="warning">unverified</Badge> : null}
                   </div>
-                  <div className="font-mono text-xs text-muted-foreground">{row.redirectOrigin}</div>
+                  <RowMeta className="font-mono">{row.redirectOrigin}</RowMeta>
                 </TableCell>
-                <TableCell className={CELL.mono}>
+                <TableCell variant="mono">
                   <Link to={paths.agentDetail(row.agentSlug)}>{row.agentSlug}</Link>
                 </TableCell>
-                <TableCell className={CELL.muted}>{formatStamp(row.createdAt)}</TableCell>
-                <TableCell className={CELL.muted}>
+                <TableCell className="text-muted-foreground">{formatStamp(row.createdAt)}</TableCell>
+                <TableCell className="text-muted-foreground">
                   {row.lastUsedAt === null ? "never" : formatStamp(row.lastUsedAt)}
                 </TableCell>
                 <TableCell>
@@ -1030,10 +1002,10 @@ function ClientsCard({ connections }: { connections: ConnectionRow[] }): ReactNo
                     <Badge variant="muted">revoked</Badge>
                   )}
                 </TableCell>
-                <TableCell className={CELL.actions}>
+                <TableCell variant="actions">
                   {row.revokedAt === null ? (
                     <Link
-                      className={cn(buttonVariants({ variant: "danger-outline", size: "sm" }), CELL.button)}
+                      className={buttonVariants({ variant: "danger-outline", size: "cell" })}
                       to={paths.settingsConfirm("clients", "revoke-connection", row.id)}
                     >
                       Revoke
@@ -1151,17 +1123,17 @@ function ExecutionCard({ read }: { read: SettingsRead }): ReactNode {
           )}
         </Field>
 
-        <div className={ACTIONS}>
-          <Button type="submit" className={GROW} disabled={write.pending}>
+        <Actions start grow>
+          <Button type="submit" disabled={write.pending}>
             Save
           </Button>
-        </div>
+        </Actions>
       </FieldGroup>
 
-      <p className={NOTE}>
+      <Note>
         Each execution snapshots this pair when it is admitted, so a change governs new runs only — one already going
         keeps the deadline it started with.
-      </p>
+      </Note>
     </Card>
   );
 }
@@ -1344,36 +1316,4 @@ function useSettingsWrite(pane: SettingsPane): {
  *  two kinds of 200 do not share. */
 function isRedirected(answer: unknown): answer is Redirected {
   return typeof answer === "object" && answer !== null && "next" in answer && typeof answer.next === "string";
-}
-
-/* ----------------------------------------------------------------- icons --- */
-
-function KeyIcon(): ReactNode {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="shrink-0 text-muted-foreground"
-      aria-hidden="true"
-    >
-      <circle cx="7.5" cy="15.5" r="3.5" />
-      <path d="m21 2-9.6 9.6" />
-      <path d="m15.5 7.5 3 3L22 7l-3-3" />
-    </svg>
-  );
-}
-
-function PlusIcon(): ReactNode {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </svg>
-  );
 }

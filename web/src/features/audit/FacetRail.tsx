@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { FACET_TOP, fmtCount } from "./derive";
 import type { FacetField, FacetGroup, Filter } from "./derive";
-import { EYEBROW, FROW, NOTE, SkelBar, Swatch } from "./parts";
+import { Eyebrow, Note } from "@/chrome/Text";
+import { FROW, FROW_FIGURE, FROW_VALUE, SkelBar, Swatch } from "./parts";
 import type { OutcomeClass } from "./derive";
 
 /**
@@ -44,16 +45,16 @@ export function FacetRail({
       {titled ? <h3 className={RAIL_TITLE}>Filter</h3> : null}
       {/* At the regular tier the rail is a wrapping row of groups, and this line takes a whole
           row of it, as the title does. */}
-      <p className={titled ? `${NOTE} px-[5px] md:max-lg:w-full` : `${NOTE} px-[5px]`}>
+      <Note className={titled ? "px-[5px] md:max-lg:w-full" : "px-[5px]"}>
         {fmtCount(selected)} of {fmtCount(inWindow)} in window
-      </p>
+      </Note>
       {groups.map((facet) => {
         const cap = FACET_TOP[facet.field];
         const open = expanded[facet.field] === true;
         const shown = open ? facet.values : facet.values.slice(0, cap);
         return (
           <div className={group} key={facet.field}>
-            <p className={GROUP_LABEL}>{facet.field}</p>
+            <Eyebrow render={<p />} className={GROUP_LABEL}>{facet.field}</Eyebrow>
             {shown.map((value) => (
               <button
                 key={value.value}
@@ -70,8 +71,8 @@ export function FacetRail({
                   style={{ width: `${(value.count / facet.max) * 100}%` }}
                 />
                 {facet.field === "outcome" ? <Swatch cls={value.value as OutcomeClass} className="relative" /> : null}
-                <span className="relative truncate font-mono">{value.value}</span>
-                <span className="relative ml-auto pl-1.5 text-2xs text-muted-foreground">{fmtCount(value.count)}</span>
+                <span className={FROW_VALUE}>{value.value}</span>
+                <span className={FROW_FIGURE}>{fmtCount(value.count)}</span>
               </button>
             ))}
             {facet.total > cap ? (
@@ -87,8 +88,8 @@ export function FacetRail({
         );
       })}
       <div className={group}>
-        <p className={GROUP_LABEL}>session</p>
-        <p className={`${NOTE} px-[5px]`}>Opened from a record, never listed — too many to browse.</p>
+        <Eyebrow render={<p />} className={GROUP_LABEL}>session</Eyebrow>
+        <Note className="px-[5px]">Opened from a record, never listed — too many to browse.</Note>
       </div>
     </>
   );
@@ -116,7 +117,8 @@ const RAIL_TITLE = "mb-0.5 px-[5px] text-xs font-semibold md:max-lg:w-full";
  *  each at least; the Filters level stacks them at every width. */
 const RAIL_GROUP = "mt-2.5 md:max-lg:min-w-[180px] md:max-lg:flex-[1_1_180px]";
 
-const GROUP_LABEL = `${EYEBROW} mb-[3px] px-[5px]`;
+/** A group's name, an `Eyebrow`, level with the rows' text. */
+const GROUP_LABEL = "mb-[3px] px-[5px]";
 
 /** A row of the phone's Filters level: the touch height, and 13px text to go with it. */
 const LEVEL_ROW = "max-md:h-control-touch max-md:text-sm";

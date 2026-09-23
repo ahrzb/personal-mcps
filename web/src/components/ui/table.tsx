@@ -1,4 +1,5 @@
 import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/cn"
 
 /**
@@ -7,13 +8,14 @@ import { cn } from "@/lib/cn"
  * too, because a foot follows it inside the card).
  *
  * Below 768px every table stacks, as `.table` does: the header row goes and each body row is
- * a block — a card body — holding its cells as blocks. What a cell shows at that width (the
- * one-line summary, the actions row, /audit's ordering) is the caller's, as className on its
- * cells; `preview/fixtures/primitives/table.tsx` spells each one.
+ * a block — a card body — holding its cells as blocks. The actions cell (`variant="actions"`)
+ * becomes a row of its own under the card; what any other cell shows at that width (the
+ * one-line summary, /audit's ordering) is the caller's, as className on its cells, and
+ * `preview/fixtures/primitives/table.tsx` spells each one.
  *
- * Rows neither hover nor tint by themselves: a row that is a link carries its own
- * `relative cursor-pointer hover:bg-muted` beside the stretched link inside it. A selected row
- * is `data-state="selected"`.
+ * Rows neither hover nor tint by themselves: a row that is a link says `link`, and holds the
+ * stretched link (`chrome/Listing`'s `RowLink`) in its first cell. A selected row is
+ * `data-state="selected"`.
  *
  * The container neither scrolls nor positions, because legacy's `.table` had no wrapper and
  * each property alone moves pixels: `relative` drops Chrome to greyscale antialiasing on the
@@ -78,16 +80,49 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
  * stretched link's `::after` fills, a pixel short of today's); stacked below 768px, the rule
  * is the row's, under each card.
  */
-function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
+function TableRow({
+  className,
+  link = false,
+  ...props
+}: React.ComponentProps<"tr"> & {
+  /** The whole row is the link in its first cell (legacy.css's `.agent-row`, `.app-row`): it
+   *  positions that link's stretched `::after`, fills when hovered, and raises its actions
+   *  cell above the link so the row's own controls still take their clicks. */
+  link?: boolean
+}) {
   return (
     <tr
       data-slot="table-row"
+      data-link={link || undefined}
       className={cn(
         "data-[state=selected]:bg-muted max-md:block max-md:border-b max-md:border-row-border max-md:px-4 max-md:py-3 group-data-[size=dense]/table:max-md:px-3.5 group-data-[size=dense]/table:max-md:py-2.5",
+        link && "group/row relative cursor-pointer hover:bg-muted",
         className
       )}
       {...props}
     />
+  )
+}
+
+/** `.row-chevron`: the chevron closing a link row's actions cell. Decoration for where the row
+ *  goes, so hidden from anyone listing the page's links: the row's link says it. */
+function TableRowChevron() {
+  return (
+    <span data-slot="table-row-chevron" className="inline-flex items-center text-ring">
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m9 6 6 6-6 6" />
+      </svg>
+    </span>
   )
 }
 
@@ -106,22 +141,43 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   )
 }
 
+const tableCellVariants = cva(
+  "border-b border-row-border align-middle text-sm max-md:block max-md:border-b-0 max-md:p-0 md:px-5 md:py-3 group-data-[size=dense]/table:align-top group-data-[size=dense]/table:md:px-4 group-data-[size=dense]/table:md:py-1.5",
+  {
+    variants: {
+      variant: {
+        default: "",
+        /** `.cell-mono`: an identifier in 12px mono, breaking anywhere, so a key prefix or a
+         *  slug never widens the card. */
+        mono: "font-mono text-xs wrap-anywhere",
+        /** `.cell-actions`: the row's controls, right-aligned on one line; below 768px their
+         *  own left-aligned row under the card. In a `link` row it is raised above the row's
+         *  link. Its buttons are `size="cell"`. */
+        actions:
+          "text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left group-data-[link]/row:relative group-data-[link]/row:z-1",
+      },
+    },
+    defaultVariants: { variant: "default" },
+  }
+)
+
 /**
  * A cell. It WRAPS, unlike the generated one: a long token must break inside the card rather
  * than push the table past it. Unpadded and unruled below 768px, where the row's padding and
- * rule are the card's.
+ * rule are the card's. `variant` names the legacy cell looks a page reuses.
  */
-function TableCell({ className, ...props }: React.ComponentProps<"td">) {
+function TableCell({
+  className,
+  variant,
+  ...props
+}: React.ComponentProps<"td"> & VariantProps<typeof tableCellVariants>) {
   return (
     <td
       data-slot="table-cell"
-      className={cn(
-        "border-b border-row-border align-middle text-sm max-md:block max-md:border-b-0 max-md:p-0 md:px-5 md:py-3 group-data-[size=dense]/table:align-top group-data-[size=dense]/table:md:px-4 group-data-[size=dense]/table:md:py-1.5",
-        className
-      )}
+      className={cn(tableCellVariants({ variant }), className)}
       {...props}
     />
   )
 }
 
-export { Table, TableHeader, TableBody, TableHead, TableRow, TableCell }
+export { Table, TableHeader, TableBody, TableHead, TableRow, TableRowChevron, TableCell }

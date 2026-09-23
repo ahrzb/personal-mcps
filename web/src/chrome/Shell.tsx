@@ -9,6 +9,7 @@ import { useApi, useAppEnv } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import { pendingApprovalsQuery } from "@/lib/queries";
 import { usePreviewTransient } from "@/preview/transient";
+import { BrandMark } from "./AuthFrame";
 
 /**
  * The shell every signed-in SPA page renders inside: the 56px header with the brand, the
@@ -237,18 +238,6 @@ function CloseIcon(): ReactNode {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
       <path d="M6 6l12 12M18 6L6 18" />
-    </svg>
-  );
-}
-
-/** The hub mark from the artboards — a node with three spokes. */
-function BrandMark(): ReactNode {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.5" />
-      <path d="M12 8.5V3.5" />
-      <path d="M14.5 14.5L18.5 18.5" />
-      <path d="M9.5 14.5L5.5 18.5" />
     </svg>
   );
 }

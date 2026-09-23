@@ -29,7 +29,6 @@ import { Skeleton } from "@/chrome/States";
 import { NO_BODIES_SENTENCE } from "@/features/audit/derive";
 import type { ApprovalRow, AuditRow, NoBodiesReason } from "@/lib/types";
 import { effectiveRolesOf, grantEntryOf, reachabilityFor, spelledOf } from "../door";
-import { EYEBROW, MUTED, NOTE } from "../AgentFrame";
 import type { AgentPageData } from "../AgentFrame";
 import { Kv, KvList } from "@/chrome/Kv";
 import {
@@ -46,9 +45,12 @@ import {
   ListRow,
   ListRowControl,
   ListRowDetail,
+  RowLink,
   Sum,
 } from "@/chrome/Listing";
-import { TitleRow } from "@/chrome/Page";
+import { TitleRow, TitleRowEnd } from "@/chrome/Page";
+import { Actions } from "@/chrome/Actions";
+import { CodeBlock, Eyebrow, Muted, Note } from "@/chrome/Text";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -139,23 +141,17 @@ export function ActivityPane({
         <ListingHead>
           <TitleRow split>
             <ListingTitle render={<span />}>Activity</ListingTitle>
-            <span className={NOTE}>the last 7 days, the retention window</span>
+            <Note render={<span />}>the last 7 days, the retention window</Note>
             {/* The window ends here and the ledger goes on: a control rather than a note,
                 because leaving for the full trail is a thing the reader DOES. The link is the
-                row's end itself (`TitleRowEnd`'s classes, on the link rather than on a box
-                around it), so on a page with levels below 1024px the button spans the line. */}
-            <a
-              className={buttonVariants({
-                variant: "outline",
-                size: "sm",
-                className: "ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full",
-              })}
-              href={auditHref}
-              title={auditHref}
+                row's end itself rather than a box around it, so on a page with levels below
+                1024px the button spans the line. */}
+            <TitleRowEnd
+              render={<a className={buttonVariants({ variant: "outline", size: "sm" })} href={auditHref} title={auditHref} />}
             >
               Open in Audit
               <IconExternal />
-            </a>
+            </TitleRowEnd>
           </TitleRow>
           {/* `last N` rather than `N`: N is what this page drew, and a bare count would read
               as the week's total. */}
@@ -204,15 +200,15 @@ export function ActivityPane({
                 >
                   Load {ACTIVITY_PAGE} more
                 </Link>
-                <span className={NOTE}>
+                <Note render={<span />}>
                   more older calls in the last 7 days · everything before that is in{" "}
                   <a href={auditHref}>Audit</a>
-                </span>
+                </Note>
               </>
             ) : (
-              <span className={NOTE}>
+              <Note render={<span />}>
                 That is the whole week — older calls are in <a href={auditHref}>Audit</a>.
-              </span>
+              </Note>
             )}
           </ListingMore>
         </ListingScroll>
@@ -276,14 +272,17 @@ function ApprovalRowView({
   return (
     <ListRow dim={row.status !== "pending"}>
       <div>
-        <span className={`font-mono ${MUTED}`}>{row.appSlug}</span>{" "}
-        <Link className={ROW_LINK} to={paths.agentPane(agent, "activity")} search={{ sel: `approval:${row.id}` }}>
+        <Muted className="font-mono">{row.appSlug}</Muted>{" "}
+        <RowLink
+          className="font-mono"
+          render={<Link to={paths.agentPane(agent, "activity")} search={{ sel: `approval:${row.id}` }} />}
+        >
           {row.tool}
-        </Link>
+        </RowLink>
         <ListRowDetail className="font-mono">{JSON.stringify(row.args)}</ListRowDetail>
       </div>
       <ListRowControl>
-        <span className={MUTED}>{formatLastSeen(Date.parse(row.createdAt), now)}</span>
+        <Muted>{formatLastSeen(Date.parse(row.createdAt), now)}</Muted>
         {row.status === "pending" ? (
           <>
             <Button variant="outline" size="sm" disabled={deciding} onClick={() => onDecide("reject")}>
@@ -305,10 +304,13 @@ function CallRow({ row, agent, now }: { row: AuditRow; agent: string; now: numbe
   return (
     <ListRow>
       <div>
-        <span className={`font-mono ${MUTED}`}>{row.app ?? ""}</span>{" "}
-        <Link className={ROW_LINK} to={paths.agentPane(agent, "activity")} search={{ sel: `call:${row.id}` }}>
+        <Muted className="font-mono">{row.app ?? ""}</Muted>{" "}
+        <RowLink
+          className="font-mono"
+          render={<Link to={paths.agentPane(agent, "activity")} search={{ sel: `call:${row.id}` }} />}
+        >
           {row.tool ?? ""}
-        </Link>
+        </RowLink>
         <ListRowDetail>
           {formatLastSeen(row.ts, now)}
           {row.durationMs === undefined ? "" : ` · ${row.durationMs} ms`}
@@ -328,15 +330,6 @@ function outcomeVariant(outcome: string): "success" | "warning" | "danger" {
   if (outcome === "-32003") return "warning";
   return "danger";
 }
-
-/** A row's tool name as its link, stretched by its `::after` over the whole `ListRow`, so a
- *  click anywhere on the row opens its details; the control column sits above it. */
-const ROW_LINK = "font-mono after:absolute after:inset-0";
-
-/** A block of JSON: wrapped anywhere, so a one-line body wraps inside the card rather than
- *  scrolling sideways. */
-const CODE =
-  "m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle";
 
 function ActivityDetails({
   data,
@@ -359,37 +352,36 @@ function ActivityDetails({
       <Details>
         <DetailsHead>
           <TitleRow>
-            <span className="font-mono text-lg font-semibold">{row.tool}</span>
+            <ListingTitle render={<span />} className="font-mono">{row.tool}</ListingTitle>
             <Badge variant="warning">{row.status}</Badge>
           </TitleRow>
-          <p className={NOTE}>
+          <Note>
             {agent} wants to call this on <span className="font-mono">{row.appSlug}</span> · asked{" "}
             {formatLastSeen(Date.parse(row.createdAt), data.now)} · expires in{" "}
             {formatUntil(Date.parse(row.expiresAt), data.now)}
-          </p>
+          </Note>
         </DetailsHead>
         <DetailsBody>
           <Card size="sm" render={<section />}>
-            <div className={EYEBROW}>Arguments · post-redaction</div>
-            <pre className={CODE}>{JSON.stringify(row.args)}</pre>
+            <Eyebrow>Arguments · post-redaction</Eyebrow>
+            <CodeBlock>{JSON.stringify(row.args)}</CodeBlock>
           </Card>
           {why === null ? null : (
             <Card size="sm" render={<section />}>
-              <div className={EYEBROW}>Why it waits</div>
+              <Eyebrow>Why it waits</Eyebrow>
               <KvList>
                 <Kv k="Grant">{why}</Kv>
               </KvList>
             </Card>
           )}
-          {/* The decision's row: wrapping, each button an equal share of it on a phone. */}
-          <div className="flex flex-wrap items-center gap-3 max-md:*:flex-1">
+          <Actions start grow>
             <Button variant="outline" size="sm" disabled={deciding} onClick={() => onDecide(row.id, "reject")}>
               Reject
             </Button>
             <Button size="sm" disabled={deciding} onClick={() => onDecide(row.id, "approve")}>
               Approve
             </Button>
-          </div>
+          </Actions>
         </DetailsBody>
       </Details>
     );
@@ -401,39 +393,39 @@ function ActivityDetails({
       <Details>
         <DetailsHead>
           <TitleRow>
-            <span className="font-mono text-lg font-semibold">{row.tool ?? ""}</span>
+            <ListingTitle render={<span />} className="font-mono">{row.tool ?? ""}</ListingTitle>
             <Badge variant={outcomeVariant(row.outcome)}>{OUTCOME_WORD[row.outcome] ?? "error"}</Badge>
           </TitleRow>
-          <p className={NOTE}>
+          <Note>
             <span className="font-mono">{row.app ?? ""}</span> · {formatLastSeen(row.ts, data.now)}
             {row.durationMs === undefined ? "" : ` · ${row.durationMs} ms`}
-          </p>
+          </Note>
         </DetailsHead>
         <DetailsBody>
           {noBodies === null ? null : (
             <Card size="sm" render={<section />}>
-              <p className={NOTE}>{NO_BODIES_SENTENCE[noBodies]}</p>
+              <Note>{NO_BODIES_SENTENCE[noBodies]}</Note>
             </Card>
           )}
           {row.args === undefined ? null : (
             <Card size="sm" render={<section />}>
-              <div className={EYEBROW}>Arguments</div>
-              <pre className={CODE}>{JSON.stringify(row.args, null, 2)}</pre>
+              <Eyebrow>Arguments</Eyebrow>
+              <CodeBlock>{JSON.stringify(row.args, null, 2)}</CodeBlock>
             </Card>
           )}
           {row.result === undefined ? null : (
             <Card size="sm" render={<section />}>
-              <div className={EYEBROW}>Result</div>
-              <pre className={CODE}>{JSON.stringify(row.result, null, 2)}</pre>
+              <Eyebrow>Result</Eyebrow>
+              <CodeBlock>{JSON.stringify(row.result, null, 2)}</CodeBlock>
             </Card>
           )}
-          <p className={NOTE}>
+          <Note>
             The same row the audit page shows.{" "}
             {/* The fragment names no element on the explorer and is inert rather than broken
                 (§13, 2026-09-21); it stays because the shape is a deep link somebody has
                 bookmarked, and `?expand=` is what opens the record. */}
             <a href={`${paths.audit({ expand: String(row.id) })}#event-${row.id}`}>Open in the audit trail</a>.
-          </p>
+          </Note>
         </DetailsBody>
       </Details>
     );
@@ -441,12 +433,12 @@ function ActivityDetails({
   return (
     <Details>
       <DetailsHead>
-        <div className="text-lg font-semibold">Activity</div>
-        <p className={NOTE}>Select a request or a call for its details.</p>
+        <ListingTitle>Activity</ListingTitle>
+        <Note>Select a request or a call for its details.</Note>
       </DetailsHead>
       <DetailsBody>
         <Card size="sm" render={<section />}>
-          <div className={EYEBROW}>7 days</div>
+          <Eyebrow>7 days</Eyebrow>
           <KvList>
             <Kv k="Calls">
               {summary.calls} · {summary.ok} ok

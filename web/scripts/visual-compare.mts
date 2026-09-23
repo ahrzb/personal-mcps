@@ -8,6 +8,8 @@
 // gallery at pass 1's close, in pass 2's P0, so pass 2 starts with nothing accepted.
 //
 //   pnpm visual:compare           # writes web/.visual/report.html, exits non-zero on a fail
+//   VISUAL_PORT=5231 VISUAL_ONLY=apps,app-new pnpm visual:compare   # those gallery pages only,
+//                                 # report in web/.visual/5231/ so parallel runs don't collide
 //
 // Deliberately NOT wired into CI: it needs a dev server and a browser download the existing
 // workflow does not provide. It is run by hand, and its report is the evidence for the
@@ -61,7 +63,10 @@ const PORT = Number(process.env.VISUAL_PORT ?? 5174);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const WEB = fileURLToPath(new URL("../", import.meta.url));
 const BASELINE = fileURLToPath(new URL("../../design/baseline/", import.meta.url));
-const REPORT = fileURLToPath(new URL("../.visual/", import.meta.url));
+const REPORT = fileURLToPath(new URL(process.env.VISUAL_PORT ? `../.visual/${PORT}/` : "../.visual/", import.meta.url));
+/** Gallery page names to shoot, comma-separated; unset, every page. An agent iterating on one
+ *  family filters to its own pages; the ship gate always runs unfiltered. */
+const ONLY = process.env.VISUAL_ONLY ? new Set(process.env.VISUAL_ONLY.split(",")) : null;
 
 /**
  * One compared pair. `sizeMismatch` is its own outcome rather than a 100% ratio because two
@@ -102,6 +107,7 @@ try {
     const pairs = await pairsFromPage(index, `${ORIGIN}/__preview`, "/__preview");
     await index.close();
     for (const [name, state] of pairs) {
+      if (ONLY && !ONLY.has(name)) continue;
       const key = `${name}__${state}__${viewport.width}x${viewport.height}`;
       // A TAB PER STATE, closed after its capture. One reused tab leaks the dev server's HMR
       // WebSocket on every navigation; at ~256 open sockets Chrome's pool is exhausted and the
@@ -142,7 +148,7 @@ for (const each of results) {
   const mark = each.accepted !== null ? "accepted" : failed(each) ? "FAIL" : "ok";
   console.log(`${mark.padEnd(8)} ${(each.ratio * 100).toFixed(2).padStart(6)}%  ${each.key}`);
 }
-console.log(`\nreport: web/.visual/report.html`);
+console.log(`\nreport: ${REPORT}report.html`);
 const failures = results.filter((each) => each.accepted === null && failed(each));
 if (failures.length > 0) {
   console.error(

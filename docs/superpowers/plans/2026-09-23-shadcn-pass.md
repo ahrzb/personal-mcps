@@ -57,3 +57,37 @@ gate includes app-detail's `roles*` and `access*` states.
 Same standing rules as pass 1: no agent commits, runs a git write command or runs the full suite;
 each stops every server it starts; checks are reported by exit code, never through a filter; an
 agent that has been summarized checks its own transcript before believing in a second writer.
+
+## 3 · P3 — what every family agent works to
+
+P2 shipped (`ab81285` frames, `f6ba99c` chrome). A family's job: every `className=` in its files
+draws through `components/ui/*`, `chrome/*` or Tailwind utilities, and no legacy class name is left
+in them (P5's grep proves it later). The look does not change.
+
+1. **Control first.** Before editing, shoot your pages at HEAD:
+   `VISUAL_PORT=<yours> VISUAL_ONLY=<your pages> pnpm visual:compare`, and copy
+   `web/.visual/<port>/` aside. That is the render you must match, not the baseline: some pages
+   already sit a little off their baselines (server fixture vs SPA, harness mode) and that is not
+   yours to chase.
+2. **The bar is zero changed pixels against your control**, every state, both viewports: diff each
+   `.new.png` against the control copy (pngjs + pixelmatch are installed in `web/`). An equal ratio
+   is the quick read; the pixel diff is the proof. A difference you believe is right is reported
+   with its key and a one-line reason; **families never edit `web/visual-accepted.json`** (ten
+   writers, one file) — the orchestrator adds the entries.
+3. **Primitives:** import `cn` from `@/lib/cn`, never the package (it knows the theme's names).
+   Write `font-[family-name:inherit]`, never `font-[inherit]` (cn reads that as a weight). A
+   one-off adjustment is a `className` at the call site; a change every caller would need goes
+   back to the orchestrator with its evidence, and you stop on that part.
+4. **Confirm:** pass the actions inside `<DialogFooter>`, not a `.actions` row. Confirm's
+   `[&_.actions]:gap-2` bridge is removed after the last family, not by you.
+5. **Read-only:** `components/ui/*`, `chrome/*`, `lib/*`, `app.css`, `legacy.css`, other families'
+   files. Exception: settings deletes `alertClass` from `lib/format.ts` (its comment says so).
+   `GrantRows.tsx` is agent-detail's; app-detail must not edit it.
+6. **Checks, by exit code:** the filtered visual run exits 0 and every 390 PNG is exactly 390 wide;
+   `pnpm typecheck` (a type error in a file that is not yours is another family mid-edit — report
+   it, don't fix it); your derive test if you have one (`server/test/unit/<family>-derive.test.ts`,
+   `login-links.test.ts` for login). Stop every server you start.
+7. **Known look gaps are matched, not fixed** — a follow-up after pass 2 takes them: no focus ring
+   on typed inputs, outline and mini buttons, the audit search or a focused current tab;
+   `.input--mono` never applied; the markdown `hr` invisible; "Times are local" over UTC
+   timestamps; an expired approval badge grey on the detail page and amber in the list.

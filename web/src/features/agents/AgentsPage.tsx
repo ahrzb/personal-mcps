@@ -7,8 +7,8 @@
  * (`model.ts`'s `agentsProps` / `agentListRow` / `accessOf`) moved into `derive.ts` and
  * computed from the three reads the builder made: `agent_list`, `app_list` and `token_list`.
  *
- * The stretched anchor is kept: the row's link covers the row through `::after`
- * (`styles.css`), and the Delete cell sits above it so it still deletes. Delete stays behind
+ * The stretched anchor is kept: the row's link covers the row through its `after:` overlay,
+ * and the Delete cell sits above it (`z-1`) so it still deletes. Delete stays behind
  * the list's own `?confirm=delete-agent&slug=` state — addressable exactly as /apps's is, so
  * a shared URL opens the same dialog and the state gallery can render it.
  */
@@ -19,11 +19,19 @@ import type { ReactNode } from "react";
 import { useApi } from "@/lib/api-context";
 import { agentsQuery, appsQuery, keys, tokensQuery, useOp } from "@/lib/queries";
 import { paths } from "@/lib/paths";
+import { cn } from "@/lib/cn";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
 import { formatStamp } from "@/lib/format";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
+import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
 import { QueryState, Skeleton } from "@/chrome/States";
+import { Alert } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { AgentsResponse, ListedAgent } from "@/lib/types";
 import { accessOf, accessText, agentTokensOf, oneOf, tokensText } from "./derive";
 import type { AgentAccess, AgentToken } from "./derive";
@@ -93,22 +101,22 @@ export function AgentsPage(): ReactNode {
 
   return (
     <Shell active="agents">
-      <main className="page--table">
+      <Page shape="table">
         {notice === null ? null : <NoticeBanner notice={notice} />}
-        <div className="page-head">
+        <PageHead>
           <div>
-            <h1 className="page-title">Agents</h1>
-            <p className="page-subtitle">Identities that call your apps — each holds grants and keys.</p>
+            <PageTitle>Agents</PageTitle>
+            <PageSubtitle>Identities that call your apps — each holds grants and keys.</PageSubtitle>
           </div>
-          <Link className="btn btn--primary" to={paths.agentNew}>
+          <Link className={buttonVariants({ className: "max-md:flex-[1_1_100%]" })} to={paths.agentNew}>
             New agent
           </Link>
-        </div>
+        </PageHead>
 
         {remove.isError ? (
-          <div className="alert alert--danger" role="alert">
+          <Alert variant="danger" role="alert">
             {remove.error.message}
-          </div>
+          </Alert>
         ) : null}
 
         <QueryState
@@ -117,13 +125,13 @@ export function AgentsPage(): ReactNode {
           empty={{
             when: (data) => data.agents.length === 0,
             render: (
-              <div className="empty">
-                <div className="empty-title">No agents yet.</div>
-                <div className="empty-text">Create one to give an AI agent its own grants and keys.</div>
-                <Link className="btn btn--primary" to={paths.agentNew}>
+              <Empty>
+                <EmptyTitle>No agents yet.</EmptyTitle>
+                <EmptyDescription>Create one to give an AI agent its own grants and keys.</EmptyDescription>
+                <Link className={buttonVariants({ className: "mt-4" })} to={paths.agentNew}>
                   New agent
                 </Link>
-              </div>
+              </Empty>
             ),
           }}
         >
@@ -134,43 +142,43 @@ export function AgentsPage(): ReactNode {
             apps.isPending || tokens.isPending ? (
               <Skeleton rows={4} />
             ) : (
-              <div className="card">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Agent</th>
-                      <th>Access</th>
-                      <th>Tokens</th>
-                      <th>Created</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
+              <Card size="flush">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Agent</TableHead>
+                      <TableHead>Access</TableHead>
+                      <TableHead>Tokens</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {rowsOf(data).map((row) => (
                       <AgentRowView key={row.agent.slug} row={row} now={now} />
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </TableBody>
+                </Table>
+              </Card>
             )
           }
         </QueryState>
-        <p className="note">{DELETE_AGENT_TEXT}</p>
-      </main>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">{DELETE_AGENT_TEXT}</p>
+      </Page>
       {confirmed === undefined ? null : (
         <ConfirmDialog
           title={`Delete agent “${confirmed.slug}”?`}
           text={DELETE_AGENT_TEXT}
           onClose={() => dropKeys(CONFIRM_KEYS)}
         >
-          <div className="actions">
-            <button type="button" className="btn btn--ghost" onClick={() => dropKeys(CONFIRM_KEYS)}>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => dropKeys(CONFIRM_KEYS)}>
               Cancel
-            </button>
-            <button type="button" className="btn btn--danger" onClick={() => deleteAgent(confirmed.slug)}>
+            </Button>
+            <Button type="button" variant="danger" onClick={() => deleteAgent(confirmed.slug)}>
               Delete
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </ConfirmDialog>
       )}
     </Shell>
@@ -180,33 +188,38 @@ export function AgentsPage(): ReactNode {
 function AgentRowView({ row, now }: { row: AgentRow; now: number }): ReactNode {
   const { agent } = row;
   return (
-    <tr className="agent-row">
-      <td>
-        <div className="cell-name mono">
-          {/* The row's link: stretched over the whole row by styles.css. */}
-          <Link className="row-link" to={paths.agentDetail(agent.slug)}>
+    <TableRow className="relative cursor-pointer hover:bg-muted">
+      <TableCell>
+        <div className="font-mono text-base font-medium">
+          {/* The row's link: its `after:` overlay fills the nearest positioned box, the row. */}
+          <Link className="after:absolute after:inset-0" to={paths.agentDetail(agent.slug)}>
             {agent.slug}
           </Link>
         </div>
-        {agent.description === "" ? null : <div className="list-meta">{agent.description}</div>}
-      </td>
-      <td className="cell-muted">{accessText(row.access)}</td>
-      <td className="cell-muted">{tokensText(row.tokens, now)}</td>
-      <td className="cell-muted">{formatStamp(agent.createdAt)}</td>
-      <td className="cell-actions">
+        {agent.description === "" ? null : <div className="text-xs text-muted-foreground">{agent.description}</div>}
+      </TableCell>
+      <TableCell className="text-muted-foreground">{accessText(row.access)}</TableCell>
+      <TableCell className="text-muted-foreground">{tokensText(row.tokens, now)}</TableCell>
+      <TableCell className="text-muted-foreground">{formatStamp(agent.createdAt)}</TableCell>
+      {/* Right-aligned beside the row wide; its own row under the card on a phone, the
+          button a 44px share of it beside the chevron. `z-1` raises it over the row's link. */}
+      <TableCell className="relative z-1 text-right whitespace-nowrap max-md:mt-2.5 max-md:flex max-md:gap-2.5 max-md:text-left">
         {/* Delete never mutates directly — it opens this page with the confirm dialog. */}
         <Link
-          className="btn btn--danger-outline btn--sm"
+          className={cn(
+            buttonVariants({ variant: "danger-outline", size: "sm" }),
+            "ml-1 px-2.5 max-md:ml-0 max-md:flex-1 max-md:px-3",
+          )}
           to={paths.agents}
           search={{ confirm: "delete-agent", slug: agent.slug }}
         >
           Delete
         </Link>
-        <span className="row-chevron">
+        <span className="inline-flex items-center text-ring">
           <Chevron />
         </span>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 

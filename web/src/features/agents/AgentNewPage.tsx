@@ -19,6 +19,13 @@ import { paths } from "@/lib/paths";
 import { NoticeBanner, useFlash } from "@/chrome/Notice";
 import { useOp } from "@/lib/queries";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
+import { Page, PageHead, PageSubtitle, PageTitle } from "@/chrome/Page";
+import { Alert } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field, FieldDescription, FieldError } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { usePreviewTransient } from "@/preview/transient";
 import { oneOf } from "./derive";
 
@@ -71,28 +78,29 @@ export function AgentNewPage(): ReactNode {
 
   return (
     <Shell active="agents">
-      <main className="page--document">
+      <Page shape="document">
         {notice === null ? null : <NoticeBanner notice={notice} />}
-        <div className="page-head">
+        <PageHead>
           <div>
-            <p className="page-subtitle">
+            <PageSubtitle>
               <Link to={paths.agents}>Agents</Link> / new
-            </p>
-            <h1 className="page-title">New agent</h1>
-            <p className="page-subtitle">
-              An identity for an AI agent or system. It holds no grants until you set some.
-            </p>
+            </PageSubtitle>
+            <PageTitle>New agent</PageTitle>
+            <PageSubtitle>An identity for an AI agent or system. It holds no grants until you set some.</PageSubtitle>
           </div>
-        </div>
-        <form
-          className="card card--pad form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submit();
-          }}
+        </PageHead>
+        <Card
+          render={
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                submit();
+              }}
+            />
+          }
         >
-          {errors.form === undefined ? null : <div className="alert alert--danger">{errors.form}</div>}
-          <Field
+          {errors.form === undefined ? null : <Alert variant="danger">{errors.form}</Alert>}
+          <TextField
             name="slug"
             label="Slug"
             hint="Lowercase letters, digits and hyphens — the name tokens and grants are bound to."
@@ -101,7 +109,7 @@ export function AgentNewPage(): ReactNode {
             required
             onChange={(slug) => setForm({ ...form, slug })}
           />
-          <Field
+          <TextField
             name="name"
             label="Name"
             hint="Display name; defaults to the slug."
@@ -109,7 +117,7 @@ export function AgentNewPage(): ReactNode {
             error={errors.name}
             onChange={(name) => setForm({ ...form, name })}
           />
-          <Field
+          <TextField
             name="description"
             label="Description"
             hint="A note shown beside the agent."
@@ -117,16 +125,17 @@ export function AgentNewPage(): ReactNode {
             error={errors.description}
             onChange={(description) => setForm({ ...form, description })}
           />
-          <div className="actions">
-            <Link className="btn btn--ghost" to={paths.agents}>
+          {/* Right-aligned; on a phone each action an equal share of the row. */}
+          <div className="flex flex-wrap items-center justify-end gap-3 max-md:*:flex-1">
+            <Link className={buttonVariants({ variant: "ghost" })} to={paths.agents}>
               Cancel
             </Link>
-            <button type="submit" className="btn btn--primary" disabled={create.isPending}>
+            <Button type="submit" disabled={create.isPending}>
               {create.isPending ? "Creating…" : "Create agent"}
-            </button>
+            </Button>
           </div>
-        </form>
-      </main>
+        </Card>
+      </Page>
     </Shell>
   );
 }
@@ -154,7 +163,9 @@ function errorsOf(refusal: { reason: string; violations?: { field: string; reaso
   return /"slug"|slug/i.test(refusal.reason) ? { slug: refusal.reason } : { form: refusal.reason };
 }
 
-function Field({
+/** One of the form's three text fields: its name, the field, and under it the standing hint,
+ *  which the refusal naming this field replaces. */
+function TextField({
   name,
   label,
   hint,
@@ -172,12 +183,9 @@ function Field({
   onChange: (value: string) => void;
 }): ReactNode {
   return (
-    <div className="field">
-      <label className="label" htmlFor={`agent-${name}`}>
-        {label}
-      </label>
-      <input
-        className="input"
+    <Field>
+      <Label htmlFor={`agent-${name}`}>{label}</Label>
+      <Input
         id={`agent-${name}`}
         name={name}
         value={value}
@@ -186,9 +194,9 @@ function Field({
         aria-describedby={`agent-${name}-hint`}
         onChange={(event) => onChange(event.target.value)}
       />
-      <div className="field-hint" id={`agent-${name}-hint`}>
-        {error === undefined ? hint : <span className="field-error">{error}</span>}
-      </div>
-    </div>
+      <FieldDescription id={`agent-${name}-hint`}>
+        {error === undefined ? hint : <FieldError render={<span />}>{error}</FieldError>}
+      </FieldDescription>
+    </Field>
   );
 }

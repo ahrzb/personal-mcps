@@ -1,1 +1,6 @@
-{}
+{
+  "agent-new__default__1280x900": "pass 2 P3 agents: the three typeless browser fields become <Input> (36px, the design's field), pushing the form down; before, no stylesheet rule reached them",
+  "agent-new__default__390x844": "pass 2 P3 agents: the three typeless browser fields become <Input> (44px on a phone, the design's field), pushing the form down",
+  "agent-new__refused__1280x900": "pass 2 P3 agents: the three typeless browser fields become <Input>; the refused slug field now draws the design's invalid border",
+  "agent-new__refused__390x844": "pass 2 P3 agents: the three typeless browser fields become <Input> (44px on a phone); the refused slug field draws the design's invalid border"
+}

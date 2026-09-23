@@ -3,7 +3,7 @@ import type { AppRow, ApprovalRow, RoleDeclaration, TokenInfo, Violation } from 
 import type { Seed } from "../seed";
 
 /**
- * `/apps` and `/apps/new`, reproduced from `server/dev/fixtures.ts`' `apps` and `appNew`
+ * `/apps` and `/apps/new`, reproduced from the server fixtures' (`../seed.ts`) `apps` and `appNew`
  * objects one state for one state and one value for one value — the same slugs, names,
  * endpoints, instants, role lists, token prefixes and sentences, because each state is
  * compared against its committed baseline pixel for pixel and a different value is a
@@ -18,7 +18,7 @@ import type { Seed } from "../seed";
  * search keys the server's redirect-back writes.
  */
 
-/** Epoch milliseconds from a readable instant, as `server/dev/fixtures.ts`' own `ms`. */
+/** Epoch milliseconds from a readable instant, as the server fixtures' own `ms`. */
 const at = (iso: string): number => Date.parse(iso);
 
 /** A row's DECLARED role names as a declaration. The listing renders names and never
@@ -257,7 +257,7 @@ const board = [news, notion, linear, github, slack, weather, home];
 /* ---------------------------------- /apps --------------------------------- */
 
 /**
- * Every state of `/apps`, keyed exactly as `server/dev/fixtures.ts`' `apps` keys them.
+ * Every state of `/apps`, keyed exactly as the server fixtures' `apps` keyed them.
  *
  * The two flash states are search parameters rather than a seeded notice, because that is
  * how the notice reaches the client: the server's redirect-back writes `NOTICE_KEYS` into
@@ -331,7 +331,7 @@ const refusal = (...violations: Violation[]): { reason: string; violations: Viol
 });
 
 /**
- * Every state of `/apps/new`, keyed exactly as `server/dev/fixtures.ts`' `appNew` keys
+ * Every state of `/apps/new`, keyed exactly as the server fixtures' `appNew` keyed
  * them. `queries` is empty on all ten: the page is chromeless — no shell, no badge — and
  * its whole content is the draft, which it reads from the URL.
  *

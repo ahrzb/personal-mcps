@@ -21,18 +21,19 @@ import { SettingsPage } from "@/features/settings/SettingsPage";
 import { settingsPaneOf } from "@/features/settings/derive";
 import { DevicePage } from "@/features/device/DevicePage";
 import { ConsentPage } from "@/features/consent/ConsentPage";
+import { LoginPage } from "@/features/login/LoginPage";
 import { APP_PANES, AGENT_PANES, paths } from "@/lib/paths";
 import type { AppPane, AgentPane } from "@/lib/paths";
 
 /**
- * The route families this client owns, and nothing else. `/login` is still a server-rendered
- * page — the router never sees it, and nothing the shell draws links to it.
+ * The route families this client owns — every browser page the hub has, since `/login` moved
+ * last (decision 38).
  *
  * Adding a family here is adding a page, and a page the Worker does not serve a shell for is
  * unreachable — so each one arrives with its shell route. `/audit` became the third on
  * 2026-09-21 (decision 36); `/approvals` and `/approvals/<id>` the fourth on 2026-09-23, the
- * first of decision 38's move of every page onto the SPA, then `/settings`, `/device` and
- * `/oauth/consent`.
+ * first of decision 38's move of every page onto the SPA, then `/settings`, `/device`,
+ * `/oauth/consent` and `/login`.
  */
 
 /**
@@ -291,6 +292,17 @@ const consentRoute = createRoute({
   component: ConsentPage,
 });
 
+/**
+ * `/login` — chromeless, and the one route with no session behind it. Its query is read by
+ * the SERVER into the `#pmcp-login` island; the page reads the island, never the query.
+ */
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login",
+  validateSearch: passThroughSearch,
+  component: LoginPage,
+});
+
 /** The tree both mounts share: `main.tsx` builds a browser-history router over it, and the
  *  preview gallery a memory-history one — which is what lets the gallery show a ROUTE
  *  rather than a component. */
@@ -311,6 +323,7 @@ export const routeTree = rootRoute.addChildren([
   settingsPaneRoute,
   deviceRoute,
   consentRoute,
+  loginRoute,
 ]);
 
 /** The router, built once. No lazy routes: the build is one file by configuration (the

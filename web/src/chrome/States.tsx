@@ -48,7 +48,7 @@ export function QueryState<T>({
  * The one place this client draws with Tailwind utilities rather than `styles.css` classes,
  * because the loading state is NEW: the server-rendered pages had none — they blocked the
  * document on their reads — so there is no existing class to reuse and inventing one would
- * mean editing the sheet the SSR pages share.
+ * mean editing the sheet every page shares.
  */
 export function Skeleton({ rows }: { rows: number }): ReactNode {
   return (

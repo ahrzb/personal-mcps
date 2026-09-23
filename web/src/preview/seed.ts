@@ -1,11 +1,17 @@
+import type { LoginIsland } from "@/lib/bootstrap";
 import type { Transient } from "./transient";
 
 /**
  * One state of one page, as the gallery reproduces it.
  *
+ * THE SERVER FIXTURES, named once here for every file in this folder that ports one: the
+ * states the retired server preview drew (`server/dev/preview.ts` over `server/dev/fixtures.ts`,
+ * deleted with decision 38's last family — git history holds both). The committed baselines
+ * in `design/baseline/` were shot from it, and they, not the preview, are the reference now.
+ *
  * A seed is NOT just API response data, which is the mistake this shape exists to prevent:
- * several of `server/dev/fixtures.ts`' states are not query results at all. So it has four
- * channels, and a state that needs one of the last three must say so explicitly.
+ * several of the server fixtures' states were not query results at all. So it has several
+ * channels, and a state that needs one beyond `queries` must say so explicitly.
  */
 export type Seed = {
   /**
@@ -55,6 +61,12 @@ export type Seed = {
    * Returns null for a path this state does not answer, which then falls through to `hanging`
    * and finally to the throw, so an incomplete seed still fails loudly.
    */
+  /**
+   * `/login`'s `#pmcp-login` island — which card, which error, which landing. The server
+   * computes it per request and the page reads it off the document, so the gallery writes it
+   * into the document before mounting: the same read, not a seam inside the page.
+   */
+  loginIsland?: LoginIsland;
   respond?: (
     path: string,
     /** A write's body, so a seed can answer a decision the way the server would. */
@@ -63,9 +75,9 @@ export type Seed = {
 };
 
 /**
- * The migrated pages, keyed exactly as `server/dev/preview.ts` keys them — so a state
- * name in this gallery and a fixture name in that one are the same string, which is what
- * lets `visual-compare.mts` pair a screenshot with its baseline by filename.
+ * Every page, keyed exactly as the server fixtures keyed them — so a state name here and a
+ * baseline's name are the same string, which is what lets `visual-compare.mts` pair a
+ * screenshot with its baseline by filename.
  *
  * `audit` is the exception to "keyed as that one keys them": the server-rendered page it
  * replaces had entirely different states, so its baselines are written from this gallery's
@@ -84,13 +96,13 @@ export const PREVIEW_PAGES = [
   "settings",
   "device",
   "oauth-consent",
+  "login",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];
 
 /**
  * Every page's every state. `Record<PreviewName, …>` rather than a partial, so a page added
- * without seeds is a TYPE ERROR — the property `server/dev/preview.ts` provides with its own
- * `Record<PageName, FC>`, and the reason its index can never silently lag the pages.
+ * without seeds is a TYPE ERROR — the reason the index can never silently lag the pages.
  */
 export type PreviewSeeds = Record<PreviewName, Record<string, Seed>>;

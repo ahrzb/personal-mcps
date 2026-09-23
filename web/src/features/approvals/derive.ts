@@ -11,7 +11,7 @@
 
 import type { ApprovalRow, ApprovalStatus, DetailApproval } from "../../lib/types";
 
-/** The history a link naming no `?limit=` gets — `model.ts`'s `HISTORY_LIMIT`. */
+/** The history a link naming no `?limit=` gets — the server page's `HISTORY_LIMIT`, ported. */
 export const HISTORY_LIMIT = 20;
 
 /**

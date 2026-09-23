@@ -1,10 +1,10 @@
-// The browser-only surface: server-rendered pages (Hono JSX), the PWA shell, and the
-// CSRF discipline for every form the hub serves. Deliberately the shallowest module in
-// the server — any depth here would be a web-only capability, which the parity
+// The browser-only surface: the SPA shell document every page answers, the PWA shell, and
+// the CSRF discipline for every form the hub still serves. Deliberately the shallowest
+// module in the server — any depth here would be a web-only capability, which the parity
 // invariant (§8) forbids: every mutation a page performs calls an admin ops handler or
 // a better-auth endpoint (/login rides better-auth — the pinned exception),
-// so zero business logic lives here. What this module owns and hides: which
-// URL renders which template or the SPA shell; CSRF issuance, and the ORDER in which a
+// so zero business logic lives here. What this module owns and hides: which gate and which
+// island each page URL's shell gets; CSRF issuance, and the ORDER in which a form
 // mutation is gated (`mutation` — session, form, CSRF, then the body, written once so no
 // handler can be spelled without it); where cookie-session gating is applied
 // (identity.requireOwnerSession, with recent-auth on /settings's shells as a prefix rule —
@@ -14,15 +14,13 @@
 // posted at one of its endpoints is answered 415 and the hub owns those targets instead
 // (see "The credential family" below, and pages/model's `paths.auth`); the chunked streaming
 // JSONL export framing (never buffered); the web-app manifest and the minimal install+push
-// service worker (no SPA, no offline rendering); and the stylesheet the shell links. Every
-// clock the pages read is here too: `context` stamps `now` once per request, and /login —
-// which has no session and so no context — is stamped at its own handler.
+// service worker (no offline rendering); and the stylesheet the shell links.
 //
-// Where the props come from is NOT here: pages/model.ts owns every read AND every
-// props-builder, so a handler below is a gate, a loader call, and a render — and the ops
-// table is reached through that one seam, the SPA's writes being api.ts's. better-auth is
-// reached through identity's `callAuth` / `callAuthResponse`, its one custodian (§4), and
-// never dialled from this module directly.
+// What a page SHOWS is NOT here: pages/model.ts owns every read and api.ts answers it as
+// JSON, so a handler below is a gate, a document-level check, and the shell — and the ops
+// table is reached through pages/model's one seam, the SPA's writes being api.ts's.
+// better-auth is reached through identity's `callAuth` / `callAuthResponse`, its one
+// custodian (§4), and never dialled from this module directly.
 //
 // Two things this module deliberately does not have. There is no route table export: a
 // page's URL is `paths`'s to spell (pages/model.ts) and the composition root mounts this
@@ -43,21 +41,21 @@ import { upsertBinding } from "./oauth";
 import { Registry } from "./registry";
 import type { App, Violation } from "./registry";
 import { beginConnect } from "./upstream";
-import { Login } from "./pages/login";
 import { SpaShell } from "./pages/spa";
+import type { SpaShellProps } from "./pages/spa";
 import {
   approvalOf,
   auditExportQuery,
   consentRead,
   hubRelative,
-  loginProps,
+  loginIsland,
   loginUrl,
   NOTICE_KEYS,
   paths,
   SETTINGS_PANES,
 } from "./pages/model";
 import { ICON_192, ICON_512 } from "./pages/icon";
-import type { AuditExportQuery, PageContext } from "./pages/model";
+import type { AuditExportQuery, LoginStep } from "./pages/model";
 // The one stylesheet, as bytes a worker can serve (see the *.css declaration in
 // workers-env.d.ts for why an import is how it gets here).
 import styles from "./pages/styles.css";
@@ -85,15 +83,16 @@ type PageRouter = unknown;
 /**
  * Builds the router for every browser-facing route. Cookie sessions only: bearer tokens
  * are never consulted on any page route, because the only gate below is
- * identity.requireOwnerSession, which reads a cookie and nothing else. Reads render over
- * the same handlers the pmcp tools front (pages/model.ts's loaders); mutations are
- * CSRF-checked POSTs into an admin ops handler or a better-auth endpoint, then redirect
- * back. Takes nothing and touches nothing at build time — every handler resolves its
- * bindings per request.
+ * identity.requireOwnerSession, which reads a cookie and nothing else. What a page shows
+ * is api.ts's JSON; the POSTs left here are the kept forms whose answer is a navigation
+ * (routes §0.4) — the credential translations, Connect and the consent verdict. Takes
+ * nothing and touches nothing at build time — every handler resolves its bindings per
+ * request.
  *
- * The pages (all templates are Hono JSX, an implementation detail of this module):
- * - /login — username + password, TOTP challenge, passkey button; forms post to
- *   better-auth's endpoints.
+ * The pages — every one the SPA shell since decision 38, so what differs is the gate and
+ * the island:
+ * - /login — the shell with no gate and the `#pmcp-login` island instead of a session's
+ *   bootstrap (family 5). Its cards post the three kept credential translations below.
  * - /device — the SPA shell (decision 38) behind the ordinary owner session: the
  *   phishing-defense page (RFC 8628 §5.4), whose card and CSRF-checked verdict are
  *   api.ts's `/api/hub/device` routes.
@@ -123,7 +122,7 @@ type PageRouter = unknown;
  *   (opening /approvals/<id>) and never intercepts navigation (the no-SPA pin, §13).
  */
 export function pageRoutes(): PageRouter {
-  // deps: hono · identity.requireOwnerSession · admin.ops · pages/model (the loaders) ·
+  // deps: hono · identity.requireOwnerSession · admin.ops · pages/model (the reads) ·
   // upstream.beginConnect · csrfTokenFor · csrfOk · streamAuditJsonl
   const app = new Hono();
 
@@ -134,13 +133,15 @@ export function pageRoutes(): PageRouter {
 
   /* ---------------------------------- /login ---------------------------------- */
 
-  // The one page with no session and no CSRF token of its own: there is nothing yet to
-  // derive one from, and its forms post to better-auth, which brings its own defense (§4).
-  // The clock is here rather than in the loader because this module holds every clock the
-  // pages read (see `context`).
+  // The one page with no session: the SPA shell with NO gate and no `#pmcp-bootstrap` —
+  // there is no session to put in one — carrying `#pmcp-login` instead (decision 38, family
+  // 5): the card the query asks for, and the landing, computed here once by the relative-only
+  // rule and §19.5's constant so the client never judges one. Its cards post the kept
+  // translations below, whose own defense is the origin rule (§4).
   app.get(paths.login, (c) => {
     const url = new URL(c.req.url);
-    return render(Login(loginProps(new Date().toISOString(), url.searchParams, url.search)));
+    const island = loginIsland(url.searchParams, url.search);
+    return spaDocument(LOGIN_TITLES[island.step.kind], { id: "pmcp-login", value: island });
   });
 
   // /login's three credential forms, translated. better-auth's router accepts
@@ -175,12 +176,12 @@ export function pageRoutes(): PageRouter {
     ),
   );
 
-  // Sign out — the shell's form (layout.tsx), on every signed-in page. It needs
-  // translating for a reason that looks like it should not apply: the form has NO controls
-  // at all, so a browser posts an empty body under a form content type, and better-auth
-  // refuses that too. It is also the one target here with no CSRF token, because
-  // LayoutProps carries none to render one from; what stands in its place is `crossOrigin`
-  // — the same origin rule better-auth applied while this form still posted to it.
+  // Sign out — the SPA Shell's form, on every signed-in page. It needs translating for a
+  // reason that looks like it should not apply: the form has NO controls at all, so a
+  // browser posts an empty body under a form content type, and better-auth refuses that
+  // too. It is also the one target here with no CSRF token, since the form posts none;
+  // what stands in its place is `crossOrigin` — the same origin rule better-auth applied
+  // while this form still posted to it.
   app.post(paths.auth.signOut, async (c) => {
     if (crossOrigin(c.req.raw)) return new Response("Forbidden", { status: 403, headers: TEXT });
     const answered = await callAuthResponse(c.req.raw, "/sign-out", {});
@@ -244,8 +245,7 @@ export function pageRoutes(): PageRouter {
   // one prepared statement can bind — and nothing is read.
   app.get(paths.auditExport, async (c) => {
     const session = await requireOwnerSession(c.req.raw);
-    const ctx = await context(c.req.raw, session);
-    const asked = auditExportQuery(ctx);
+    const asked = auditExportQuery({ now: new Date().toISOString(), query: new URL(c.req.url).searchParams });
     if ("reason" in asked) return new Response(`${asked.reason}\n`, { status: 400, headers: TEXT });
     return streamAuditJsonl(session.user.userId, asked.query);
   });
@@ -559,10 +559,10 @@ export async function csrfOk(sessionToken: string, presented: string | null): Pr
 
 /**
  * ONE fact makes this section exist: better-auth's router accepts `application/json` and
- * nothing else, so every `<form method="post">` the credential pages render — which is how
- * a server-rendered page submits anything — is answered 415 UNSUPPORTED_MEDIA_TYPE by its
- * endpoints. The templates are §13's contract and are not the thing to change, so the hub
- * owns the targets instead (pages/model's `paths.auth`) and each one is a translation:
+ * nothing else, so every `<form method="post">` the credential cards render is answered 415
+ * UNSUPPORTED_MEDIA_TYPE by its endpoints. The cards stay forms — their answer is a
+ * navigation carrying Set-Cookie, which a `fetch` cannot perform (routes §0.4) — so the
+ * hub owns the targets instead (pages/model's `paths.auth`) and each one is a translation:
  * read the form, call better-auth as JSON through identity's one door
  * (`callAuthResponse`), carry its Set-Cookie headers to the browser, redirect.
  *
@@ -623,9 +623,10 @@ function redirectWith(to: string, from: Response | null): Response {
 
 /**
  * Where a finished sign-in lands: the form's own `callbackURL` — which is how /login
- * carries a deep link through the round trip (LoginProps.redirectTo) — read through
- * `hubRelative`, the one rule /login's other consumer (the rendered `?next=`) reads too.
- * Anything that rule refuses lands on /apps.
+ * carries a deep link through the round trip (`LoginIsland.redirectTo`) — read through
+ * `hubRelative`, the one rule the island's `?next=` was judged by too. The posted value is
+ * the browser's, not the island's, so it is judged again here; anything the rule refuses
+ * lands on /apps.
  */
 function landingOf(form: FormData): string {
   return hubRelative(field(form, "callbackURL")) ?? paths.apps;
@@ -709,24 +710,6 @@ export function noticeUrl(
   // flash is APPENDED to it, never a second `?` that would fold the whole selection into
   // one unreadable parameter value.
   return `${back}${back.includes("?") ? "&" : "?"}${fields}`;
-}
-
-/* ------------------------------------------------------------------ *
- * The read side
- * ------------------------------------------------------------------ */
-
-/**
- * The context every loader is handed. Built once per request, after the gate: the
- * session's own identity, the render instant, this page's CSRF token and the query string.
- */
-async function context(req: Request, session: OwnerSession): Promise<PageContext> {
-  return {
-    ownerId: session.user.userId,
-    username: session.user.username,
-    csrfToken: await csrfTokenFor(session.sessionId),
-    now: new Date().toISOString(),
-    query: new URL(req.url).searchParams,
-  };
 }
 
 /**
@@ -838,39 +821,35 @@ function field(form: FormData, name: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** A rendered page. Hono JSX components are functions of their props, so a page is its
- *  own document — the shelled ones wrap themselves in Layout, the chromeless ones draw
- *  their own — and rendering is stringifying what the component returned.
+/** A rendered document: stringifying what the Hono JSX component returned, answered 200.
  *
- *  This is the hub's ONLY text/html site (the states preview under server/dev has its own,
- *  without the header), which is why the CSP rides here rather than a middleware: the three
- *  directives below need no per-response nonce and touch no inline code, so they close
- *  clickjacking, `<base>` injection and plugin embedding on the whole page surface in one
- *  line. `frame-ancestors 'self'`, not `'none'`: a same-origin embed stays possible and
- *  refusing it would buy nothing. A nonce'd `script-src` is deferred: eight
- *  inline `<script>` sites would each need a per-response nonce threaded through props
- *  that carry none, and 43 inline `style=` attributes would force `'unsafe-inline'` on
- *  `style-src` regardless. */
-async function render(node: unknown, status = 200): Promise<Response> {
+ *  This is the hub's ONLY text/html site, which is why the CSP rides here rather than a
+ *  middleware: the three directives below need no per-response nonce and touch no inline
+ *  code, so they close clickjacking, `<base>` injection and plugin embedding on the whole
+ *  page surface in one line. `frame-ancestors 'self'`, not `'none'`: a same-origin embed
+ *  stays possible and refusing it would buy nothing. A `script-src` / `style-src` policy is
+ *  deferred: the server templates' inline scripts and styles that blocked one went with
+ *  decision 38, and what the client bundle needs has not been audited. */
+async function render(node: unknown): Promise<Response> {
   const rendered = (node as { toString(): string | Promise<string> }).toString();
   const body = typeof rendered === "string" ? rendered : await rendered;
   return new Response(body, {
-    status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy": "frame-ancestors 'self'; base-uri 'self'; object-src 'none'",
-      // Every page here is a function of the session (or, for /login, of the challenge
-      // cookie): a browser that keeps a copy shows a stale or someone else's page, and a
-      // phone that re-shows one instead of asking again looks hung (2026-09-03, live).
+      // Every page here is a function of the session (or, for /login, of its query): a
+      // browser that keeps a copy shows a stale or someone else's page, and a phone that
+      // re-shows one instead of asking again looks hung (2026-09-03, live).
       "Cache-Control": "no-store",
     },
   });
 }
 
 /**
- * The SPA shell document — what `/apps/*` and `/agents/*` answer with (§13, 2026-09-18),
- * `/audit` since decision 36, and each page family decision 38 moves (`/approvals*` first).
- * `/audit` and `/approvals` pass no `exists`: a window or a list, not a row, is what each
+ * The SPA shell document behind a session — what `/apps/*` and `/agents/*` answer with
+ * (§13, 2026-09-18), `/audit` since decision 36, and every other page but /login since
+ * decision 38 (/login's shell is `spaDocument`'s with no gate). `/audit` and `/approvals`
+ * pass no `exists`: a window or a list, not a row, is what each
  * addresses, and the record id in `?expand=` is the client's own read to 404.
  *
  * It is a gate and a head, in that order, and the order is the whole point:
@@ -930,10 +909,24 @@ async function shellDocument(session: OwnerSession, title: string): Promise<Resp
     // with no key, instead of the whole client refusing to mount.
     vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
   };
+  return spaDocument(title, { id: "pmcp-bootstrap", value: bootstrap });
+}
+
+/** The shell around one island — the only `SpaShell` call, so every page URL, the
+ *  session-less /login included, gets one head, one asset set and `render`'s headers. */
+function spaDocument(title: string, island: SpaShellProps["island"]): Promise<Response> {
   return render(
-    SpaShell({ title, bootstrap, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
+    SpaShell({ title, island, stylesheet: paths.stylesheet, appStylesheet: paths.clientStylesheet, script: paths.clientScript }),
   );
 }
+
+/** /login's tab title per card, as the server page titled it (routes §0.1). Every link on
+ *  /login is a document navigation, so the title is only ever set here. */
+const LOGIN_TITLES: Record<LoginStep["kind"], string> = {
+  credentials: "Sign in",
+  totp: "Two-factor code",
+  "backup-code": "Use a backup code",
+};
 
 /**
  * Whether `/apps/<slug>` names a row this owner may see. `getApp` answers null for the

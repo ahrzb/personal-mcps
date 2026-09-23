@@ -6,8 +6,8 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 /**
- * `/styles.css` in the dev server, read from the SSR sheet the Worker serves. The gallery's
- * whole purpose is comparing this rendering against the server-rendered one, so it must read
+ * `/styles.css` in the dev server, read from the shared sheet the Worker serves. The gallery's
+ * whole purpose is comparing this rendering against the committed baselines, so it must read
  * the SAME bytes — a copy under `web/public` would be a second stylesheet that drifts, and a
  * drifted baseline comparison proves nothing. Production never reaches this: there the Worker
  * serves `/styles.css` from the same file as a TEXT module.

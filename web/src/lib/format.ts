@@ -2,11 +2,10 @@
  * The strings the client renders that are not markup: §13's two time spellings and the
  * alert class a notice's tone earns.
  *
- * A COPY of `server/src/pages/format.ts`, for `web/src/lib/types.ts`'s reason — and the
- * copy is EXACT on purpose: every page this client took over (/apps, /approvals, /settings)
- * printed its stamps through the original, and pass 1 holds the look constant, so a stamp
- * must read here exactly as it read there. The original retires with the server templates
- * (decision 38, family 5).
+ * Once a COPY of `server/src/pages/format.ts`, and EXACT on purpose: every page this client
+ * took over printed its stamps through the original, and pass 1 holds the look constant
+ * against baselines shot from those pages. The original went with the server templates
+ * (decision 38's last family), so this is now the one definition.
  *
  * The one behavioural difference from the server's copy is the clock, and it is not a
  * choice: the server formatted against a render instant carried in props, and the client

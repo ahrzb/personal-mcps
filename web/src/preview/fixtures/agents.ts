@@ -1,6 +1,7 @@
 /**
  * Every state of `/agents`, `/agents/new` and `/agents/<slug>`, as the gallery reproduces
- * them — the React half of `server/dev/fixtures.ts`' `agents`, `agentNew` and `agentDetail`.
+ * them — the React half of the server fixtures' (`../seed.ts`) `agents`, `agentNew` and
+ * `agentDetail`.
  *
  * The state NAMES are the SSR fixture names one for one, because `visual-compare.mts` pairs a
  * screenshot with its baseline by filename.
@@ -36,7 +37,7 @@ import type { Seed } from "../seed";
 /** Epoch milliseconds from a readable instant — registry and audit spell time this way. */
 const ms = (iso: string): number => Date.parse(iso);
 
-/** The instant every state renders at (`server/dev/fixtures.ts`' own `NOW`): 17 minutes after
+/** The instant every state renders at (the server fixtures' own `NOW`): 17 minutes after
  *  the oldest pending approval. The preview clock is frozen here, so `12m ago` is stable. */
 const NOW = ms("2026-08-24T14:47:00.000Z");
 

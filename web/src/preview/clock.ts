@@ -1,10 +1,10 @@
 /**
  * The gallery's frozen clock.
  *
- * `server/dev/fixtures.ts` renders against a fixed instant carried in props; the client
- * formats against the browser's own clock. Left alone, every relative label — "12m ago",
- * "3h", "expires in 48m" — would differ between the two renderings for a reason that is not
- * styling, and the screenshot comparison would report it as a difference on every run.
+ * The server fixtures (`seed.ts`) rendered against a fixed instant carried in props, and the
+ * baselines were shot that way; the client formats against the browser's own clock. Left
+ * alone, every relative label — "12m ago", "3h", "expires in 48m" — would differ from its
+ * baseline for a reason that is not styling, and the comparison would report it every run.
  *
  * So the gallery overrides `Date.now` and the `Date` constructor's zero-argument form to the
  * same instant the fixtures use, BEFORE the app mounts. The screenshot scripts pin
@@ -15,7 +15,7 @@
  * build drops entirely.
  */
 
-/** The instant `server/dev/fixtures.ts` renders against (its `NOW`): 17 minutes after the
+/** The instant the server fixtures rendered against (their `NOW`): 17 minutes after the
  *  oldest pending approval, which is what makes its relative labels the ones they are. */
 export const FROZEN_NOW = Date.parse("2026-08-24T14:47:00.000Z");
 

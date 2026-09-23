@@ -1,6 +1,9 @@
 // visual-compare.mts — DEV-ONLY. Screenshots every state of the React preview gallery and
-// compares it against the committed baselines the SSR pages produced, so "the two renderings
-// match" is evidence rather than an assertion.
+// compares it against the committed baselines in design/baseline/, so "nothing looks
+// different" is evidence rather than an assertion. The baselines are the reference: shot from
+// the server-rendered pages before each one moved to this client (decision 38 — the server
+// preview that drew them is retired, `src/preview/seed.ts` says what it was), and for /audit
+// from this gallery's own accepted render (decision 36).
 //
 //   pnpm visual:compare           # writes web/.visual/report.html, exits non-zero on a fail
 //
@@ -121,7 +124,7 @@ function failed(result: Result): boolean {
 }
 
 /** One pair, diffed against its baseline. A MISSING baseline is a failure with a reason
- *  rather than a crash: it means the gallery holds a state the SSR pages never had, which is
+ *  rather than a crash: it means the gallery holds a state no baseline was shot for, which is
  *  worth seeing in the report. */
 async function compare(key: string, shot: Buffer, accepted: string | null): Promise<Result> {
   const baselineBytes = await readFile(`${BASELINE}${key}.png`).catch(() => null);
@@ -153,7 +156,7 @@ async function acceptedPairs(): Promise<Record<string, string>> {
   return out;
 }
 
-/** Side by side: the SSR baseline, the React rendering, and the diff. */
+/** Side by side: the baseline, the React rendering, and the diff. */
 function reportHtml(results: Result[]): string {
   const rows = results
     .slice()
@@ -170,7 +173,7 @@ function reportHtml(results: Result[]): string {
       return `<section><h2>${escapeHtml(each.key)}</h2>
 <p>${(each.ratio * 100).toFixed(2)}% differing · ${verdict}</p>
 <div class="shots">
-  <figure><figcaption>server-rendered</figcaption><img src="${each.key}.old.png"></figure>
+  <figure><figcaption>baseline</figcaption><img src="${each.key}.old.png"></figure>
   <figure><figcaption>react</figcaption><img src="${each.key}.new.png"></figure>
   <figure><figcaption>diff</figcaption><img src="${each.key}.diff.png"></figure>
 </div></section>`;
@@ -184,7 +187,7 @@ p{margin:0 0 8px;font-size:13px;color:#52525b}
 figure{margin:0}figcaption{font-size:11px;color:#71717a;margin-bottom:4px}
 img{width:100%;border:1px solid #e4e4e7;background:#fff}
 .ok{color:#15803d}.fail{color:#b91c1c;font-weight:600}.accepted{color:#92400e}</style>
-<h1>personal-mcps — SSR vs React, ${results.length} pairs</h1>
+<h1>personal-mcps — baseline vs React, ${results.length} pairs</h1>
 ${rows}`;
 }
 

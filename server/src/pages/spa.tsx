@@ -1,27 +1,24 @@
 /**
- * The SPA shell document: the whole server-rendered part of `/apps/*` and `/agents/*`
- * (§13, 2026-09-18), `/audit` (decision 36) and, as each page family moves (decision 38),
- * every other browser page.
+ * The SPA shell document: the whole server-rendered part of every browser page — `/apps/*`
+ * and `/agents/*` since 2026-09-18, `/audit` since decision 36, and the rest, `/login` last,
+ * since decision 38.
  *
- * Pure, like every other template here — props in, JSX out. The gate, the existence checks
- * and the CSRF minting are web.ts's; this file only draws what they decided — and it is the
- * one place an island is SERIALIZED, so the escaping below is the shell's rule rather than
- * each caller's.
+ * Pure — props in, JSX out. The gate, the existence checks and the CSRF minting are
+ * web.ts's; this file only draws what they decided — and it is the one place an island is
+ * SERIALIZED, so the escaping below is the shell's rule rather than each caller's.
  *
- * The HEAD is `layout.tsx`'s verbatim, plus `/app.css` after `/styles.css`. That is not
- * copy-paste convenience: the shell and the server-rendered pages must present the same
- * document to a browser — same viewport rule, same theme colour, same manifest and icons, so
- * an installed PWA behaves identically whichever route it was installed from, and the same
- * webfont so the two renderings set type the same way. A difference here would show up as a
- * visual difference on every screenshot and as an installability difference on a phone.
+ * The HEAD is the same at every URL, which is the point: one viewport rule, one theme
+ * colour, one manifest and icon set, so an installed PWA behaves identically whichever route
+ * it was installed from, and one webfont. `/app.css` loads after `/styles.css`, never instead.
  *
  * The BODY is three elements and no more:
  *
  *  - `<div id="root">`, where the client mounts;
- *  - a `<script type="application/json" id="pmcp-bootstrap">` carrying what no API reports:
- *    the session's two facts and the configuration the client needs (web.ts's `shell` says
- *    which). A JSON island rather than an executable one, so no page-generated JavaScript
- *    runs and the existing CSP needs no `script-src` relaxation;
+ *  - ONE `<script type="application/json">` island carrying what no API reports:
+ *    `#pmcp-bootstrap` on every session-gated URL (the session's two facts and the
+ *    configuration the client needs — web.ts's `shellDocument` says which), or `#pmcp-login`
+ *    on `/login`, which has no session to report. A JSON island rather than an executable
+ *    one, so no page-generated JavaScript runs and the CSP needs no `script-src` relaxation;
  *  - the module script.
  *
  * There is no `<noscript>`. The pages this replaces worked with scripting off and these do
@@ -36,10 +33,11 @@ export type SpaShellProps = {
   /** The tab title, matching what the page this replaces rendered. The client sets it again
    *  on every client-side navigation, because a client navigation changes no head. */
   title: string;
-  /** The `#pmcp-bootstrap` island's value, UNserialized: this template serializes it, which
-   *  is what makes the escaping unskippable. What its fields mean is the caller's business,
-   *  which keeps this template from knowing what a session is. */
-  bootstrap: Record<string, string>;
+  /** The document's one island: its element id, which is how the client finds it, and its
+   *  value UNserialized — this template serializes it, which is what makes the escaping
+   *  unskippable. What the value means is the caller's business, which keeps this template
+   *  from knowing what a session or a sign-in step is. */
+  island: { id: "pmcp-bootstrap" | "pmcp-login"; value: unknown };
   /** The shared sheet every page reads: the design language, and the source of truth for
    *  every token and page-chrome class. */
   stylesheet: string;
@@ -50,7 +48,7 @@ export type SpaShellProps = {
   script: string;
 };
 
-/** The PWA links, spelled here for `layout.tsx`'s reason: the document head is its own
+/** The PWA links, spelled here rather than read from `paths`: the document head is its own
  *  contract, and the icon is the 192 because iOS's `apple-touch-icon` wants a raster. */
 const MANIFEST = "/manifest.webmanifest";
 const ICON = "/icon-192.png";
@@ -65,17 +63,17 @@ const ICON = "/icon-192.png";
  *    which would otherwise end a statement mid-literal in an executable script.
  *
  * Each escape is a JSON escape too, so `JSON.parse` reads the value back unchanged. Every
- * island this template draws goes through it, and so does every embed in login.tsx's inline
- * script, whose rule this was before it moved here.
+ * island goes through it: `/login`'s carries `?next=`, `?error=` and `?username=` text any
+ * link can set to `</script><img …>`.
  */
-export function jsLiteral(value: unknown): string {
+function jsLiteral(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 }
 
-export const SpaShell: FC<SpaShellProps> = ({ title, bootstrap, stylesheet, appStylesheet, script }) => (
+export const SpaShell: FC<SpaShellProps> = ({ title, island, stylesheet, appStylesheet, script }) => (
   <>
     {html`<!doctype html>`}
     <html lang="en">
@@ -98,8 +96,8 @@ export const SpaShell: FC<SpaShellProps> = ({ title, bootstrap, stylesheet, appS
         {/* `raw`, because the content is JSON and hono would otherwise escape its quotes
             into entities — which `JSON.parse` cannot read. Safe because `jsLiteral` leaves
             no raw `<` to end the element, whatever the values are. */}
-        <script type="application/json" id="pmcp-bootstrap">
-          {raw(jsLiteral(bootstrap))}
+        <script type="application/json" id={island.id}>
+          {raw(jsLiteral(island.value))}
         </script>
         <script type="module" src={script}></script>
       </body>

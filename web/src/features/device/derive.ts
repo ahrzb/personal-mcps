@@ -1,8 +1,8 @@
 /**
  * `/device` as pure functions: which of its moments the URL asks for, and the one relative
- * time it prints. `pages/model.ts`'s `deviceStep` split in two — the URL half is here (routes
+ * time it prints. The server page's `deviceStep`, split in two — the URL half is here (routes
  * design §3: `?decided=`, `?error=` and a missing `?user_code` are the client's display
- * state), and the verify half is `GET /api/hub/device`. No React, no DOM, no `@/` runtime
+ * state), and the verify half is `GET /api/hub/device` (`pages/model.ts`'s `deviceRequestOf`). No React, no DOM, no `@/` runtime
  * import, so `server/test/unit/device-derive.test.ts` pins it from plain Node.
  */
 

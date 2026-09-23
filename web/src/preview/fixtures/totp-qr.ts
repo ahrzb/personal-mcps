@@ -1,5 +1,5 @@
 /**
- * The QR `server/dev/fixtures.ts`' `TOTP_URI` draws — `renderSVG(TOTP_URI)` from `uqr` 0.1.3,
+ * The QR the server fixtures' (`../seed.ts`) `TOTP_URI` drew — `renderSVG(TOTP_URI)` from `uqr` 0.1.3,
  * the exact call `pages/model.ts`'s `enrollmentOf` makes, captured as text.
  *
  * Captured rather than computed because the QR encoder is a SERVER dependency: `uqr` is the

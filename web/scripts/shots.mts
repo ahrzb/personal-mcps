@@ -60,7 +60,7 @@ export async function settle(page: Page): Promise<void> {
  * viewport — which compares as a size mismatch against every baseline and looks like a
  * layout bug rather than a timing one.
  *
- * Not part of `settle`: the server-rendered baseline has no `#root` to wait for.
+ * Not part of `settle`, which a capture of a page with no `#root` needs too.
  */
 export async function mounted(page: Page): Promise<void> {
   await page.waitForSelector("#root > *", { timeout: 30_000 });

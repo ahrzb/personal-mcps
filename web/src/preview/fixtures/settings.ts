@@ -12,7 +12,7 @@ import { pendingCreatePage, pendingSetScene } from "./approvals";
 import { TOTP_QR_SVG } from "./totp-qr";
 
 /**
- * `/settings`, reproduced from `server/dev/fixtures.ts`' `settings` object one state for one
+ * `/settings`, reproduced from the server fixtures' (`../seed.ts`) `settings` object one state for one
  * state and one value for one value — the same passkeys, sessions, tokens, clients, timeouts,
  * enrolment and codes, against the same frozen `NOW` (`../clock.ts`).
  *

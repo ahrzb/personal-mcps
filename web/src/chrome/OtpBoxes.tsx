@@ -2,8 +2,9 @@ import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 /**
- * The six-box TOTP code entry — `pages/layout.tsx`'s `OtpBoxes`, which /settings' enrolment
- * card draws today and /login's challenge card will when it moves.
+ * The six-box TOTP code entry both code-checking cards draw — /settings' enrolment and
+ * /login's challenge — ported from the server layout's `OtpBoxes`. One definition for both,
+ * because a second copy is exactly how G30 happened.
  *
  * The boxes are unnamed; the code the enclosing form submits is the ONE hidden `code` input,
  * which is what the server-rendered stitching script filled (G30: six named boxes and no

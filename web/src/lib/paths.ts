@@ -93,6 +93,16 @@ export const paths = {
    *  refuses a control-less form body with 415 and answers JSON, which is what this form
    *  posted until 2026-09-23 — sign-out on every SPA page failed (web.ts, paths.auth.signOut). */
   signOut: "/login/sign-out",
+  /** /login itself — "Back to sign in", and the base of a card switch (`loginUrl`). */
+  login: "/login",
+  /**
+   * /login's three KEPT form targets (routes design §0.4): each answers a 303 to the landing
+   * the hub judged, carrying better-auth's Set-Cookie, which only a real form navigation can
+   * follow. Field names are the handlers': `username`, `password`, `code`, `callbackURL`.
+   */
+  signIn: "/login/sign-in/username",
+  totpVerify: "/login/two-factor/verify-totp",
+  backupCodeVerify: "/login/two-factor/verify-backup-code",
   /** §8's one browser-only interaction, kept as a server route: it answers a 303 to a
    *  third-party authorize URL, and a `fetch` cannot follow a cross-origin redirect into
    *  the address bar — so the client renders a real `<form method="post">` at it. */
@@ -140,7 +150,7 @@ export type SettingsConfirmKind =
 /**
  * Which pane OWNS each confirmation — where its link is drawn, where its dialog opens and
  * where its write lands back. One table, so the same `?confirm=` carried to another pane's
- * URL is no dialog at all (`pages/model.ts`'s `SETTINGS_CONFIRM_PANE`).
+ * URL is no dialog at all. Ported from the server's own table, which retired with its page.
  */
 export const SETTINGS_CONFIRM_PANE: Record<SettingsConfirmKind, SettingsPane> = {
   "disable-two-factor": "two-factor",
@@ -190,6 +200,31 @@ export const deviceApi = {
  */
 export const consentApi = {
   read: "/oauth/consent",
+} as const;
+
+/**
+ * A /login URL carrying the named fields — `pages/model.ts`'s `loginUrl`, verbatim: empty
+ * values are left off, and `next` travels the landing so a card switch keeps the deep link
+ * (and §19.5's signed authorize landing) that the card it left was posting.
+ */
+export function loginUrl(fields: Record<string, string | null | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === null || value === undefined || value === "") continue;
+    search.set(name, value);
+  }
+  const rendered = search.toString();
+  return rendered === "" ? paths.login : `${paths.login}?${rendered}`;
+}
+
+/**
+ * better-auth's two passkey AUTHENTICATION endpoints, which /login's **Sign in with a
+ * passkey** calls directly: an assertion ceremony is not a form, so there is nothing for a
+ * hub route to translate, and the verify answer is itself the session cookie.
+ */
+export const passkeyAuthentication = {
+  options: "/api/auth/passkey/generate-authenticate-options",
+  verify: "/api/auth/passkey/verify-authentication",
 } as const;
 
 /**

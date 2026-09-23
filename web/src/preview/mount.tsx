@@ -13,10 +13,10 @@ import type { ApiClient } from "@/lib/http";
 import { parseSearch, routeTree, stringifySearch } from "@/router";
 
 /**
- * The React state gallery — the living demo of every screen and component STATE of the
- * migrated pages, read beside the design boards as the reference for what a state looks
- * like. It takes over `server/dev/preview.ts`'s entries page by page as each page moves
- * (decision 38), and it is what `scripts/visual-compare.mts` screenshots.
+ * The React state gallery — the living demo of every screen and component STATE of every
+ * page, read beside the design boards as the reference for what a state looks like. It
+ * replaced the server preview page by page (decision 38; `seed.ts` says what that was), and
+ * it is what `scripts/visual-compare.mts` screenshots.
  *
  *   GET /__preview                   — an index linking every page × state pair
  *   GET /__preview/<page>/<state>    — that page, rendered against that state's seed
@@ -87,6 +87,15 @@ function mount(target: HTMLElement, name: PreviewName, state: string, seed: Seed
     cached.setState({ ...cached.state, status: "error", error: refusalOf(entry.error), fetchStatus: "idle" });
   }
 
+  // /login's island, written where the Worker writes it, so the page's own read finds it.
+  if (seed.loginIsland !== undefined) {
+    const island = document.createElement("script");
+    island.type = "application/json";
+    island.id = "pmcp-login";
+    island.textContent = JSON.stringify(seed.loginIsland);
+    document.body.append(island);
+  }
+
   const router = createRouter({
     routeTree,
     history: createMemoryHistory({ initialEntries: [urlOf(seed)] }),
@@ -126,7 +135,7 @@ function urlOf(seed: Seed): string {
  * value: nothing here submits anything, and a token is opaque to every component.
  *
  * `origin` is the one field that has to be EXACT rather than plausible. The surfaces build a
- * scoped endpoint URL from it, and `server/dev/fixtures.ts` rendered those against
+ * scoped endpoint URL from it, and the server fixtures (`seed.ts`) rendered those against
  * `https://hub.example` — so any other value changes a line's length and, at 390px, its
  * wrapping. Same reason the clock is frozen: a screenshot must not depend on where it was
  * taken from.
@@ -135,7 +144,7 @@ const BOOTSTRAP = {
   csrf: "csrf_FAKE0000d41d8cd98f00b204e9800998",
   username: "ahrzb",
   origin: "https://hub.example",
-  // `server/dev/fixtures.ts`' own obviously-fake key. Never drawn — the push control only
+  // The server fixtures' own obviously-fake key. Never drawn — the push control only
   // hands it to `PushManager.subscribe` on a click no gallery render makes.
   vapidPublicKey: "BFAKE0000pmcpFAKEvapidPUBLICkeyFAKE0000pmcpFAKEvapid0000",
 } as const;

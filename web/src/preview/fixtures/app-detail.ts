@@ -25,7 +25,7 @@ import { FROZEN_NOW } from "../clock";
 import type { Seed } from "../seed";
 
 /**
- * `/apps/<slug>` — all 47 states of `server/dev/fixtures.ts`' `appDetailFixtures`, one for
+ * `/apps/<slug>` — all 47 states of the server fixtures' (`../seed.ts`) `appDetailFixtures`, one for
  * one by name, because each name is the filename its committed baseline carries and the
  * comparison pairs them by that string.
  *
@@ -51,7 +51,7 @@ import type { Seed } from "../seed";
  *    a zero, and a zero is a fact where there is no fact.
  */
 
-/** Epoch milliseconds from a readable instant, as `server/dev/fixtures.ts`' own `ms`. */
+/** Epoch milliseconds from a readable instant, as the server fixtures' own `ms`. */
 const ms = (iso: string): number => Date.parse(iso);
 
 /** The instant the SSR fixtures render at, which the preview clock freezes to — so `last
@@ -726,7 +726,7 @@ const OVERVIEW_CACHE = cache({ app: ALIAS_APP, caps: TUNNEL_CAPS, catalog: ALIAS
 /* ------------------------------- the 47 states ------------------------------- */
 
 /**
- * Every state of `/apps/<slug>`, keyed exactly as `server/dev/fixtures.ts` keys them.
+ * Every state of `/apps/<slug>`, keyed exactly as the server fixtures keyed them.
  *
  * The bulk is in the consts above, and each entry says only what makes it that state: its
  * URL, the one answer it changes, the dialog its search opens, the transient a submit would

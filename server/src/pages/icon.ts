@@ -4,7 +4,7 @@
 // production), and the SERVICE_WORKER precedent two lines from where the routes go.
 //
 // PROVENANCE: `node scripts/icon.mjs` — a dependency-free signed-distance rasterizer over
-// BrandMark's four strokes (layout.tsx), 8×8 supersampled, RGB PNG through node:zlib,
+// BrandMark's four strokes (web/src/chrome/Shell.tsx), 8×8 supersampled, RGB PNG through node:zlib,
 // deterministic. Ground #ffffff full-bleed, stroke #09090b, the mark inset to the middle
 // 80 % (its farthest point ≈0.34N from centre, inside the 0.4N maskable safe zone). Rerun the
 // script and these two constants must come back byte for byte; if they do not, the script

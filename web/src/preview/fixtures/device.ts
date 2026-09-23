@@ -3,7 +3,7 @@ import { keys } from "@/lib/queries";
 import type { Seed } from "../seed";
 
 /**
- * `/device`, reproduced from `server/dev/fixtures.ts`' `device` object one state for one state
+ * `/device`, reproduced from the server fixtures' (`../seed.ts`) `device` object one state for one state
  * and one value for one value. The page's moment is its URL (`?decided=`, `?user_code=`), and
  * the one read — the confirm card's facts, or the 404 that sends the owner back to the field —
  * is the seeded answer to `GET /api/hub/device?user_code=`.

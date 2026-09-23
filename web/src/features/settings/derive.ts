@@ -82,7 +82,7 @@ export function railEntries(
 }
 
 /** "30s" where the milliseconds divide evenly, "1500ms" where they do not — a value the reader
- *  would have to convert is not a glance (`pages/model.ts`'s `timeoutLabel`). */
+ *  would have to convert is not a glance (ported from the server page's `timeoutLabel`). */
 export function timeoutLabel(ms: number): string {
   return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
 }

@@ -3,7 +3,7 @@ import type { ConsentRead } from "@/lib/types";
 import type { Seed } from "../seed";
 
 /**
- * `/oauth/consent`, reproduced from `server/dev/fixtures.ts`' `oauthConsent` object one state
+ * `/oauth/consent`, reproduced from the server fixtures' (`../seed.ts`) `oauthConsent` object one state
  * for one state and one value for one value. The page's URL carries the signed query, and its
  * one read is the seeded answer to `GET /api/hub/oauth/consent?<that query>`.
  */

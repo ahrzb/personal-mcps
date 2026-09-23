@@ -13,9 +13,9 @@ import { pendingApprovalsQuery } from "@/lib/queries";
  *
  * ONE behavioural change from `pages/layout.tsx`, and it is the one this rewrite exists to
  * make: the wide nav and the narrow drawer are the same five entries, and the drawer is a
- * Base UI Dialog rather than the `:target` mechanism. The server-rendered pages keep
- * `#menu:target` — they have to, since they ship no script — so `styles.css`'s `.menu`,
- * `.scrim` and `.menu-open` rules are untouched and this component reuses them by class.
+ * Base UI Dialog rather than the `:target` mechanism the server-rendered pages needed (they
+ * shipped no script). `styles.css`'s `.menu`, `.scrim` and `.menu-open` rules are untouched
+ * and this component reuses them by class; `app.css` adds the open state they key elsewhere.
  *
  * Everything else is the same markup and the same classes: the page chrome is
  * `styles.css`'s, not Tailwind's, because the design language is the shared sheet's and a
@@ -140,7 +140,7 @@ function SignOutForm(): ReactNode {
 /**
  * The narrow navigation: the same five entries as the bar's nav, in the drawer
  * `styles.css`'s narrow breakpoint reveals. A Base UI Dialog, so it traps focus and closes
- * on Escape — which the `:target` drawer the SSR pages keep cannot do.
+ * on Escape — which the `:target` drawer of the server-rendered pages could not.
  *
  * `.menu-open`, `.menu`, `.menu-head` and `.menu-foot` are the sheet's existing classes,
  * and so is `.scrim` on the Dialog's own backdrop. What the sheet does NOT carry is an

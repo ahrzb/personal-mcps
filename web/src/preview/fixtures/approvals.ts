@@ -4,7 +4,7 @@ import type { ApprovalRow, DetailApproval } from "@/lib/types";
 import type { Seed } from "../seed";
 
 /**
- * `/approvals` and `/approvals/<id>`, reproduced from `server/dev/fixtures.ts`' `approvals`
+ * `/approvals` and `/approvals/<id>`, reproduced from the server fixtures' (`../seed.ts`) `approvals`
  * and `approvalDetail` objects one state for one state and one value for one value — the same
  * ids, agents, apps, tools, arguments and instants, rendered against the same frozen `NOW`
  * (`../clock.ts`), because each state is compared against its baseline pixel for pixel.

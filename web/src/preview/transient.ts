@@ -4,7 +4,7 @@ import type { TotpEnrollment, Violation } from "@/lib/types";
 /**
  * The state gallery's one seam into the pages, and the reason it needs one.
  *
- * Most of what `server/dev/fixtures.ts` shows is reachable without a seam: a query result is
+ * Most of what the server fixtures showed (`seed.ts`) is reachable without a seam: a query result is
  * seeded into the cache, and an open dialog or a selected row is a search parameter. Some
  * states are neither — they are the transient result of a submit that the gallery cannot
  * perform and no resource returns:

@@ -12,9 +12,10 @@ import type { NoticeTone } from "./format";
  * server's own `next`. So the keys are read on every search change rather than only at first
  * mount, and stripped with a replacing navigation once shown.
  *
- * A COPY of `pages/model.ts`'s `NOTICE_KEYS` and `web.ts`'s `noticeOf`, spelled here for
- * `web/src/lib/types.ts`'s reason. The server still WRITES them, so the two spellings must
- * agree: a renamed key would quietly stop rendering rather than fail to compile.
+ * A COPY of `pages/model.ts`'s `NOTICE_KEYS`, spelled here for `web/src/lib/types.ts`'s
+ * reason, and the one READER of them — `web.ts`'s `noticeOf` went with the server pages. The
+ * server still WRITES them (`noticeUrl`), so the two spellings must agree: a renamed key would
+ * quietly stop rendering rather than fail to compile.
  */
 export const NOTICE_KEYS = {
   done: "done",

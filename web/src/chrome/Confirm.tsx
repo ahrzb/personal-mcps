@@ -50,8 +50,8 @@ export function ConfirmDialog({
               {/* `render={<div />}` on both: Base UI's defaults are an `<h2>` and a `<p>`,
                   and `styles.css:130-140` gives every `h1,h2,h3` `line-height: 1.2` where a
                   div inherits the body's 1.55. A heading is therefore NOT the box
-                  `.dialog-title` describes, and the sheet that says so is the one the
-                  server-rendered pages still read — so the primitive stops matching the
+                  `.dialog-title` describes, and the sheet that says so is every page's
+                  design language — so the primitive stops matching the
                   base-element selector rather than fighting it with a counter-rule. */}
               <Dialog.Title render={<div />} className="dialog-title">
                 {title}

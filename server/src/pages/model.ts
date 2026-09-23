@@ -1,27 +1,22 @@
-// model.ts — the view-model contract between the page handlers (web.ts) and the
-// templates in this directory, plus the ONE definition of the hub's browser URL
-// space, plus the READS that fill those props in.
+// model.ts — the ONE definition of the hub's browser URL space, plus the READS the page
+// handlers (web.ts) and the JSON API (api.ts) answer from.
 //
-// OWNS: one Props type per SERVER-RENDERED page of §13 (/login, /device, /settings,
-// /approvals, /approvals/<id>, /oauth/consent), the shared chrome those pages
-// render inside, the `paths` object every link, form action and client route is built
-// from, and one loader per such page — the seam where a props value stops being a
-// fixture and becomes a real read. /apps/*, /agents/* and — since 2026-09-21, decision 36
-// — /audit have no props here: they are a
-// React SPA served from a shell document, and what this file still owns for them is
-// `paths` (the URL space they mirror), the pure FORM COMPOSERS the JSON API calls
-// (api.ts) — `composeOwnerRoles`, `composeRedaction`, `composeRoles`,
-// `composeTypescriptAliases`, `grantChoicesOf` — which stay on the server because they
-// are the rule a save is composed by, not a rendering concern, and the audit READ shapes
-// (`AuditEventRow`, `eventRow`, `noBodiesReason`, `auditFilters`, `auditExportQuery`),
-// which api.ts and web.ts answer their audit routes from.
+// OWNS: the `paths` object every link, form action and route is built from; the reads
+// behind each page's JSON — `settingsRead`, `approvalOf`, `deviceRequestOf`, `consentRead`,
+// `loginIsland` — and the shapes they answer; the pure FORM COMPOSERS the JSON API calls
+// (`composeOwnerRoles`, `composeRedaction`, `composeRoles`, `composeTypescriptAliases`,
+// `grantChoicesOf`), which stay on the server because they are the rule a save is composed
+// by, not a rendering concern; and the audit READ shapes (`AuditEventRow`, `eventRow`,
+// `noBodiesReason`, `auditFilters`, `auditExportQuery`). Every page is the React SPA served
+// from one shell document since decision 38 (the last, /login, in its family 5), so no
+// props type and no template is left here: what a page DRAWS is the client's.
 //
 // HIDES: nothing about the domain — every field here is either lifted straight from a
 // read model (registry / approvals / audit, via type-only imports) or is an explicitly
 // derived projection of one. Where a page needs less than a read model offers, it says
 // so with Pick/Omit rather than restating a shape that could then drift.
 //
-// The loaders CONSUME and never reimplement: every one of them reads through
+// The reads CONSUME and never reimplement: every one of them reads through
 // `admin.ops` — the same handlers the `pmcp` tools and the CLI front (§8's
 // parity invariant), so a page can show nothing a tool cannot, and a filter or
 // default the tool applies is applied here by construction rather than by
@@ -37,23 +32,11 @@
 // `audit_query` answered, so nothing on this side aggregates anything the tools cannot
 // read — and the JSONL export is once again the only named exception.
 //
-// Two rules the templates depend on, stated once here:
-//
-//  1. Templates are pure `(props) => JSX`. They never fetch, never read cookies,
-//     never call Date.now(), and never build a URL by concatenation — the render
-//     instant arrives as `now` and every URL comes from `paths`. That is what
-//     makes a template renderable from a fixture (server/dev/fixtures.ts) and
-//     from a request with identical results.
-//  2. Desktop and mobile are ONE template. The Mobile*.dc.html artboards are the
-//     narrow breakpoint of these same props — e.g. /approvals' wide rows and its
-//     narrow stack are two presentations of one approval list, never two view models.
-//
 // Timestamps are mixed on purpose and the mix is inherited, not invented: the
 // skeleton read models spell time two ways — ISO-8601 strings in approvals
 // (ApprovalRow) and epoch milliseconds in registry/audit (AuditRow, TokenInfo) — and
-// this file keeps each field exactly as its source states it.
-// `now` is ISO-8601; a template comparing it with an epoch-ms field parses it
-// (Date.parse) rather than reaching for a clock of its own.
+// this file keeps each field exactly as its source states it. The audit link parsers take
+// the present from their caller (`PageContext.now`, ISO-8601); the other reads stamp it.
 
 import { env } from "cloudflare:workers";
 // The only thing in the tree that can draw a QR (`enrollmentOf`), and the only reason it
@@ -62,7 +45,6 @@ import { env } from "cloudflare:workers";
 import { renderSVG } from "uqr";
 import { ops } from "../admin";
 import type { AgentPane, AppPane } from "../app-routes";
-import type { AppRow as OpsAppRow } from "../admin";
 import type { TypescriptAliases } from "../hub-types";
 import {
   AUTH_BASE_PATH,
@@ -75,73 +57,12 @@ import type { TokenInfo } from "../identity";
 import { AUDIT_EXPORT_MAX_VALUES, DEVICE_CODE_TTL_MS, HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../limits";
 import { ROLE_FAMILIES } from "../registry";
 import type { FamilyPatterns, RoleDeclaration, RoleFamily } from "../registry";
-import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
+import type { ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditQuery, AuditRow, AuditSlimRow, BodyStub } from "../audit";
 
 /* ------------------------------------------------------------------ *
  * Shared chrome
  * ------------------------------------------------------------------ */
-
-/**
- * The floor every page stands on. `now` is the instant the response was
- * rendered — the only clock a template ever reads, so relative copy ("expires in
- * 43 min", "last used yesterday", "seen now") is a pure function of the props
- * and a fixture renders byte-identically every time. ISO-8601, UTC.
- */
-export type PageProps = {
-  now: string;
-};
-
-/**
- * §13's Password pane renders the length hint from this and nothing else — re-exported
- * through the props layer so the template needs no import of its own into identity, and
- * so the number better-auth enforces and the number the page shows are one value (§4).
- */
-export { PASSWORD_MIN_LENGTH };
-
-/**
- * The four nav destinations of the signed-in shell (Main.dc.html's header), in
- * the order they are rendered. Pages outside the shell — /login, /device,
- * /apps/new, /approvals/<id> — are chromeless card layouts and carry no
- * section at all, which is why this never has a "none" member.
- */
-export type NavSection = "apps" | "agents" | "audit" | "approvals" | "settings";
-
-/**
- * The redirect-back flash: every mutating page POST lands on an admin op and
- * then redirects to the page it came from (web.ts), so the outcome has to
- * survive as one line of props rather than as a rendered exception. `tone` maps
- * onto the design system's alert palettes (Main.dc.html): success #f0fdf4,
- * warning #fffbeb, danger #fef2f2.
- *
- * A refusal always names the op it refused (web.ts's `noticeOf`), so the danger
- * arm's `title` is required — a bold-line-less danger alert is not a state this
- * hub can produce. A success is often one sentence, so there its title is optional.
- */
-export type Notice =
-  | {
-      tone: "success" | "warning";
-      /** Optional bold first line; the alert renders message-only when absent. */
-      title?: string;
-      message: string;
-    }
-  | { tone: "danger"; title: string; message: string };
-
-/**
- * What every page inside the signed-in shell needs from the shell itself.
- * `pendingApprovals` is the red count badge on the Approvals tab — it is the
- * number of rows the /approvals page would show as pending right now, so a page
- * that also lists them (ApprovalsProps) must report the same number in both
- * places or the badge lies.
- */
-export type ShellProps = PageProps & {
-  /** The signed-in owner; also the namespace name in every /<user>/mcp URL. */
-  username: string;
-  section: NavSection;
-  pendingApprovals: number;
-  /** null on a plain GET; set for exactly one render after a mutation. */
-  notice: Notice | null;
-};
 
 /* ------------------------------------------------------------------ *
  * URL space (§2's reserved top-level segments, §13's pages)
@@ -159,27 +80,18 @@ function query(params: Record<string, string | number | undefined | null>): stri
 }
 
 /**
- * Every URL the browser surface serves or posts to, in one object — templates
- * import this and never spell a path themselves, so a route rename is one edit
- * here instead of a search across every template and client route. Page routes come straight
- * from §13; sub-paths under them are this file's decision and are what web.ts's
- * route table mounts. The reserved-segment rule of §2 holds by construction:
+ * Every URL the browser surface serves or posts to, in one object — the server's routes
+ * mount these and never spell a path themselves, so a route rename is one edit here. Page
+ * routes come straight from §13; sub-paths under them are this file's decision and are what
+ * web.ts's route table mounts. The reserved-segment rule of §2 holds by construction:
  * nothing here introduces a new top-level segment beyond login, device, agent,
- * audit, approvals, apps, api and oauth.
+ * audit, approvals, apps, api and oauth. The client keeps its own copy of the ones it
+ * links (web/src/lib/paths.ts), compared against this one by web-pages.test.ts.
  *
- * Mutating targets are POST-only and CSRF-checked; the read targets are GET.
- * Both are named for what they do, not for their method.
- *
- * One convention holds every ops-backed mutation together, and §8's parity
- * direction B is what it buys: the FINAL PATH SEGMENT of such a target is the
- * `admin.ops` key it fronts, and every argument that is not a form control
- * rides the query string under the field name the op's own schema declares.
- * So the field set a browser submits and the field set the op accepts are one
- * thing derived two ways — a schema change with no form change is a broken
- * link, not a silently ignored field. The three mutations that front no tool
- * say so by naming no op: `connect` (the consent redirect is a browser
- * interaction, §8), `push` (approvals owns Web Push), and the device
- * decision (better-auth's own endpoint, §4).
+ * No target here fronts an op: since decision 38 every page's writes are `/api/hub` calls
+ * (api.ts). The form targets left are the ones whose answer is a NAVIGATION a `fetch`
+ * cannot perform (routes §0.4) — `appConnect`, the four credential translations in `auth`
+ * and `oauthConsent`'s POST.
  */
 export const paths = {
   /* --- pages (§13) --- */
@@ -207,16 +119,6 @@ export const paths = {
    * SPEND rather than who may reach the hub, which is why it sits outside Sign-in/Access.
    */
   settingsExecution: "/settings/execution",
-  /**
-   * hub_settings_update — the Execution pane's one Save, under its own pane's prefix so
-   * the redirect-back lands where the form was drawn (§13's "mutations belong to a
-   * pane"). A route of its own rather than the generic dispatch: the two controls are
-   * milliseconds the op takes as INTEGERS, and a refusal must redraw the pane at 400 with
-   * the op's sentence under the field it named, which a redirect's single flash cannot do.
-   * NO ROUTE since decision 38's family 2, for `auth`'s settings members' reason; the
-   * client posts `POST /api/hub/settings/execution/hub_settings_update`.
-   */
-  settingsExecutionUpdate: "/settings/execution/hub_settings_update",
   /** App management: active, archived, and the add-app entry point. */
   apps: "/apps",
   /** The add-app form (§13's "add-app flow"). */
@@ -266,9 +168,9 @@ export const paths = {
 
   /* --- the PWA shell (§13) --- */
 
-  /** Installability. Five URLs named here because web.ts serves them; layout.tsx spells
-   *  the four the shell LINKS itself (manifest, worker, stylesheet, the 192 icon), since
-   *  the shell links them rather than navigating to them. */
+  /** Installability. Named here because web.ts serves them; the shell's head (spa.tsx)
+   *  spells the manifest and the 192 icon itself, since it links them rather than
+   *  navigating to them. */
   manifest: "/manifest.webmanifest",
   /** Push + notificationclick only — never a fetch handler (the no-SPA pin). */
   serviceWorker: "/sw.js",
@@ -294,15 +196,6 @@ export const paths = {
   },
 
   /**
-   * /approvals under approval_list's own filters (§8) — how "Older →" widens the
-   * history limit. There is no offset: the tool takes `status` and `limit` and
-   * nothing else, so the page cannot invent paging the read model doesn't have.
-   */
-  approvalsWith(filters: ApprovalListFilters): string {
-    return `/approvals${query({ ...filters })}`;
-  },
-
-  /**
    * The streaming JSONL export of the rows matching a selection (§13) — a bookmarkable URL
    * since before the explorer and unchanged by it. A bare path rather than a builder: the
    * keys it accepts are REPEATED ones (`auditExportQuery`), which the client composes and
@@ -310,24 +203,8 @@ export const paths = {
    */
   auditExport: "/audit/export.jsonl",
 
-  /* --- mutations posted by the pages --- */
+  /* --- built URLs --- */
 
-  /** Approve/deny the device code; the decision rides a submit button's value.
-   *  better-auth's endpoint underneath, so this target names no op.
-   *  NO ROUTE since decision 38's family 3: only the retained device template draws it,
-   *  for the states preview; the client posts `POST /api/hub/device/decide`. */
-  deviceDecide: "/device/decide",
-  /** approval_decide (§8) for one request; approve and reject share the form,
-   *  which submits the `decision` field the op's schema names.
-   *  NO ROUTE since decision 38: only the retained approvals templates draw it, for the
-   *  states preview; the client decides through `POST /api/hub/ops/approval_decide`. */
-  approvalDecide(id: string): string {
-    return `/approvals/approval_decide${query({ id })}`;
-  },
-  /** Where the browser's PushSubscription JSON was registered (approvals.subscribePush).
-   *  NO ROUTE since decision 38, for `approvalDecide`'s reason; the client posts
-   *  `POST /api/hub/approvals/push`. */
-  approvalsPush: "/approvals/push",
   /**
    * Connect and Reconnect are the same target: both start upstream.beginConnect
    * and redirect to the provider (§7). The button label differs, the flow does
@@ -335,26 +212,6 @@ export const paths = {
    */
   appConnect(slug: string): string {
     return `/apps/connect${query({ slug })}`;
-  },
-  /** The Tokens pane under §13's **All · Agents · Apps** filter. `undefined` is All and
-   *  spells `paths.settingsTokens` exactly, so the active pill and the rail entry point at
-   *  one URL rather than at two spellings of it. */
-  settingsTokensWith(kind?: TokenRow["kind"]): string {
-    return `${paths.settingsTokens}${query({ kind })}`;
-  },
-  /** token_revoke (§8) — the Tokens pane's Revoke/Remove control, under its own pane's
-   *  prefix so §13's "mutations belong to a pane" holds for the redirect back.
-   *  NO ROUTE since decision 38's family 2 (see `auth`); the client posts
-   *  `POST /api/hub/settings/tokens/token_revoke`. */
-  tokenRevoke(id: string): string {
-    return `${paths.settingsTokens}/token_revoke${query({ id })}`;
-  },
-  /** connection_revoke (§8/§19.6) — the Connected clients pane's Revoke. It moved here
-   *  with its pane: nothing posts under `/oauth/connections` any more. NO ROUTE since
-   *  decision 38's family 2 either; the client posts
-   *  `POST /api/hub/settings/clients/connection_revoke`. */
-  connectionRevoke(id: string): string {
-    return `${paths.settingsClients}/connection_revoke${query({ id })}`;
   },
   /**
    * One /settings pane's own URL — the rail's `href` as a function, so everything that
@@ -364,32 +221,6 @@ export const paths = {
    */
   settingsPane(pane: SettingsPane): string {
     return SETTINGS_PANES.find((entry) => entry.pane === pane)?.href ?? paths.settings;
-  },
-
-  /* --- confirm dialogs as addressable state --- */
-
-  /**
-   * The same page with one destructive <dialog> rendered open, and `pane` is first because
-   * a dialog rides the URL of the pane that OWNS the control, never the page root (§13's
-   * "mutations belong to a pane"). Server-rendered state, so the confirm step works with
-   * scripting off and is reachable from a fixture. The argument is the PANE, not its href:
-   * the dialog's Cancel, its redirect-back and the rail's active entry then name one URL
-   * because they name one pane, and comparing a dialog's owner to the rendering pane is
-   * `===`.
-   */
-  settingsConfirm(pane: SettingsPane, kind: SettingsConfirm["kind"], id?: string): string {
-    return `${paths.settingsPane(pane)}${query({ confirm: kind, id })}`;
-  },
-
-  /* --- the consumer endpoint a page only ever displays --- */
-
-  /**
-   * The scoped MCP endpoint of one app — shown, never linked: /apps/new
-   * spells it out under the slug field ("served at /ahrzb/mcp/linear") so the
-   * owner sees what they are naming.
-   */
-  mcpScoped(username: string, slug: string): string {
-    return `/${encodeURIComponent(username)}/mcp/${encodeURIComponent(slug)}`;
   },
 
   /**
@@ -402,29 +233,26 @@ export const paths = {
    * (web.ts): it reads the form body, calls better-auth as JSON through identity's
    * `callAuthResponse` — §4's sole-custodian seam is still the only door — hands
    * better-auth's own `Set-Cookie` headers back to the browser, and redirects. The
-   * templates are unchanged and the custody rule is unchanged; only the `action=` moved.
+   * custody rule is unchanged; only the `action=` moved.
    *
    * Each hub path KEEPS the final segment of the endpoint it fronts, so a target still
-   * names its endpoint (`…/verify-totp` is `/two-factor/verify-totp`) — the same
-   * final-segment convention the ops-backed targets above follow, one rule for both.
+   * names its endpoint (`…/verify-totp` is `/two-factor/verify-totp`).
    *
    * `signOut` is translated too, and its case is worth stating because it looks like it
    * should not need to be: the shell's form has NO controls, so a browser posts it with
    * an empty body — and better-auth answers that 415 as well (verified against a running
    * worker, 2026-08-26). "Sign out" was exactly as broken as "Sign in". It is the one
-   * target that reaches its hub route without a CSRF token, because layout.tsx renders it
-   * inside every page's shell and LayoutProps carries none to render; what stands in its
-   * place is the same origin rule better-auth itself applied while the form still posted
-   * there (web.ts's `crossOrigin`), so nothing was traded away.
+   * target that reaches its hub route without a CSRF token — the SPA Shell's form posts
+   * none — and what stands in its place is the same origin rule better-auth itself
+   * applied while the form still posted there (web.ts's `crossOrigin`).
    *
    * FOUR stay on better-auth's mount: the two WebAuthn ceremonies' options-and-verify
    * pairs. A ceremony is not a form post in the first place — it is two JSON round trips
    * with `navigator.credentials` between them — so there is no form body to translate and
    * nothing a hub route would add (§13: "the one credential POST that is not a form").
    *
-   * The eight `/settings/…` members have NO ROUTE since decision 38's family 2: only the
-   * retained settings template draws them, for the states preview (ruling §5.2), and the
-   * client posts their JSON twins under `/api/hub/settings/` (api.ts).
+   * /settings's credential writes are not here: since decision 38's family 2 the client
+   * posts them as JSON under `/api/hub/settings/` (api.ts), behind recent authentication.
    */
   auth: {
     /** Where the composition root mounts better-auth — the prefix every untranslated
@@ -435,19 +263,10 @@ export const paths = {
     signIn: "/login/sign-in/username",
     signOut: "/login/sign-out",
     /** /login's challenge card posts here: the code that finishes a sign-in a second
-     *  factor held. /settings's enrolment card posts at `totpVerifySettings` below —
-     *  same better-auth endpoint, different target, for the reason spelled there. */
+     *  factor held. /settings's enrolment verify is a different route on purpose — a JSON
+     *  write behind recent authentication (api.ts) — though better-auth's endpoint is one. */
     totpVerify: "/login/two-factor/verify-totp",
     backupCodeVerify: "/login/two-factor/verify-backup-code",
-    totpEnable: "/settings/two-factor/enable",
-    /** /settings's enrolment card posts here — the code typed into the six boxes under
-     *  the QR. A target of its own rather than `totpVerify` above, because this one is a
-     *  `credential`: it inherits the CSRF check and §4's freshness gate, and its REFUSAL
-     *  is answered in place at 200 with the same enrolment redrawn (web.ts's `reveal`
-     *  says why the QR cannot be re-derived). /login's translation does neither. */
-    totpVerifySettings: "/settings/two-factor/verify-totp",
-    totpDisable: "/settings/two-factor/disable",
-    backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
     /** The registration ceremony /settings/passkeys' **Add passkey** performs: options
      *  out, the authenticator's attestation back in. Named as a PAIR because the page's
      *  script calls both and a page that named only the first would ask an authenticator
@@ -458,14 +277,6 @@ export const paths = {
      *  the endpoint whose success is a sign-in (identity stamps §5's last_used_at on it). */
     passkeyAuthenticateOptions: `${AUTH_BASE_PATH}/passkey/generate-authenticate-options`,
     passkeyVerifyAuthentication: `${AUTH_BASE_PATH}/passkey/verify-authentication`,
-    passkeyDelete: "/settings/passkey/delete-passkey",
-    sessionRevoke: "/settings/revoke-session",
-    /** The Sessions pane's **Revoke all others** (§13) — better-auth's own
-     *  `/revoke-other-sessions`, which keeps the current session and takes no password. */
-    revokeOtherSessions: "/settings/revoke-other-sessions",
-    /** The Password pane's **Update password** (§13/§4's amendment): core better-auth's
-     *  `/change-password`, gated like every other credential POST. */
-    changePassword: "/settings/change-password",
   },
 } as const;
 
@@ -523,17 +334,21 @@ export type LoginStep =
   | { kind: "backup-code"; error: string | null };
 
 /**
- * /login. The only page with no CSRF token of its own: there is no session yet
- * to derive one from, and its forms post to better-auth, which brings its own
- * origin defense (§4). Rate limiting for this surface lives in the WAF (§15).
+ * GET /login's `#pmcp-login` island (decision 38, family 5): the card the query asks for and
+ * where signing in lands. Nothing of a session — /login has none, so no CSRF token and no
+ * username reach its document — and a pure function of the query the caller sent, plus
+ * §19.5's constant. `error`, `username` and `redirectTo` are text any link can set; the
+ * shell escapes the island (spa.tsx's `jsLiteral`). Rate limiting is the WAF's (§15).
  */
-export type LoginProps = PageProps & {
+export type LoginIsland = {
   step: LoginStep;
   /**
-   * Where to land after sign-in, when the browser was bounced here from a
-   * deep link (requireOwnerSession throws a redirect through /login) — e.g.
-   * "/approvals/apr_8f2k" from a push notification, or /device with its user
-   * code. Rendered as a hidden field; null means the default landing page.
+   * The ONE landing both of /login's consumers read — the `callbackURL` each card posts and
+   * the passkey ceremony's navigation after it verifies: §19.5's constant
+   * `/api/auth/oauth2/authorize?<signed bytes>`, or a hub-relative deep link the browser was
+   * bounced here from (requireOwnerSession redirects through /login — e.g.
+   * "/approvals/apr_8f2k" from a push notification), or null, which the client reads as
+   * "/apps". The posted `callbackURL` is judged again by the route it reaches (`landingOf`).
    */
   redirectTo: string | null;
 };
@@ -561,30 +376,6 @@ export type DeviceRequest = {
   expiresAt: string;
 };
 
-/**
- * /device's three moments: the owner has not typed a code yet, a live request is
- * waiting for a verdict, or the verdict is in. An unknown or past-expiry code
- * comes back as `enter-code` with `error` set — that is the EXPIRED CODE state
- * of AuthStates.dc.html, not a state of its own, because the recovery is the
- * same: type another code.
- */
-export type DeviceStep =
-  | { kind: "enter-code"; userCode: string; error: string | null }
-  | { kind: "confirm"; request: DeviceRequest }
-  | { kind: "decided"; decision: "approved" | "denied" };
-
-/**
- * /device — cookie-session gated (an unauthenticated visitor is sent through
- * /login first, which is what makes `username` knowable here). Approving grants
- * full admin CLI control of the namespace, so the page says so in an alert and
- * the POST carries a CSRF token (§13).
- */
-export type DeviceProps = PageProps & {
-  username: string;
-  csrfToken: string;
-  step: DeviceStep;
-};
-
 /* ------------------------------------------------------------------ *
  * /settings
  * ------------------------------------------------------------------ */
@@ -593,7 +384,7 @@ export type DeviceProps = PageProps & {
  * The steady state of the second factor — the whole of what better-auth's
  * `/get-session` reports about it (`twoFactorEnabled`), which is why the enabled
  * arm carries nothing else: the backup codes live encrypted in a table §4 gives
- * identity sole custody of, and no endpoint counts them (settingsProps says so
+ * identity sole custody of, and no endpoint counts them (`settingsRead` says so
  * again where it reads).
  */
 export type TwoFactorSummary = { enabled: false } | { enabled: true };
@@ -702,25 +493,10 @@ export type SessionRow = {
 };
 
 /**
- * The destructive confirmations of Dialogs.dc.html, as page state. Each carries
- * exactly what its copy names — the passkey's name, the session's label — so the
- * dialog never has to look anything up.
- */
-export type SettingsConfirm =
-  | { kind: "disable-two-factor" }
-  | { kind: "remove-passkey"; id: string; name: string }
-  /** `label` is the row's own `sessionLabel`, carried so the dialog title and the
-   *  row it names cannot spell the session two different ways. */
-  | { kind: "revoke-session"; id: string; label: string }
-  /** **Revoke all others** names no row — it is about every session except this one. */
-  | { kind: "revoke-other-sessions" }
-  | { kind: "revoke-connection"; id: string; client: string };
-
-/**
  * §13's "Refusals, mapped to fields": which of the Password pane's three controls the
  * last refusal was about. The FIELD travels — never the sentence — because the sentence
- * is the pane's own copy: web.ts maps better-auth's error CODE onto one of these names,
- * settings.tsx says the words, and neither drifts into the other's business.
+ * is the pane's own copy: api.ts maps better-auth's error CODE onto one of these names,
+ * the client's Password pane says the words, and neither drifts into the other's business.
  */
 export const PASSWORD_FIELDS = ["currentPassword", "newPassword", "confirmPassword"] as const;
 export type PasswordField = (typeof PASSWORD_FIELDS)[number];
@@ -774,23 +550,9 @@ export const SETTINGS_PANES: readonly {
   { pane: "execution", href: paths.settingsExecution, label: "Execution", short: "Execution", group: "Runtime" },
 ];
 
-/**
- * Which pane OWNS each destructive confirmation — where its link is drawn, where its
- * dialog opens, and where its POST redirects back to (§13's "Confirm-dialog state rides
- * the owning pane's URL"). One table, so a dialog cannot be opened on a pane that draws
- * no control for it: the same query on another pane's URL is no dialog at all.
- */
-export const SETTINGS_CONFIRM_PANE: Record<SettingsConfirm["kind"], SettingsPane> = {
-  "disable-two-factor": "two-factor",
-  "remove-passkey": "passkeys",
-  "revoke-session": "sessions",
-  "revoke-other-sessions": "sessions",
-  "revoke-connection": "clients",
-};
-
 /** One row of the Tokens pane — `token_list`'s own shape (§8, unchanged), narrowed to
- *  what §13's columns draw. `expired` is derived from `expiresAt` against the render
- *  instant here rather than in the template, because it also chooses the control's word
+ *  what §13's columns draw. `expired` is derived from `expiresAt` against the read's
+ *  instant here rather than in the client, because it also chooses the control's word
  *  (live → Revoke, expired → Remove) and both must read one answer. */
 export type TokenRow = {
   id: string;
@@ -801,56 +563,6 @@ export type TokenRow = {
   expiresAt: number | null;
   lastUsedAt: number | null;
   expired: boolean;
-};
-
-/**
- * /settings — the pinned parity exception (§8) for its Sign-in panes and Sessions:
- * credential management rides better-auth's endpoints and has no pmcp tool, and §4's
- * guards reject bearer-sourced sessions on every route under the prefix.
- *
- * ONE shape for all seven panes, and that is the point of §13's shell rule: the rail's
- * markers are the LENGTHS of the very lists the panes render, so they are read off these
- * fields rather than counted a second way. `pane` says which one is drawn; everything
- * else is present on every render because the rail is.
- *
- * `enrollment` and `revealedBackupCodes` are transient overlays on top of
- * `twoFactor`, not alternatives to it: enrollment can only be non-null while
- * `twoFactor.enabled` is false, and a fresh code set is revealed exactly once —
- * after enabling or regenerating — because nothing can show it again (§4).
- */
-export type SettingsProps = ShellProps & {
-  section: "settings";
-  pane: SettingsPane;
-  csrfToken: string;
-  twoFactor: TwoFactorSummary;
-  enrollment: TotpEnrollment | null;
-  revealedBackupCodes: string[] | null;
-  passkeys: PasskeyRow[];
-  sessions: SessionRow[];
-  tokens: TokenRow[];
-  /**
-   * §13's **All · Agents · Apps** filter (`?kind=agent|app`), or null for All. The
-   * narrowing is the PAGE's — `token_list` takes no filter and stays unchanged (§8) — and
-   * it narrows the TABLE only: `tokens` above is the whole listed set, so the rail's
-   * marker cannot move when a pill is clicked.
-   */
-  tokenKind: TokenRow["kind"] | null;
-  connections: ConnectionRow[];
-  confirm: SettingsConfirm | null;
-  /** The control §13 maps the last change-password refusal onto, or null (`PasswordField`). */
-  passwordError: PasswordField | null;
-  /**
-   * §23.3's committed timeout pair for this owner — `hub_settings_get`'s answer, read on
-   * every pane render like the rest of the shell, and what the Execution rail marker and
-   * the Execution pane's readback both draw. Milliseconds.
-   */
-  execution: SettingsExecution;
-  /**
-   * The Execution pane's two controls as they are drawn. A GET fills them from
-   * `execution`; a refused save fills them from what the owner typed, with the op's
-   * message under the field it named (`settingsProps`'s `submitted`).
-   */
-  executionForm: SettingsExecutionForm;
 };
 
 /** §23.3 — the owner's hub execution timeout pair, in milliseconds, as `hub_settings_get`
@@ -882,80 +594,9 @@ export type SettingsRead = {
   limits: { passwordMinLength: number; minTimeoutMs: number; maxTimeoutMs: number };
 };
 
-/**
- * The Execution pane's form state, one field per control plus the whole-form slot for a
- * refusal that names neither (the pair's ORDERING — "default must not exceed max" — is
- * about both fields at once, though the op still names `default_timeout_ms` for it).
- * `defaults`/`maximum` are the control VALUES as strings, because a refused save redraws
- * the owner's own text rather than the pair it refused to replace.
- */
-export type SettingsExecutionForm = {
-  defaults: string;
-  maximum: string;
-  errors: Partial<Record<"defaults" | "maximum" | "form", string>>;
-};
-
-/** §13's Execution rail marker and the pane's readback line: the pair in SECONDS where the
- *  millisecond value divides evenly, and in milliseconds where it does not — the rail
- *  column is a glance, and a value the reader would have to convert is not one. */
-export function timeoutLabel(ms: number): string {
-  return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
-}
-
-/* ------------------------------------------------------------------ *
- * /approvals
- * ------------------------------------------------------------------ */
-
-/**
- * /approvals. Both lists are approvals.list rows unchanged — arguments already
- * post-redaction, because that is the only form ever stored (§7) — split by the
- * one thing that changes their presentation: a pending row has buttons, a
- * decided row is a history line.
- *
- * The history section is capped, not paged: approval_list takes `limit` and no
- * offset (§8), so "Showing last N decisions · Older →" widens the same limit.
- */
-export type ApprovalsProps = ShellProps & {
-  section: "approvals";
-  csrfToken: string;
-  /** status "pending", newest first; `pendingApprovals` must equal its length. */
-  pending: ApprovalRow[];
-  /** Everything decided, expired, or spent — newest first. */
-  history: ApprovalRow[];
-  /** The limit `history` was read under: the N in "Showing last N decisions". */
-  historyLimit: number;
-  /** True when the ledger holds decisions beyond `historyLimit` ("Older →"). */
-  hasMoreHistory: boolean;
-  /**
-   * The VAPID public key the "Enable notifications" control hands to
-   * PushManager.subscribe (§13). Whether THIS browser is already subscribed is
-   * knowable only in the browser, so it is deliberately not a prop — the server
-   * knows endpoints, not which one is asking.
-   */
-  vapidPublicKey: string;
-};
-
 /* ------------------------------------------------------------------ *
  * /approvals/<id>
  * ------------------------------------------------------------------ */
-
-/**
- * /approvals/<id> — the page a -32003 error hands an agent's user (§7).
- * Chromeless: it is opened from a push notification or an error string, often on
- * a phone, and its job is one decision.
- *
- * `approval.status` alone selects the presentation (ApprovalStates.dc.html):
- * "pending" shows Approve/Reject, and every other status renders read-only with
- * its own explanation — "approved" is a pass waiting for the agent's identical
- * retry, "used" was spent by one, "rejected"/"expired" are terminal and the
- * agent's next attempt opens a fresh request. Expiry is a read-time
- * interpretation upstream of this page, so a past-expiry row arrives already
- * reported as "expired" (§7).
- */
-export type ApprovalDetailProps = PageProps & {
-  csrfToken: string;
-  approval: DetailApproval;
-};
 
 /**
  * The row as THIS page reads it. `ApprovalRow.decidedAt` is nullable because null is
@@ -968,13 +609,6 @@ export type ApprovalDetailProps = PageProps & {
 export type DetailApproval =
   | (ApprovalRow & { status: Exclude<ApprovalStatus, "rejected" | "used"> })
   | (ApprovalRow & { status: "rejected" | "used"; decidedAt: string });
-
-/**
- * Re-exported so a template can spell the status vocabulary it switches on
- * without importing across module boundaries the page layer otherwise does not
- * touch. Same type, one import site.
- */
-export type { ApprovalRow, ApprovalStatus };
 
 /* ------------------------------------------------------------------ *
  * /audit — the ledger's read shapes (the PAGE is the SPA's, decision 36)
@@ -1073,13 +707,6 @@ export type ConsentRead = {
   agents: ConsentAgentOption[];
 };
 
-/**
- * /oauth/consent as the retained template draws it (ruling §5.2 keeps it for the states
- * preview until family 5): the read, plus the render instant and the form's CSRF token.
- * Chromeless, like /login and /device: reached from the provider's own redirect.
- */
-export type ConsentProps = PageProps & ConsentRead & { csrfToken: string };
-
 /* ------------------------------------------------------------------ *
  * The Connected clients pane's rows (§19.6/§8/§13)
  * ------------------------------------------------------------------ */
@@ -1104,44 +731,16 @@ export type ConnectionRow = {
 };
 
 /* ------------------------------------------------------------------ *
- * The page set
+ * The reads — each page's JSON, out of the ops table
  * ------------------------------------------------------------------ */
 
 /**
- * Page name → its props. The one place the set of pages is enumerated: the
- * fixture registry is keyed by it and the dev preview walks it, so a page added
- * without a fixture is a type error rather than a gap noticed later.
- */
-export type PagePropsByName = {
-  login: LoginProps;
-  device: DeviceProps;
-  settings: SettingsProps;
-  approvals: ApprovalsProps;
-  "approval-detail": ApprovalDetailProps;
-  /** Chromeless and reached only from the provider's redirect — but a §13 page with two
-   *  boards all the same, so it is enumerated here like every other (`/oauth/consent`). */
-  "oauth-consent": ConsentProps;
-};
-
-/** Every page key of §13, as a type. */
-export type PageName = keyof PagePropsByName;
-
-/* ------------------------------------------------------------------ *
- * The loaders — one per page, props out of the ops table
- * ------------------------------------------------------------------ */
-
-/**
- * What every loader is handed. Who is asking has ALREADY been proven — web.ts
- * runs identity's cookie-session gate before a loader is entered, and
- * `ownerId` is that session's user — so no loader re-checks ownership, exactly
- * like an ops handler. `query` is the request's own query string, which is the
- * page's whole input: every read control on every page is a GET (§13).
+ * What the audit link parsers read (`auditFilters`, `auditExportQuery`): the request's own
+ * query string — every audit control is a GET (§13) — and the instant the caller stamped,
+ * which a relative `?range=` is resolved against.
  */
 export type PageContext = {
-  ownerId: string;
-  username: string;
-  csrfToken: string;
-  /** ISO-8601: the render instant, and the only clock any template reads. */
+  /** ISO-8601: the request's instant, stamped once by the route. */
   now: string;
   query: URLSearchParams;
 };
@@ -1912,20 +1511,17 @@ const SYSTEM_MARKS: readonly (readonly [string, string])[] = [
 /* ---------------------------- /login and /device ------------------------------ */
 
 /**
- * /login — the one page with no PageContext, because it has no session to build one
- * from. Its whole input is the query string better-auth's redirect left behind, and
- * the render instant its caller stamps (web.ts holds the clock; nothing in this file
- * reads one).
+ * GET /login's island — the one page with no session, so its whole input is the query
+ * string: better-auth's redirect, the provider's signed authorize, or a card-switch link.
  *
  * `rawSearch` is `web.ts`'s own `new URL(req.url).search` — the ORIGINAL bytes, never
  * reparsed through `query` and re-serialized — because §19.5 step 1's landing target for
  * the OAuth flow is the SIGNED query the provider built, and `URLSearchParams.toString()`
  * re-encodes (`+` for space, its own escaping) rather than reproducing what was signed.
  */
-export function loginProps(now: string, query: URLSearchParams, rawSearch: string): LoginProps {
+export function loginIsland(query: URLSearchParams, rawSearch: string): LoginIsland {
   return {
     step: loginStep(query),
-    now,
     // §19.5 step 1: when /login was reached via the provider's own signed authorize
     // redirect, the post-login landing is a CONSTANT — the hub's own oauth2/authorize,
     // with the signed query appended as the ONLY thing taken from the request. This page
@@ -1952,15 +1548,15 @@ function oauthRedirectTarget(query: URLSearchParams, rawSearch: string): string 
   return `${paths.auth.base}/oauth2/authorize${rawSearch}`;
 }
 
-/** Which of /login's three forms to draw, and what to say under the offending control.
+/** Which of /login's three cards to draw, and what to say under the offending control.
  *  better-auth answers a password POST with either a session or a two-factor challenge,
- *  and the query string is how that answer comes back to a server-rendered page.
+ *  and the query string is how that answer comes back to the page.
  *
  *  TWO spellings, and the second is not a convenience: web.ts's credential routes send
- *  `?step=`, while login.tsx's own "Use a backup code instead" link sends `?method=`
- *  (its `switchMethod`, a locked template). One of the two would otherwise silently draw
- *  the sign-in card instead of the card the owner asked for, which is a dead link in the
- *  middle of the challenge — so both are read here rather than one of them being wrong. */
+ *  `?step=`, while the client's "Use a backup code instead" link sends `?method=`
+ *  (web/src/lib/paths.ts's `loginUrl`, as the server page's link did). One of the two would
+ *  otherwise silently draw the sign-in card instead of the card the owner asked for, which
+ *  is a dead link in the middle of the challenge — so both are read here. */
 function loginStep(query: URLSearchParams): LoginStep {
   const error = query.get("error");
   const step = query.get("step") ?? query.get("method");

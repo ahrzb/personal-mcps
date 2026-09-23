@@ -121,9 +121,9 @@
    equally-unlayered base rule by source order, and each is scoped to the primitive's own
    `data-slot` attribute so it can never reach a page-chrome element.
 
-   styles.css is never edited to make room for this file. It is the shared sheet: the SSR
-   pages under /audit, /approvals, /settings and /login read it too, and a change there to
-   suit a React primitive would move a page this work does not touch. */
+   styles.css is never edited to make room for this file. It is the design language every
+   page reads, and pass 1 (decision 38) holds the look constant against the committed
+   baselines: a change there to suit a React primitive would move every page at once. */
 
 /* A primitive that renders an anchor — a dialog's link action, a menu item — draws its own
    colour and must not inherit the base sheet's underline. */
@@ -176,15 +176,15 @@
 
 /* The narrow drawer's OPEN state, which styles.css cannot supply to this client. It draws
    the drawer and the scrim (`:2610-2634`, `:2688-2702`) but keys open on `#menu:target`,
-   because the server-rendered pages ship no script and a URL fragment is the only switch
-   they have. Here the same markup is opened by a Base UI Dialog, whose switch is
-   `data-open` on the popup and on the backdrop. Without these rules the dialog still opens
+   because the server-rendered pages it was written for shipped no script and a URL fragment
+   was the only switch they had. Here the same markup is opened by a Base UI Dialog, whose
+   switch is `data-open` on the popup and on the backdrop. Without these rules the dialog opens
    — focus trapped, scroll locked — while the panel stays `visibility: hidden` and
    translated a full width off-screen, so the hamburger reads as dead.
 
    `[data-starting-style]` marks the one frame Base UI mounts the popup in before flipping
    it open; excluding it is what leaves a closed style to transition FROM, so the panel
-   slides in as it does on the SSR pages rather than appearing. The exit needs no rule:
+   slides in as it did on the server-rendered pages rather than appearing. The exit needs no rule:
    Base UI keeps the element mounted until styles.css's own 0.22s transition finishes.
 
    Inside the sheet's own narrow breakpoint, because above it `.menu` and `.scrim` are
@@ -235,8 +235,8 @@
        and the Filters level render outside `.audit`, so a scoped rule would have had to be
        written twice.
 
-   These rules are here and not in `server/src/pages/styles.css` because that sheet is shared
-   with the server-rendered pages and `/audit` is no longer one of them. */
+   These rules are here and not in `server/src/pages/styles.css` because they are the
+   explorer's alone, and that sheet is every page's. */
 
 /* The page, the drawer and the level: three roots, one palette, because the last two are
    portalled out of the first and custom properties inherit through the DOM, not the JSX. */

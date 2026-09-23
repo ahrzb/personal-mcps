@@ -108,7 +108,7 @@ in them (P5's grep proves it later). The look does not change.
   joins the post-pass-2 follow-up (with §3.7's gaps, which the owner approved for after the
   gates): delete that block, then give each control that moves the values it relied on.
 - **Preflight's form-control rule is adopted** (2026-09-23, the owner's decision; commit
-  `<fill in>`): the `revert-layer` block is deleted and 83 baselines re-shot. NativeSelect,
+  `9cadb92`): the `revert-layer` block is deleted and 83 baselines re-shot. NativeSelect,
   the one control that stopped reading as itself, and Input, which never had, now dim when
   disabled (`disabled:opacity-50`), as Button does.
 

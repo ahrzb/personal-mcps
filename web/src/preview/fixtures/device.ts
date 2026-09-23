@@ -58,14 +58,12 @@ export const deviceSeeds: Record<string, Seed> = {
   expiredCode: {
     path: "/device",
     search: { user_code: CODE },
-    queries: [],
-    respond: (path) =>
-      path.startsWith("/device?")
-        ? {
-            delayMs: 0,
-            error: { status: 404, body: { reason: "That code has expired — run pmcp login again for a new one." } },
-          }
-        : null,
+    queries: [
+      {
+        key: keys.device(CODE),
+        error: { status: 404, body: { reason: "That code has expired — run pmcp login again for a new one." } },
+      },
+    ],
   },
 
   /** AuthStates "DEVICE — APPROVED": the decision's landing, which reads nothing. */

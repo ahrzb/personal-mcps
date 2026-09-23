@@ -66,7 +66,11 @@ function main(): void {
 function mount(target: HTMLElement, name: PreviewName, state: string, seed: Seed): void {
   const client = new QueryClient({
     defaultOptions: {
-      queries: { staleTime: Infinity, gcTime: Infinity, retry: false, refetchOnWindowFocus: false },
+      // `retryOnMount: false` is what lets a seeded FAILURE stand: a query in error with no
+      // data is otherwise refetched the moment a component mounts it, and that refetch meets
+      // the refusing client below — so the page drew "unseeded request to …" instead of its
+      // own failure copy (found 2026-09-23; /audit's baselines had captured it).
+      queries: { staleTime: Infinity, gcTime: Infinity, retry: false, retryOnMount: false, refetchOnWindowFocus: false },
     },
   });
   for (const entry of seed.queries) {
@@ -77,10 +81,10 @@ function mount(target: HTMLElement, name: PreviewName, state: string, seed: Seed
     // A FAILURE seed, and the reason `Seed.queries` carries an error channel at all: an
     // unread catalog is a 503 carrying `unread`, which is a different screen from an empty
     // one. Pushed into the cache entry's own error state, so the component reads it exactly
-    // as it reads a real refusal.
-    client.setQueryData(entry.key, undefined);
-    const cached = client.getQueryCache().find({ queryKey: entry.key });
-    cached?.setState({ ...cached.state, status: "error", error: refusalOf(entry.error), fetchStatus: "idle" });
+    // as it reads a real refusal. The entry is BUILT first: `setQueryData(key, undefined)`
+    // creates nothing, so the state used to land on no query at all.
+    const cached = client.getQueryCache().build(client, client.defaultQueryOptions({ queryKey: entry.key }));
+    cached.setState({ ...cached.state, status: "error", error: refusalOf(entry.error), fetchStatus: "idle" });
   }
 
   const router = createRouter({
@@ -160,12 +164,7 @@ function refusingClient(
     ((globalThis as unknown as { __pmcpReads?: string[] }).__pmcpReads ??= []).push(path);
     const answered = respond?.(path, body) ?? null;
     if (answered !== null) {
-      return new Promise<T>((resolve, reject) =>
-        setTimeout(
-          () => ("error" in answered ? reject(refusalOf(answered.error)) : resolve(answered.data as T)),
-          answered.delayMs,
-        ),
-      );
+      return new Promise<T>((resolve) => setTimeout(() => resolve(answered.data as T), answered.delayMs));
     }
     return hanging.some((prefix) => path.startsWith(prefix))
       ? new Promise<T>(() => undefined)

@@ -11,7 +11,7 @@ import { deviceViewOf, relativeTime } from "../../../web/src/features/device/der
 
 const NOW = Date.parse("2026-08-24T14:47:00.000Z");
 
-describe("the URL's moment (model.ts's deviceStep, its URL half)", () => {
+describe("the URL's moment (the server page's deviceStep, its URL half)", () => {
   it("a decided landing wins over everything and verifies nothing", () => {
     expect(deviceViewOf({ decided: "approved", user_code: "BDWJ-KTQP" })).toEqual({
       kind: "decided",

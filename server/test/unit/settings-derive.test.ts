@@ -28,7 +28,7 @@ import { noticeOf } from "../../../web/src/lib/notice.ts";
 import { paths } from "../../../web/src/lib/paths.ts";
 import type { SessionRow, SettingsRead, SettingsTokenRow } from "../../../web/src/lib/types.ts";
 
-/** The instant the gallery and `server/dev/fixtures.ts` render at. */
+/** The instant the gallery renders at — the retired server states preview's own, kept so a state reads the same. */
 const NOW = Date.parse("2026-08-24T14:47:00.000Z");
 
 const session = (over: Partial<SessionRow>): SessionRow => ({

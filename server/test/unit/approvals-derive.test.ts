@@ -26,7 +26,7 @@ import {
 import { noticeOf } from "../../../web/src/lib/notice.ts";
 import type { ApprovalRow } from "../../../web/src/lib/types.ts";
 
-/** The instant the gallery and `server/dev/fixtures.ts` render at. */
+/** The instant the gallery renders at — the retired server states preview's own, kept so a state reads the same. */
 const NOW = Date.parse("2026-08-24T14:47:00.000Z");
 
 const row = (over: Partial<ApprovalRow>): ApprovalRow => ({
@@ -73,7 +73,7 @@ describe("a decision's landing (G52: the 303 either page made, now a client navi
   });
 });
 
-describe("the history section (model.ts's approvalsProps, client side)", () => {
+describe("the history section (the server page's approvalsProps, now the client's)", () => {
   it("?limit= is model.ts's positive(): a whole number ≥ 0, else the default", () => {
     expect(historyLimitOf(undefined)).toBe(HISTORY_LIMIT);
     expect(HISTORY_LIMIT).toBe(20);
@@ -132,7 +132,7 @@ describe("the spellings, each as its own server page wrote it", () => {
   });
 });
 
-describe("the detail card (approval-detail.tsx, by status)", () => {
+describe("the detail card, by status (as the server's detail page drew it)", () => {
   it("a live request counts down; a terminal one is a fixed record", () => {
     expect(timeRows({ ...row({}), status: "pending" }, NOW)).toEqual([
       { label: "Requested", value: "17 minutes ago · Aug 24 14:29:55" },

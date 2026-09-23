@@ -35,6 +35,11 @@
 // HTML (a refused query is still the plain 400), the screen's strings are
 // `GET /api/hub/oauth/consent` over the same raw query, and the POST is unchanged — its rows
 // read the CSRF token off `#pmcp-bootstrap` now, since the client draws the form.
+// Family 5, `/login`: the shell with no gate and no `#pmcp-bootstrap`, carrying the
+// `#pmcp-login` island — the step and the ONE landing, computed on the server as the page
+// computed them — so every row that read the page's cards or its passkey script reads the
+// island instead, and posts the three kept sign-in routes at the targets the SPA's own path
+// table names. No server-rendered page is left.
 //
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
@@ -116,10 +121,18 @@ import { paths } from "../../src/pages/model";
 // The SPA's own path table, compared against the worker's: the two are separate modules, and
 // a React form posting to a route the worker does not translate is invisible to any test that
 // reads server HTML (24a). `settingsApi` is the same table's JSON half — every `/api/hub`
-// target the settings pages call, walked by case 24.
-import { consentApi, deviceApi, settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
+// target the settings pages call, walked by case 24. `loginUrl` is how the client builds
+// /login's card-switch links, which the landing rows follow as a browser follows them.
+import {
+  consentApi,
+  deviceApi,
+  loginUrl as webLoginUrl,
+  passkeyAuthentication,
+  settingsApi,
+  paths as webPaths,
+} from "../../../web/src/lib/paths";
 import type { ConsentRead, DeviceRead, SettingsRead } from "../../src/api";
-import type { ConnectionRow } from "../../src/pages/model";
+import type { ConnectionRow, LoginIsland } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
 import type { App, RoleDeclaration } from "../../src/registry";
@@ -466,6 +479,21 @@ function bootstrapOf(html: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/** `#pmcp-login`'s text exactly as the document carries it, before any parse — for the rows
+ *  that ask what the ESCAPING did to a caller's query (routes §0.2). */
+function loginIslandTextOf(html: string): string {
+  const island = /<script type="application\/json" id="pmcp-login">([\s\S]*?)<\/script>/.exec(html);
+  if (island === null) throw new Error("the document carried no #pmcp-login island");
+  return island[1];
+}
+
+/** `#pmcp-login`, parsed as the client parses it: /login's step, and the ONE landing both of
+ *  its consumers read — the `callbackURL` its cards post and the passkey ceremony's
+ *  navigation — with null meaning the client's "/apps". */
+function loginIslandOf(html: string): LoginIsland {
+  return JSON.parse(loginIslandTextOf(html)) as LoginIsland;
+}
+
 /**
  * One `/api/hub` call, shaped the way the browser client shapes it: the session cookie,
  * a JSON body, and the `X-Pmcp-Csrf` header the write gate reads. Every option is absent
@@ -623,62 +651,6 @@ function sessionCookieOf(response: Response): string | null {
       .map((header) => header.split(";")[0])
       .find((pair) => pair.startsWith(`${name}=`) && pair.length > name.length + 1) ?? null
   );
-}
-
-/**
- * One rendered form as a browser would submit it untouched: every named control under the
- * value the page put there — hidden fields carry real ones (the CSRF token, the redirect
- * target, a row id) and typed fields carry "".
- *
- * A CHECKBOX is the exception a browser makes and this has to make too: an unticked box
- * contributes nothing at all to the body, and a ticked one contributes its `value` (or
- * `on`). Without that, the Password pane's default-on flag would be indistinguishable
- * from an unticked one, and "posted as the browser posts it" would be false.
- */
-function submissionOf(body: string): Record<string, string> {
-  const fields: Record<string, string> = {};
-  for (const control of body.matchAll(/<input\b([^>]*)>/g)) {
-    const name = attributeOf(control[1], "name");
-    if (name === null) continue;
-    const value = decodeEntities(attributeOf(control[1], "value") ?? "");
-    if (attributeOf(control[1], "type") === "checkbox") {
-      if (/\bchecked\b/.test(control[1])) fields[name] = value === "" ? "on" : value;
-      continue;
-    }
-    fields[name] = value;
-  }
-  return fields;
-}
-
-/**
- * Every form on a page that posts to `target`, as the controls it rendered. PLURAL because
- * a card the page draws twice — the wide row and the narrow stack are two real forms — is
- * two submissions a browser can make, and a control missing from either is a click that
- * cannot work.
- */
-function formsPostingTo(html: string, target: string): Record<string, string>[] {
-  const found: Record<string, string>[] = [];
-  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-    if (decodeEntities(attributeOf(form[1], "action") ?? "") !== target) continue;
-    found.push(submissionOf(form[2]));
-  }
-  return found;
-}
-
-/**
- * One rendered form, filled the way a human fills it: a value typed into a control THE PAGE
- * DREW. A field the page renders no control for is a field no browser can send however the
- * server-side seam reads it, so the assertion is here rather than in the case — filling a
- * name the form never carried is the exact bug this refuses to paper over (§9 rule 4b).
- */
-function typedInto(
-  form: Record<string, string>,
-  typed: Record<string, string>,
-): Record<string, string> {
-  for (const name of Object.keys(typed)) {
-    expect(Object.keys(form), `the rendered form carries no "${name}" control`).toContain(name);
-  }
-  return { ...form, ...typed };
 }
 
 /**
@@ -2055,6 +2027,49 @@ describe("§7/§13 · the OAuth callback shell", () => {
   });
 });
 
+describe("§13 · /login is the shell (decision 38, family 5)", () => {
+  it(`§13 · GET /login answers the SPA shell with NO gate — 200, no-store, a #pmcp-login island carrying the step and the landing the server page computed (its props minus the clock), and the tab title the step names ("Sign in", "Two-factor code", "Use a backup code") — and NO #pmcp-bootstrap even to a signed-in cookie, so no CSRF token and no username reach a document the query alone decides (the twin)`, async () => {
+    const cases: [string, string, LoginIsland][] = [
+      [
+        `${paths.login}?username=alice&error=Wrong`,
+        "Sign in",
+        { step: { kind: "credentials", username: "alice", error: "Wrong" }, redirectTo: null },
+      ],
+      // `?step=` is what the credential routes send …
+      [
+        `${paths.login}?step=totp&next=${encodeURIComponent(paths.approvals)}`,
+        "Two-factor code",
+        { step: { kind: "totp", error: null }, redirectTo: paths.approvals },
+      ],
+      // … and `?method=` what a card switch sends: both draw the card asked for.
+      [
+        `${paths.login}?method=backup-code&error=Nope`,
+        "Use a backup code",
+        { step: { kind: "backup-code", error: "Nope" }, redirectTo: null },
+      ],
+    ];
+    for (const [url, title, island] of cases) {
+      const response = await call(new Request(`${ORIGIN}${url}`));
+      expect(response.status, url).toBe(200);
+      expect(response.headers.get("Cache-Control"), url).toBe("no-store");
+      const html = await response.text();
+      expect(html, url).toContain(`<title>${title}</title>`);
+      expect(loginIslandOf(html), url).toEqual(island);
+      expect(html, url).not.toContain('id="pmcp-bootstrap"');
+    }
+
+    // The twin: a signed-in cookie changes nothing. No gate means no session is read, so
+    // nothing of one can reach the document — the island is the query's, and only that.
+    const signedIn = await call(new Request(`${ORIGIN}${paths.login}`, { headers: { Cookie: world.session.cookie } }));
+    expect(signedIn.status).toBe(200);
+    const html = await signedIn.text();
+    expect(html).not.toContain('id="pmcp-bootstrap"');
+    expect(html).not.toContain(await csrfFor(world.session.cookie));
+    expect(html).not.toContain(world.ns.owner.username);
+    expect(loginIslandOf(html)).toEqual({ step: { kind: "credentials", username: "", error: null }, redirectTo: null });
+  });
+});
+
 describe("§4/§13 · the credential forms speak the browser's content type", () => {
   /** The owner these cases sign in as. Their own namespace, so a sign-in, a failed
    *  attempt or a revoked session cannot move any other case's world. */
@@ -2065,14 +2080,16 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     await seedOwnerCredential(signer.owner.userId);
   });
 
-  it("21. §13 · /login's own sign-in form, submitted as a browser submits it (application/x-www-form-urlencoded), lands a session cookie and a redirect — better-auth's endpoints allow application/json only, so a form posted straight at one answers 415 and no human ever signs in", async () => {
-    const action = actionFor(await anonymousPage(paths.login), "username");
-    const answered = await formPost(action, {
+  it("21. §13 · /login's own sign-in form, submitted as a browser submits it (application/x-www-form-urlencoded) to the target the SPA's path table names, lands a session cookie and a redirect — better-auth's endpoints allow application/json only, so a form posted straight at one answers 415 and no human ever signs in", async () => {
+    // The card is the client's since decision 38's family 5, so its target is read out of
+    // the table the client posts through — and it must be the Worker's translating route.
+    expect(webPaths.signIn).toBe(paths.auth.signIn);
+    const answered = await formPost(webPaths.signIn, {
       username: signer.owner.username,
       password: SEEDED_OWNER_PASSWORD,
       // Deliberately NOT the default landing page: /apps is also where a missing or
       // refused callbackURL falls back to, so asserting it would pass either way. This is
-      // the deep link /login carries through the round trip (LoginProps.redirectTo).
+      // the deep link /login carries through the round trip (LoginIsland.redirectTo).
       callbackURL: paths.audit,
     });
     expect(answered.status, await answered.text()).toBe(303);
@@ -2085,10 +2102,9 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     expect(await opened.text()).toContain(signer.owner.username);
   });
 
-  it("22. §15 · a wrong password re-renders /login with its field error and NO session cookie (the refusal twin of 21) — and the password appears in neither the redirect nor the page", async () => {
-    const action = actionFor(await anonymousPage(paths.login), "username");
+  it("22. §15 · a wrong password lands back on /login, whose #pmcp-login island carries the credentials card's field error, and sets NO session cookie (the refusal twin of 21) — and the password appears in neither the redirect, the document nor the island", async () => {
     const wrong = "FAKE0000-not-the-seeded-password";
-    const answered = await formPost(action, {
+    const answered = await formPost(webPaths.signIn, {
       username: signer.owner.username,
       password: wrong,
       callbackURL: paths.apps,
@@ -2099,26 +2115,30 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     expect(sessionCookieOf(answered)).toBeNull();
     expect(to).not.toContain(wrong);
     const rerendered = await anonymousPage(to);
+    const island = loginIslandOf(rerendered);
     // The credentials card, redrawn with its error and the username echoed back so only
     // the password is retyped (LoginStep's "credentials" arm).
-    expect(rerendered).toContain("field-error");
-    expect(rerendered).toContain(signer.owner.username);
+    expect(island.step).toEqual({ kind: "credentials", username: signer.owner.username, error: expect.any(String) });
     expect(rerendered).not.toContain(wrong);
+    expect(JSON.stringify(island)).not.toContain(wrong);
   });
 
-  it("23. §4 · the TOTP and backup-code challenge forms are translated too: each posts form-encoded to a hub route that answers a redirect back to its own /login step, never better-auth's 415", async () => {
-    for (const [step, op] of [
-      ["totp", "verify-totp"],
-      ["backup-code", "verify-backup-code"],
+  it("23. §4 · the TOTP and backup-code challenge forms are translated too: each posts form-encoded to the hub route the SPA's path table names, which answers a redirect back to its own /login step — an island of that step carrying its error — never better-auth's 415", async () => {
+    for (const [step, target, own] of [
+      ["totp", webPaths.totpVerify, paths.auth.totpVerify],
+      ["backup-code", webPaths.backupCodeVerify, paths.auth.backupCodeVerify],
     ] as const) {
-      const action = actionFor(await anonymousPage(`${paths.login}?step=${step}`), op);
-      const answered = await formPost(action, { code: "000000", callbackURL: paths.apps });
-      expect(answered.status, `POST ${action}`).toBe(303);
+      expect(target).toBe(own);
+      // The card the form sits on is this step's island.
+      expect(loginIslandOf(await anonymousPage(`${paths.login}?step=${step}`)).step).toEqual({ kind: step, error: null });
+      const answered = await formPost(target, { code: "000000", callbackURL: paths.apps });
+      expect(answered.status, `POST ${target}`).toBe(303);
       // No challenge is pending, so this is the refusal leg: back to the same card, with a
       // message and without a session.
       const to = answered.headers.get("Location") ?? "";
       expect(to).toContain(`step=${step}`);
       expect(sessionCookieOf(answered)).toBeNull();
+      expect(loginIslandOf(await anonymousPage(to)).step).toEqual({ kind: step, error: expect.any(String) });
     }
   });
 
@@ -2126,7 +2146,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
   // the React shell's Sign out posted at better-auth's 415 for a month (routes §7.1). Replaced
   // with decision 38's family 2 by the walk that would have caught it: the targets are read
   // out of the SPA's own path table, the one the client posts through, never out of HTML.
-  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx; and `deviceApi` is the device read and verdict routes §3 designs and `consentApi` the consent read routes §4 designs, each answering its designed JSON", async () => {
+  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect, /login's three cards) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx; and `deviceApi` is the device read and verdict routes §3 designs and `consentApi` the consent read routes §4 designs, each answering its designed JSON", async () => {
     // A NAMESPACE of this case's own: Sign out and Revoke all others both succeed, and each
     // ends sessions of whichever owner it rides.
     const ns = await seedNamespace(env.DB, {
@@ -2136,14 +2156,30 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     const walker = await seedOwnerSession(ns.owner);
     const csrf = await csrfFor(walker.cookie);
 
-    // THE FORM HALF. §0.4's kept form routes are the only targets a client form may post;
-    // today the bundle renders two of them, and each family that moves a page adds its own.
-    const KEPT_FORM_ROUTES = new Set([paths.auth.signOut, new URL(paths.appConnect(""), ORIGIN).pathname]);
-    const connect = webPaths.appConnect("news");
-    for (const target of [connect, webPaths.signOut]) {
+    // THE FORM HALF. §0.4's kept form routes are the only targets a client form may post,
+    // and since family 5 the bundle renders all of them but the consent POST (its rows post
+    // it as a browser does): Sign out, Connect and /login's three cards.
+    const KEPT_FORM_ROUTES = new Set([
+      paths.auth.signOut,
+      paths.auth.signIn,
+      paths.auth.totpVerify,
+      paths.auth.backupCodeVerify,
+      new URL(paths.appConnect(""), ORIGIN).pathname,
+    ]);
+    // Each with the fields its form renders. The /login cards post with no session, as a
+    // browser there has none, and with credentials that are wrong on purpose — each answers
+    // its refusal 303 and no session moves. Sign out LAST: it ends the session the Connect
+    // post rides.
+    const submissions: [string, Record<string, string>, string | undefined][] = [
+      [webPaths.signIn, { username: ns.owner.username, password: "FAKE0000-wrong", callbackURL: paths.apps }, undefined],
+      [webPaths.totpVerify, { code: "000000", callbackURL: paths.apps }, undefined],
+      [webPaths.backupCodeVerify, { code: "FAKE0-CODE0", callbackURL: paths.apps }, undefined],
+      [webPaths.appConnect("news"), { csrf }, walker.cookie],
+      [webPaths.signOut, {}, walker.cookie],
+    ];
+    for (const [target, fields, cookie] of submissions) {
       expect(KEPT_FORM_ROUTES.has(new URL(target, ORIGIN).pathname), `${target} is no kept form route`).toBe(true);
-      // Sign out LAST: it ends the session the Connect post rides.
-      const answered = await formPost(target, target === connect ? { csrf } : {}, walker.cookie);
+      const answered = await formPost(target, fields, cookie);
       expect(answered.status, `POST ${target} form-encoded → ${await answered.clone().text()}`).toBe(303);
     }
 
@@ -2245,39 +2281,11 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
 });
 
 describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule for both consumers", () => {
-  // The landing has TWO consumers — the inline passkey script's LANDING literal and the
-  // hidden callbackURL the three cards post — so a row about the rule pins both, and only
-  // a row about one consumer's own spelling names one.
-
-  /** The passkey script's landing, as the LITERAL the page embedded — quotes included, so
-   *  a row can ask what the ESCAPING did before asking what the value is. */
-  function landingLiteralOf(html: string): string {
-    const literal = /var LANDING = ("[^"]*");/.exec(html)?.[1];
-    expect(literal, "the page embedded no LANDING literal").not.toBeUndefined();
-    return literal ?? "";
-  }
-
-  /** The hidden callbackURL, as the RAW attribute text — same reason. */
-  function callbackLiteralOf(html: string): string {
-    const value = /name="callbackURL"\s+value="([^"]*)"/.exec(html)?.[1];
-    expect(value, "the page rendered no callbackURL field").not.toBeUndefined();
-    return value ?? "";
-  }
-
-  /** The href of the card's "use the other method" link, as a browser would follow it. */
-  function switchHrefOf(html: string, method: "totp" | "backup-code"): string {
-    const href = new RegExp(`<a href="([^"]*method=${method}[^"]*)"`).exec(html)?.[1];
-    expect(href, `the card rendered no ${method} switch link`).not.toBeUndefined();
-    return decodeEntities(href ?? "");
-  }
-
-  /** An attribute value back to the string the renderer was given. The file's
-   *  `decodeEntities` undoes `&amp;` alone, which is all a URL ever needs; these rows read
-   *  MARKUP back out of an attribute, so they undo the two escapes that markup earns.
-   *  `&amp;` last, so an escaped `&lt;` in the input is not decoded twice. */
-  function unescapeAttribute(raw: string): string {
-    return raw.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-  }
+  // The landing has TWO consumers — the hidden callbackURL the three cards post and the
+  // passkey ceremony's navigation after it verifies — and since decision 38's family 5 both
+  // read ONE value, `#pmcp-login`'s `redirectTo`, computed once on the server (null is the
+  // client's "/apps"). So the GET half of each row reads the island, and the posted half is
+  // still `landingOf` at the kept sign-in route.
 
   /** A `?next=` deep link's own owner: signing in is what the posted arm below does, and
    *  the file's world owner is shared with cases that could leave a two-factor challenge
@@ -2291,53 +2299,50 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   });
 
   it(
-    `§15 · a hub-relative ?next=/apps%3C/script%3E%3Cimg src=x onerror=…%3E%E2%80%A8 reaches both embeds and is escaped in both — the inline script's LANDING carries no raw "<" and no raw U+2028 line separator, and the hidden callbackURL carries &lt;, so "</script><img" appears nowhere in the document — while ?next=/settings/tokens reaches the same two verbatim (the twin)`,
+    `§15 · a hub-relative ?next=/apps%3C/script%3E%3Cimg src=x onerror=…%3E%E2%80%A8 — beside an ?error= and a ?username= carrying the same markup — reaches the #pmcp-login island escaped: no raw "<", U+2028 or U+2029 from the query anywhere in the shell, so "</script><img" appears nowhere in the document, while the island parses back to exactly what arrived — and ?next=/settings/tokens reaches it verbatim (the twin)`,
     async () => {
       // The payload PASSES the hub-relative rule on purpose — it starts "/a" — so it
-      // reaches both embeds. Escaping, not refusal, is what this row is about.
+      // reaches the island. Escaping, not refusal, is what this row is about; `error` and
+      // `username` are the island's two other strings a link can set.
       const payload = "/apps</script><img src=x onerror=alert(1)>\u2028";
-      const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(payload)}`);
+      const markup = "</script><img src=x onerror=alert(2)>\u2029";
+      const html = await anonymousPage(`${paths.login}?${new URLSearchParams({ next: payload, error: markup, username: markup })}`);
       expect(html).not.toContain("</script><img");
       expect(html).not.toContain("<img src=x");
+      expect(html).not.toContain("\u2028");
+      expect(html).not.toContain("\u2029");
+      // The island as the HTML parser reads it: no "<" at all, so nothing in it can end it.
+      expect(loginIslandTextOf(html)).not.toContain("<");
+      // Escaped, not truncated: the island still parses to exactly what arrived.
+      expect(loginIslandOf(html)).toEqual({
+        step: { kind: "credentials", username: markup, error: markup },
+        redirectTo: payload,
+      });
 
-      const landing = landingLiteralOf(html);
-      expect(landing).not.toContain("<");
-      expect(landing).not.toContain("\u2028");
-      // Escaped, not truncated: the literal still evaluates to exactly what arrived.
-      expect(JSON.parse(landing) as string).toBe(payload);
-
-      const callback = callbackLiteralOf(html);
-      expect(callback).toContain("&lt;/script&gt;");
-      expect(unescapeAttribute(callback)).toBe(payload);
-
-      // The twin: a relative deep link reaches the same two consumers byte for byte, so
-      // the escape above is an escape and not a fallback wearing one's clothes.
+      // The twin: a relative deep link reaches the island byte for byte, so the escape
+      // above is an escape and not a fallback wearing one's clothes.
       const clean = await anonymousPage(`${paths.login}?next=${encodeURIComponent(paths.settingsTokens)}`);
-      expect(JSON.parse(landingLiteralOf(clean)) as string).toBe(paths.settingsTokens);
-      expect(unescapeAttribute(callbackLiteralOf(clean))).toBe(paths.settingsTokens);
+      expect(loginIslandOf(clean).redirectTo).toBe(paths.settingsTokens);
     },
   );
 
   // plan row 2. The posted arm names TWO spellings deliberately: an absolute callbackURL
-  // already lands on /apps under today's `landingOf` (it fails `startsWith("/")`), so the
-  // backslash spelling is the leg that fails until `hubRelative` lands — without it no row
-  // here gates the posted consumer's half of the fix.
+  // already lands on /apps under a `startsWith("/")` test, so the backslash spelling is the
+  // leg that fails without `hubRelative` — without it no row here gates the posted half.
   it(
-    `§4 · ?next=https://evil.example, ?next=//evil.example, ?next=/%5Cevil.example (the backslash spelling a browser folds into //) and an empty ?next= each land on /apps in BOTH consumers — the script's LANDING and the hidden callbackURL — and a sign-in POST carrying an absolute callbackURL, or that same backslash spelling which today's two-branch test lets through, redirects to /apps too (the posted twin, one rule)`,
+    `§4 · ?next=https://evil.example, ?next=//evil.example, ?next=/%5Cevil.example (the backslash spelling a browser folds into //) and an empty ?next= each leave the #pmcp-login island's redirectTo null — the client's /apps — and reach no byte of the shell, and a sign-in POST carrying an absolute callbackURL, or that same backslash spelling, redirects to /apps too (the posted twin, one rule)`,
     async () => {
       for (const hostile of ["https://evil.example", "//evil.example", "/\\evil.example", ""]) {
         const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(hostile)}`);
-        expect(JSON.parse(landingLiteralOf(html)) as string, hostile).toBe(paths.apps);
-        expect(unescapeAttribute(callbackLiteralOf(html)), hostile).toBe(paths.apps);
-        // Not merely "not honoured": the string reaches no embed of the document at all.
+        expect(loginIslandOf(html).redirectTo, hostile).toBeNull();
+        // Not merely "not honoured": the string reaches no part of the document at all.
         expect(html, hostile).not.toContain("evil.example");
       }
 
       // The posted twin. The password is the RIGHT one deliberately — a refusal redirects
       // to /login whatever the callbackURL said, and would pin nothing about `landingOf`.
       for (const hostile of ["https://evil.example/hijack", "/\\evil.example/hijack"]) {
-        const action = actionFor(await anonymousPage(paths.login), "username");
-        const answered = await formPost(action, {
+        const answered = await formPost(webPaths.signIn, {
           username: signer.owner.username,
           password: SEEDED_OWNER_PASSWORD,
           callbackURL: hostile,
@@ -2351,38 +2356,36 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   );
 
   it(
-    `§13 · a TOTP challenge reached as /login?step=totp&next=/settings/tokens links "Use a backup code instead" to /login?method=backup-code&next=%2Fsettings%2Ftokens, and the backup-code card it opens carries callbackURL=/settings/tokens — with no next= the switch links carry none and the card lands on /apps (the twin)`,
+    `§13 · a TOTP challenge reached as /login?step=totp&next=/settings/tokens carries redirectTo /settings/tokens, the client's "Use a backup code instead" link built from it is /login?method=backup-code&next=%2Fsettings%2Ftokens, and the island that link opens carries the same landing, as does the way back — with no next= the landing is null, the link is bare and the card it opens lands on /apps (the twin)`,
     async () => {
-      const totp = await anonymousPage(
-        `${paths.login}?step=totp&next=${encodeURIComponent(paths.settingsTokens)}`,
+      const totp = loginIslandOf(
+        await anonymousPage(`${paths.login}?step=totp&next=${encodeURIComponent(paths.settingsTokens)}`),
       );
-      const href = switchHrefOf(totp, "backup-code");
-      const switched = new URL(href, ORIGIN);
-      expect(switched.pathname).toBe(paths.login);
-      expect(switched.searchParams.get("method")).toBe("backup-code");
-      expect(switched.searchParams.get("next")).toBe(paths.settingsTokens);
-      // The encoded spelling the title names — a switch link a browser can follow.
-      expect(href).toContain("next=%2Fsettings%2Ftokens");
+      expect(totp).toEqual({ step: { kind: "totp", error: null }, redirectTo: paths.settingsTokens });
+      // The switch link as the client builds it — the encoded spelling the title names.
+      const href = webLoginUrl({ method: "backup-code", next: totp.redirectTo });
+      expect(href).toBe(`${paths.login}?method=backup-code&next=%2Fsettings%2Ftokens`);
 
-      // Followed as a browser follows it: the card it opens posts the same landing.
-      const backup = await anonymousPage(href);
-      expect(unescapeAttribute(callbackLiteralOf(backup))).toBe(paths.settingsTokens);
+      // Followed as a browser follows it — a document navigation, so the island is the
+      // server's again: the card it opens posts the same landing.
+      const backup = loginIslandOf(await anonymousPage(href));
+      expect(backup).toEqual({ step: { kind: "backup-code", error: null }, redirectTo: paths.settingsTokens });
       // And the way back carries it too, so a round trip between the two cards is lossless.
-      expect(new URL(switchHrefOf(backup, "totp"), ORIGIN).searchParams.get("next")).toBe(
-        paths.settingsTokens,
-      );
+      const back = loginIslandOf(await anonymousPage(webLoginUrl({ method: "totp", next: backup.redirectTo })));
+      expect(back.redirectTo).toBe(paths.settingsTokens);
 
       // The twin: with no deep link there is nothing to carry, and `loginUrl` drops an
       // empty field rather than spelling it — so the link is bare and the card lands on /apps.
-      const bare = await anonymousPage(`${paths.login}?step=totp`);
-      const bareHref = switchHrefOf(bare, "backup-code");
+      const bare = loginIslandOf(await anonymousPage(`${paths.login}?step=totp`));
+      expect(bare.redirectTo).toBeNull();
+      const bareHref = webLoginUrl({ method: "backup-code", next: bare.redirectTo });
       expect(bareHref).toBe(`${paths.login}?method=backup-code`);
-      expect(unescapeAttribute(callbackLiteralOf(await anonymousPage(bareHref)))).toBe(paths.apps);
+      expect(loginIslandOf(await anonymousPage(bareHref)).redirectTo).toBeNull();
     },
   );
 
   it(
-    `§19.5 · a switch made from the signed-authorize arm keeps the /oauth2/authorize landing byte for byte, pinned at both ends: the TOTP card's backup-code link carries inside next= the very landing that card itself posts as callbackURL, and the card the link opens renders that same string as its own callbackURL, sig and client_id intact`,
+    `§19.5 · a switch made from the signed-authorize arm keeps the /oauth2/authorize landing byte for byte: the TOTP island's redirectTo is the hub's own authorize over the signed query, the client's backup-code link carries it inside next= and never as sig on /login's own query, and the island that link opens carries that same string, sig and client_id intact`,
     async () => {
       const { clientId } = await registerOAuthClient();
       const authorized = await call(new Request(authorizeUrl(clientId)));
@@ -2391,38 +2394,36 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
       expect(location).toMatch(/^\/login\?/);
 
       // The challenge card, reached on that same signed query.
-      const totp = await anonymousPage(`${location}&step=totp`);
-      const posted = unescapeAttribute(callbackLiteralOf(totp));
-      const href = switchHrefOf(totp, "backup-code");
-      const carried = new URL(href, ORIGIN).searchParams.get("next") ?? "";
-      expect(carried.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
-      expect(carried).toContain(`client_id=${clientId}`);
-      expect(carried).toContain("sig=");
-      // End one: the link carries the landing the card it sits on was about to post.
-      expect(carried).toBe(posted);
+      const totp = loginIslandOf(await anonymousPage(`${location}&step=totp`));
+      const landing = totp.redirectTo ?? "";
+      expect(landing.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
+      expect(landing).toContain(`client_id=${clientId}`);
+      expect(landing).toContain("sig=");
 
-      // End two: the card the link opens posts that same string. One equality is the whole
-      // round trip — `loginUrl` encoded it, `loginProps` decoded it, and `hubRelative` let
-      // it through because it starts "/api/…".
-      const backup = await anonymousPage(href);
-      expect(unescapeAttribute(callbackLiteralOf(backup))).toBe(carried);
+      const href = webLoginUrl({ method: "backup-code", next: landing });
       // The signed pair rides INSIDE next=, never on /login's own query, which is why the
       // switched URL does not re-trigger the authorize arm and land back on itself.
       expect(new URL(href, ORIGIN).searchParams.has("sig")).toBe(false);
+
+      // One equality is the whole round trip — the client encoded it, `loginIsland` decoded
+      // it, and `hubRelative` let it through because it starts "/api/…".
+      const backup = loginIslandOf(await anonymousPage(href));
+      expect(backup.step.kind).toBe("backup-code");
+      expect(backup.redirectTo).toBe(landing);
     },
   );
 
   // plan row 5, with the 404 on the NO-header side of the twin — a deviation from § Rows,
-  // which lists it among the carriers. § Settled puts the header on `render` (web.ts:1283,
-  // the tree's only text/html site); every 404 here is `noSuchPage()`, text/plain, built
+  // which lists it among the carriers. § Settled puts the header on `render` (web.ts, the
+  // tree's only text/html site); every 404 here is `noSuchPage()`, text/plain, built
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals, /approvals/<id>, /settings, /device and /oauth/consent (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on /login's anonymous shell, /apps shelled under the owner's cookie, /apps/new, and the shell at /approvals, /approvals/<id>, /settings, /device and /oauth/consent (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
-      // Each page family joins this list as it becomes the shell (decision 38), until all
-      // six URLs are carriers.
+      // Every page family is the shell now (decision 38), so this is every URL a browser
+      // can be shown — /login the one among them with no session behind it.
       const carriers = [
         await call(new Request(`${ORIGIN}${paths.login}`)),
         await get(paths.apps),
@@ -2442,8 +2443,8 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
         expect(carrier.status).toBe(200);
         expect(carrier.headers.get("Content-Type")).toContain("text/html");
         expect(carrier.headers.get("Content-Security-Policy")).toBe(CSP);
-        // Every page is a function of the session (or of /login's challenge cookie): no
-        // browser or intermediary may keep a copy to re-show (2026-09-03).
+        // Every page is a function of the session (or of /login's query): no browser or
+        // intermediary may keep a copy to re-show (2026-09-03).
         expect(carrier.headers.get("Cache-Control")).toBe("no-store");
       }
 
@@ -2469,27 +2470,24 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // as `//evil.example` is one the rule has to reproduce for itself. Only a row that spells
   // the three characters out keeps that strip from being read as decoration and deleted.
   it(
-    `§4 · ?next=/%09/evil.example, /%0A/evil.example, /%0D/evil.example and /%09%5Cevil.example each land on /apps in BOTH consumers, because the rule strips what a browser's URL parser strips before judging — while a hub-relative ?next=/settings/%09tokens reaches both with only the tab gone (/settings/tokens), and a sign-in POST whose callbackURL is /%09/evil.example redirects to /apps (the posted twin)`,
+    `§4 · ?next=/%09/evil.example, /%0A/evil.example, /%0D/evil.example and /%09%5Cevil.example each leave the #pmcp-login island's redirectTo null, because the rule strips what a browser's URL parser strips before judging — while a hub-relative ?next=/settings/%09tokens reaches it with only the tab gone (/settings/tokens), and a sign-in POST whose callbackURL is /%09/evil.example redirects to /apps (the posted twin)`,
     async () => {
       // Each of these starts "/" and its second character is neither "/" nor "\" — they
       // pass the rule UNSTRIPPED, and are refused only because the strip runs first.
       for (const hostile of ["/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\t\\evil.example"]) {
         const html = await anonymousPage(`${paths.login}?next=${encodeURIComponent(hostile)}`);
-        expect(JSON.parse(landingLiteralOf(html)) as string, hostile).toBe(paths.apps);
-        expect(unescapeAttribute(callbackLiteralOf(html)), hostile).toBe(paths.apps);
+        expect(loginIslandOf(html).redirectTo, hostile).toBeNull();
         expect(html, hostile).not.toContain("evil.example");
       }
 
       // The twin: the same three characters inside a landing that stays hub-relative are
       // removed and nothing else is — a strip, not a refusal, and not a pass-through.
       const carried = await anonymousPage(`${paths.login}?next=${encodeURIComponent("/settings/\ttokens")}`);
-      expect(JSON.parse(landingLiteralOf(carried)) as string).toBe(paths.settingsTokens);
-      expect(unescapeAttribute(callbackLiteralOf(carried))).toBe(paths.settingsTokens);
+      expect(loginIslandOf(carried).redirectTo).toBe(paths.settingsTokens);
 
       // The posted twin, with the tab as the raw character a browser would send. Right
       // password on purpose: a refusal redirects to /login whatever the callbackURL said.
-      const action = actionFor(await anonymousPage(paths.login), "username");
-      const answered = await formPost(action, {
+      const answered = await formPost(webPaths.signIn, {
         username: signer.owner.username,
         password: SEEDED_OWNER_PASSWORD,
         callbackURL: "/\t/evil.example",
@@ -2715,7 +2713,7 @@ describe("§15 · the two auth events the ledger records", () => {
     // count below is this sign-in and nothing else.
     const owner = await seedNamespace(env.DB, {});
     await seedOwnerCredential(owner.owner.userId);
-    const answered = await formPost(actionFor(await anonymousPage(paths.login), "username"), {
+    const answered = await formPost(webPaths.signIn, {
       username: owner.owner.username,
       password: SEEDED_OWNER_PASSWORD,
       callbackURL: paths.apps,
@@ -2815,18 +2813,16 @@ describe(`§13 · the PWA icons — the install gate's own bytes`, () => {
   });
 
   // plan row 3. The one place this file names markup, and the header says why: the rel token
-  // IS the browser contract. /apps draws both links at paths.icon192, the row importing paths
-  // so the URL is never a literal on this side — /login's own head, which links neither, is
-  // the ceiling the fix keeps and the twin.
-  it(`§13 · the shell head links the icon the worker serves — /apps renders rel="icon" and rel="apple-touch-icon" at paths.icon192 beside the manifest link, the row importing paths while layout.tsx spells the URL itself as the other three assets already do — while /login's head, one of the five page files that write their own, links neither, the ceiling this fix keeps deliberately (the twin)`, async () => {
-    const shell = await page(paths.apps);
-    expect(shell).toContain(`<link rel="manifest" href="${paths.manifest}"`);
-    expect(shell).toContain(`<link rel="icon" href="${paths.icon192}"`);
-    expect(shell).toContain(`<link rel="apple-touch-icon" href="${paths.icon192}"`);
-    // The twin: a page that writes its own head links no icon — kept, not forgotten.
-    const login = await anonymousPage(paths.login);
-    expect(login).not.toContain('rel="icon"');
-    expect(login).not.toContain('rel="apple-touch-icon"');
+  // IS the browser contract. The shell draws both links at paths.icon192, the row importing
+  // paths so the URL is never a literal on this side. Its twin was /login's own head, which
+  // linked neither — the ceiling that fix kept. Decision 38's family 5 removed the last page
+  // that wrote its own head, so /login is the shell's head too, and the twin became a carrier.
+  it(`§13 · the shell head links the icon the worker serves — /apps renders rel="icon" and rel="apple-touch-icon" at paths.icon192 beside the manifest link, and so does /login's anonymous shell, since no page writes its own head any more (decision 38) — the row importing paths while spa.tsx spells the URL itself`, async () => {
+    for (const shell of [await page(paths.apps), await anonymousPage(paths.login)]) {
+      expect(shell).toContain(`<link rel="manifest" href="${paths.manifest}"`);
+      expect(shell).toContain(`<link rel="icon" href="${paths.icon192}"`);
+      expect(shell).toContain(`<link rel="apple-touch-icon" href="${paths.icon192}"`);
+    }
   });
 });
 
@@ -2854,13 +2850,12 @@ describe("§19.5 · the consent screen", () => {
     expect(location).toMatch(/^\/login\?/);
     // An attacker (or a careless client) tacking on next=/return_to=: neither is ever read.
     const tampered = `${location}&next=%2Fevil&return_to=%2Fevil2`;
-    const html = await anonymousPage(tampered);
-    const callbackUrl = /name="callbackURL"\s+value="([^"]*)"/.exec(html)?.[1];
-    expect(callbackUrl, "no callbackURL field rendered").not.toBeUndefined();
-    const decoded = decodeEntities(callbackUrl ?? "");
-    expect(decoded.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
-    expect(decoded).toContain(`client_id=${clientId}`);
-    expect(decoded).not.toContain("/evil");
+    // The landing both of /login's consumers read — the callbackURL its cards post and the
+    // passkey ceremony's navigation — is the island's (decision 38, family 5).
+    const landing = loginIslandOf(await anonymousPage(tampered)).redirectTo ?? "";
+    expect(landing.startsWith(`${paths.auth.base}/oauth2/authorize?`)).toBe(true);
+    expect(landing).toContain(`client_id=${clientId}`);
+    expect(landing).not.toContain("/evil");
   });
 
   // Ported with decision 38's family 4: the screen's strings are `GET /api/hub/oauth/consent`'s
@@ -4100,23 +4095,19 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
   // Its SERVER half stays below: the two register endpoints refuse a day-old cookie with
   // better-auth's own SESSION_NOT_FRESH.
 
-  it(`§13 · /login's passkey button is live the same way — the page names generate-authenticate-options and verify-authentication in a script calling navigator.credentials.get, while its own username form still posts form-encoded to the hub's translation route (the twin)`, async () => {
-    // No session exists, which is the whole point of the button.
-    const html = await anonymousPage(paths.login);
-
-    expect(html).toContain(paths.auth.passkeyAuthenticateOptions);
-    expect(html).toContain(paths.auth.passkeyVerifyAuthentication);
-    expect(html).toContain("navigator.credentials.get");
-    expect(inNavigableAttribute(html, paths.auth.passkeyAuthenticateOptions)).toBe(false);
-    expect(inNavigableAttribute(html, paths.auth.passkeyVerifyAuthentication)).toBe(false);
-    for (const action of formsOn(html)) {
-      expect(action.startsWith(paths.auth.base), `${action} posts at better-auth's mount`).toBe(false);
-    }
-
-    // The twin: this page's own credential form is still a form, posted at the hub.
-    const signIn = actionFor(html, "username");
-    expect(signIn.startsWith(paths.login)).toBe(true);
-    expect(signIn).toBe(paths.auth.signIn);
+  // "/login's passkey button is live the same way — the page names generate-authenticate-
+  // options and verify-authentication in a script calling navigator.credentials.get" — the
+  // drawing half retired with family 5: the ceremony is a module of the bundle, not an
+  // inline script the worker renders (routes §5, row 4035: web-side). What stays is the seam
+  // between the two path tables, which no gallery state can see.
+  it(`§13 · /login's passkey ceremony calls the two authentication endpoints better-auth mounts — the SPA's path table names exactly paths.auth's generate-authenticate-options and verify-authentication — while its username form still posts to the hub's translation route, never at better-auth's mount (the twin)`, async () => {
+    expect({ ...passkeyAuthentication }).toEqual({
+      options: paths.auth.passkeyAuthenticateOptions,
+      verify: paths.auth.passkeyVerifyAuthentication,
+    });
+    // The twin: the credential card is still a form, posted at the hub.
+    expect(webPaths.signIn).toBe(paths.auth.signIn);
+    expect(webPaths.signIn.startsWith(paths.auth.base)).toBe(false);
   });
 
   it(`§13 · the read lists every session of the owner — the viewer's own marked current and no other — and each row carries the Client / Created / Last active facts the pane's columns draw`, async () => {
@@ -4416,13 +4407,6 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
     return secret;
   }
 
-  /** The six code boxes one OTP card drew, as the tags they are — found through the
-   *  `data-otp` hook the shared script keys off rather than through their styling. */
-  function otpBoxesOn(html: string): string[] {
-    const row = /<div\b[^>]*\bdata-otp="[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(html);
-    return row === null ? [] : [...row[1].matchAll(/<input\b[^>]*>/g)].map((box) => box[0]);
-  }
-
   // plan row 1. The body is the minted secret's one carrier, so the row reads the grouped
   // secret and the QR against the "secret" parameter of that same answer's own otpauth URI
   // — and the read afterwards is the twin that carries none of it.
@@ -4519,29 +4503,11 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
     },
   );
 
-  // plan row 4, halved by family 2. The shared component had two consumers, the settings
-  // enrolment card and /login's TOTP challenge; the settings card is the client's now (its
-  // six boxes stitched into the one `code` field its verify body carries — web-side), and
-  // /login's card is still the worker's until family 5, so its half stays here.
-  it(
-    `§13 · /login's TOTP challenge stitches its six boxes into the one field better-auth reads: its form carries data-otp-form, the shared hidden [data-otp-value] input, six [data-otp] boxes and one stitching script, and posts a "code" field · never a digit0 field, which is what six unstitched boxes send (the twin)`,
-    async () => {
-      const challenge = await anonymousPage(`${paths.login}?step=totp`);
-      expect(/<form\b[^>]*\bdata-otp-form=/.test(challenge), "the form carries no data-otp-form").toBe(true);
-      expect(/<input\b[^>]*\bdata-otp-value=/.test(challenge), "no hidden [data-otp-value]").toBe(true);
-      expect(otpBoxesOn(challenge).length, "the box row").toBe(6);
-      const scripts = [...challenge.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((script) => script[1]);
-      expect(scripts.filter((body) => body.includes("data-otp-value")).length, "one stitching script").toBe(1);
-
-      const forms = formsPostingTo(challenge, paths.auth.totpVerify);
-      expect(forms.length, "/login drew no TOTP challenge form").toBeGreaterThan(0);
-      // The field better-auth's verify-totp actually reads …
-      expect(Object.keys(forms[0])).toContain("code");
-      // … and the twin: the names six unstitched boxes send, which better-auth reads as no
-      // code at all.
-      expect(Object.keys(forms[0])).not.toContain("digit0");
-    },
-  );
+  // plan row 4, "/login's TOTP challenge stitches its six boxes into the one field
+  // better-auth reads" — its second half retired with family 5, as the settings half did
+  // with family 2: /login's card is the client's, its six boxes stitched into one `code`
+  // field web-side. The field NAME is still pinned here, posted: row 23 and the TOTP sign-in
+  // row below both send `code` to the kept verify route, the second one to a session.
 
   // plan row 5. "Fresh" is checkable because the enrolment's own ten are in hand: none of
   // them may appear in the new set. Its twins are the read, which reveals nothing, and the
@@ -4614,12 +4580,12 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
         .join("; ");
       expect(challengeCookie, "password sign-in set no two-factor challenge cookie").not.toBe("");
 
-      const challenge = await anonymousPage(challengeUrl);
-      const forms = formsPostingTo(challenge, paths.auth.totpVerify);
-      expect(forms.length, "the challenge page rendered no TOTP form").toBeGreaterThan(0);
+      const challenge = loginIslandOf(await anonymousPage(challengeUrl));
+      expect(challenge.step.kind, "the challenge landed on no TOTP card").toBe("totp");
       const verified = await formPost(
-        paths.auth.totpVerify,
-        typedInto(forms[0], { code: await totpCode(secret) }),
+        webPaths.totpVerify,
+        // What the client's TOTP card posts: the stitched code, and the island's landing.
+        { code: await totpCode(secret), callbackURL: challenge.redirectTo ?? paths.apps },
         challengeCookie,
       );
       expect(verified.status).toBe(303);
@@ -5080,14 +5046,20 @@ describe(`§13 · the /settings form targets are gone (decision 38)`, () => {
     const passkeyId = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
     const tokenId = (await tokensOf(ns.owner.userId))[0].id;
     const csrf = await csrfFor(session.cookie);
-    // The eight credential targets are the /settings members of `paths.auth` — the
-    // templates the states preview still renders draw them (ruling §5.2) — so the list is
-    // derived there, never spelled; the three ops-backed ones are `paths`' own.
+    // Spelled literally on purpose: these are the paths that must no longer route, and
+    // `paths` names none of them since family 5 deleted the templates that drew them.
     const targets = [
-      ...SETTINGS_CREDENTIAL_TARGETS,
-      paths.tokenRevoke(tokenId),
-      paths.connectionRevoke("no-such-connection"),
-      paths.settingsExecutionUpdate,
+      "/settings/two-factor/enable",
+      "/settings/two-factor/verify-totp",
+      "/settings/two-factor/disable",
+      "/settings/two-factor/generate-backup-codes",
+      "/settings/passkey/delete-passkey",
+      "/settings/revoke-session",
+      "/settings/revoke-other-sessions",
+      "/settings/change-password",
+      `/settings/tokens/token_revoke?id=${encodeURIComponent(tokenId)}`,
+      "/settings/clients/connection_revoke?id=no-such-connection",
+      "/settings/execution/hub_settings_update",
     ];
     expect(targets.length).toBe(11);
     const before = await settingsOf(session.cookie);
@@ -5166,11 +5138,6 @@ async function consentAgain(
  *  spelled, so a pane added to `APP_PANES` is walked with no edit here. */
 function appRailHrefs(slug: string): string[] {
   return APP_PANES.map((pane) => paths.appPane(slug, pane));
-}
-
-/** Those, plus the landing: every URL one app's page answers at. */
-function appPaneHrefs(slug: string): string[] {
-  return [paths.appDetail(slug), ...appRailHrefs(slug)];
 }
 
 let detail: {
@@ -5296,28 +5263,9 @@ async function consentRowExists(ownerId: string, clientId: string): Promise<bool
   return row !== null;
 }
 
-/** The rendered `<button name="decision" value="…">` element itself, so a case can check
- *  whether IT (not the form, not the page) carries `disabled`. */
-function submitButtonHtml(html: string, value: string): string {
-  const match = new RegExp(`<button[^>]*name="decision"[^>]*value="${value}"[^>]*>`).exec(html);
-  if (match === null) throw new Error(`the page rendered no submit button valued "${value}"`);
-  return match[0];
-}
-
 /* ------------------------------------------------------------------ *
  * Reading the pages back
  * ------------------------------------------------------------------ */
-
-/**
- * The eight /settings credential form targets the panes posted until decision 38's family
- * 2, DERIVED from `paths.auth` rather than listed: the retained settings template still
- * draws them (ruling §5.2), so they stay spelled there, and the gone-targets row walks
- * every one of them — a target added there is walked without this or the row being edited.
- * The /login targets are not here and must not be — they are kept routes (routes §0.4).
- */
-const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
-  (path) => path.startsWith(`${paths.settings}/`),
-);
 
 /**
  * The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it.
@@ -5381,50 +5329,6 @@ const PANES: readonly string[] = [
   paths.settingsClients,
   paths.settingsExecution,
 ];
-
-/**
- * A fragment's TEXT: tags dropped, entities decoded, whitespace collapsed. The prose
- * decoder, deliberately not `decodeEntities` — that one documents itself as the URL
- * decoder every action and href goes through, and text carries `&#39;` and friends a URL
- * never does (Hono escapes `& < > " '` in every text child).
- *
- * A tag becomes a SPACE rather than nothing, because the renderer emits no whitespace
- * between sibling elements: two adjacent `<span>`s would otherwise read as one word, and
- * a row asserting on a §13 sentence spread across two elements would be asserting on a
- * string no reader ever sees. The collapse below puts every run back to one space, and
- * the last step takes it off again in front of sentence punctuation — a §13 sentence
- * whose code span is followed by a comma or a full stop (`answers -32601, because …`)
- * renders as one element and one text node, and the space the closing tag left is
- * likewise a string no reader ever sees.
- */
-function textOf(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
-    .replace(/&(?:amp|lt|gt|quot|#x27|#039|apos);/g, (entity) => PROSE_ENTITIES[entity] ?? entity)
-    .replace(/\s+/g, " ")
-    .replace(/ ([,.;:])/g, "$1")
-    .trim();
-}
-
-const PROSE_ENTITIES: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#x27;": "'",
-  "&#039;": "'",
-  "&apos;": "'",
-};
-
-function formsOn(html: string): string[] {
-  const actions: string[] = [];
-  for (const form of html.matchAll(/<form\b([^>]*)>/g)) {
-    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-    actions.push(decodeEntities(attributeOf(form[1], "action") ?? ""));
-  }
-  return actions.sort();
-}
 
 /**
  * One connected client, made the only way one is ever made: a real registration, a real
@@ -5529,26 +5433,6 @@ async function lastUsedOf(credentialId: string): Promise<number | null> {
     .bind(credentialId)
     .first<{ last_used_at: number | null }>();
   return row?.last_used_at ?? null;
-}
-
-/**
- * Whether a string appears inside any `action="…"` or `href="…"` attribute value. That is
- * the structural way to say "this endpoint is named in a script rather than in a control":
- * slicing `<script>` spans instead would be a grip on markup, not on the claim.
- */
-function inNavigableAttribute(html: string, value: string): boolean {
-  for (const attribute of html.matchAll(/\b(?:action|href)="([^"]*)"/g)) {
-    if (decodeEntities(attribute[1]).includes(value)) return true;
-  }
-  return false;
-}
-
-/** One form's action, as the page rendered it — how case 19 posts to a target it
- *  discovered rather than to one it spelled. */
-function actionFor(html: string, op: string): string {
-  const action = new RegExp(`(?:form)?action="([^"]*/${op}(?:\\?[^"]*)?)"`).exec(html)?.[1];
-  if (action === undefined) throw new Error(`no rendered action for "${op}"`);
-  return decodeEntities(action);
 }
 
 /** How many state rows one connect flow still has — "stores nothing" made observable. */

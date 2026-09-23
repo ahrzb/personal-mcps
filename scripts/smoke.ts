@@ -630,25 +630,27 @@ async function main(): Promise<number> {
       return `200 in ${took} ms, challenge present, rpId ${String(body.rpId ?? "(absent)")}`;
     });
 
-    await step("§4/§15 · /login's ?next= is escaped where it is embedded and refused where it is absolute", async () => {
-      // The suite pins both consumers against miniflare; only the deployment says whether
-      // the bytes that reach a real browser are the escaped ones. Hostile spelling first —
-      // a value that PASSES the hub-relative rule and so reaches the inline script.
-      const injected = await fetch(`${ORIGIN}/login?next=/apps%3C/script%3E%3Cimg%20src=x%3E`);
+    await step("§4/§15 · /login's ?next= is escaped in its island and refused where it is absolute", async () => {
+      // The suite pins the island against miniflare; only the deployment says whether the
+      // bytes that reach a real browser are the escaped ones. Hostile spelling first — a
+      // value that PASSES the hub-relative rule and so reaches the #pmcp-login island.
+      const payload = "/apps</script><img src=x>";
+      const injected = await fetch(`${ORIGIN}/login?next=${encodeURIComponent(payload)}`);
       expect(injected.status === 200, `/login with an injected next= → ${injected.status}`);
       const html = await injected.text();
-      // The payload's own bytes, not a bare `</script><` — the passkey script is the last
-      // child of .auth-card, so `</script></div>` puts that pair in every /login response.
+      // The payload's own bytes appear nowhere raw — the island escapes its `<` — and yet
+      // the island reads back to exactly what arrived, so the escape is not a truncation.
       expect(
-        !html.includes("</script><img") && !html.includes("<img src=x"),
+        !html.includes(payload) && !html.includes("</script><img") && !html.includes("<img src=x"),
         "/login embedded the raw payload from ?next=",
       );
-      // Then the open-redirect half: an absolute target reaches no embed at all.
+      expect(loginIsland(html).redirectTo === payload, "/login's island did not read back the payload it was sent");
+      // Then the open-redirect half: an absolute target never becomes the landing.
       const absolute = await fetch(`${ORIGIN}/login?next=https://evil.example`);
       expect(absolute.status === 200, `/login with an absolute next= → ${absolute.status}`);
-      const callbackUrl = /name="callbackURL"\s+value="([^"]*)"/.exec(await absolute.text())?.[1];
-      expect(callbackUrl === "/apps", `absolute next= rendered callbackURL "${callbackUrl ?? "(none)"}"`);
-      return `injected next= carries no "</script><img" and no "<img src=x"; absolute next= → callbackURL /apps`;
+      const landing = loginIsland(await absolute.text()).redirectTo;
+      expect(landing === null, `absolute next= reached the island as redirectTo "${String(landing)}"`);
+      return `injected next= appears nowhere raw and reads back exactly; absolute next= → redirectTo null (the client's /apps)`;
     });
 
     await step(`§13 · GET /api/hub/apps/${APP}/catalog/tools reports the app's registered catalog`, async () => {
@@ -775,13 +777,13 @@ async function main(): Promise<number> {
           `anonymous authorize → ${anonymousAuthorize.status} ${loginLocation}`,
         );
 
-        // /login itself: its OWN rendered callbackURL — the post-sign-in landing the page
-        // built from the signed query, never a `next=`/`return_to=` this walk supplies
-        // (§19.5 step 1's whole point — the login page never reads a destination out of
-        // the query it was handed).
+        // /login itself: its island's landing — what its card posts as callbackURL, built
+        // on the server from the signed query, never a `next=`/`return_to=` this walk
+        // supplies (§19.5 step 1's whole point — the login page never reads a destination
+        // out of the query it was handed).
         const loginPageUrl = new URL(loginLocation, ORIGIN).toString();
         const loginHtml = await (await fetch(loginPageUrl)).text();
-        const callbackUrl = hiddenField(loginHtml, "callbackURL");
+        const callbackUrl = loginIsland(loginHtml).redirectTo ?? "";
         expect(callbackUrl.includes("/oauth2/authorize"), `login page callbackURL ${callbackUrl}`);
 
         // Sign in as the bootstrap user through the PAGE's own translation route
@@ -1512,21 +1514,17 @@ function unique(values: string[]): string[] {
 // ── §19: the OAuth walk's own small readers (no HTML parser dependency, §4) ────────────
 
 /**
- * One hidden `<input>`'s value off rendered HTML, by name — login.tsx renders
- * `<input type="hidden" name="…" value="…" />` in that order for its `callbackURL`, the one
- * server-rendered hidden field this walk still reads (the consent screen's moved to the SPA
- * with decision 38 — `consentForm` below). Hono JSX escapes attribute values as HTML, so the
- * raw match is entity-decoded before use.
+ * The /login shell's `#pmcp-login` island, read as the client reads it (decision 38): its
+ * `redirectTo` is the ONE landing the sign-in cards post as `callbackURL`, null meaning the
+ * client's "/apps". The island is JSON with `<` escaped as a JSON escape, so `JSON.parse`
+ * gives back the exact string the server computed.
  */
-function hiddenField(html: string, name: string): string {
-  const match = new RegExp(`name="${name}" value="([^"]*)"`).exec(html);
-  if (match === null) throw new Error(`no hidden field named ${name} on the page`);
-  return match[1]
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+function loginIsland(html: string): { redirectTo: string | null } {
+  const island = /<script type="application\/json" id="pmcp-login">([\s\S]*?)<\/script>/.exec(html);
+  if (island === null) throw new Error("the /login shell carried no #pmcp-login island");
+  const redirectTo = asRecord(JSON.parse(island[1]), "the #pmcp-login island").redirectTo;
+  if (redirectTo !== null && typeof redirectTo !== "string") throw new Error("#pmcp-login's redirectTo is neither text nor null");
+  return { redirectTo };
 }
 
 /**

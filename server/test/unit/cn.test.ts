@@ -63,6 +63,17 @@ describe("cn — the theme's names", () => {
     }
   });
 
+  // Tailwind 4 draws `text-<size>`'s line height as `var(--tw-leading, …)`, so a `leading-*`
+  // wins whatever the order; tailwind-merge's rule that a size drops an earlier leading (a
+  // Tailwind 3 behaviour) only deletes the declared value. Found by p3-agents and p3-settings:
+  // Button's base `leading-none` vanished under its size's `text-sm`, moving every merged link.
+  it("a text size keeps a line height written before it", () => {
+    for (const size of ["sm", "base", ...THEME_TEXT]) {
+      expect(cn("leading-none", `text-${size}`)).toBe(`leading-none text-${size}`);
+    }
+    expect(cn("leading-none", "leading-5")).toBe("leading-5");
+  });
+
   it("a custom shadow and a custom container width each replace their own kind", () => {
     for (const name of THEME_SHADOW) expect(cn("shadow-xs", `shadow-${name}`)).toBe(`shadow-${name}`);
     for (const name of THEME_CONTAINER) expect(cn("max-w-sm", `max-w-${name}`)).toBe(`max-w-${name}`);

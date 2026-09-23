@@ -50,4 +50,7 @@ export const cn = createCn({
       container: [...THEME_CONTAINER],
     },
   },
+  // A size no longer drops an earlier `leading-*`: Tailwind 4 reads a size's line height through
+  // `--tw-leading`, so the leading wins in CSS whatever the order (cn.test.ts has the case).
+  override: { conflictingClassGroups: { "font-size": [] } },
 });

@@ -660,6 +660,7 @@
     "cn — the theme's names a custom shadow and a custom container width each replace their own kind": "passed",
     "cn — the theme's names a custom spacing name conflicts with any other value of the same property": "passed",
     "cn — the theme's names a custom text size is a SIZE: it replaces another size and keeps the colour beside it": "passed",
+    "cn — the theme's names a text size keeps a line height written before it": "passed",
     "cn — the theme's names lists every custom name app.css's @theme defines, per namespace": "passed"
   },
   "server/test/unit/device-derive.test.ts": {

@@ -88,6 +88,10 @@ import {
 } from "../../src/limits";
 import { generatedAlias } from "../../src/hub-types";
 import { paths, SETTINGS_CONFIRM_PANE } from "../../src/pages/model";
+// The SPA's own path table, compared against the worker's: the two are separate modules, and
+// a React form posting to a route the worker does not translate is invisible to any test that
+// reads server HTML (24a).
+import { paths as webPaths } from "../../../web/src/lib/paths";
 import type { ConnectionRow, SettingsConfirm } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
@@ -1991,6 +1995,18 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
       expect(answered.status, `POST ${action}`).not.toBe(404);
       expect(answered.status, `POST ${action}`).toBeLessThan(500);
     }
+  });
+
+  it("24a. §13 · the SPA's Sign out — the one form the React shell renders, which 24's walk of server HTML cannot see — posts where this worker translates it: a control-less form body answers 303 to /login and ends the session, never better-auth's 415 JSON (it did, from the SPA's first ship until 2026-09-23)", async () => {
+    const leaver = await seedOwnerSession((await seedNamespace(env.DB, {})).owner);
+    expect(webPaths.signOut, "the SPA's form must target the translating route").toBe(paths.auth.signOut);
+    // Exactly what the browser sends for `<form method="post">` with a lone submit button.
+    const answered = await formPost(webPaths.signOut, {}, leaver.cookie);
+    expect(answered.status, await answered.clone().text()).toBe(303);
+    expect(answered.headers.get("Location")).toBe(paths.login);
+    // Ended, not merely redirected: the cookie no longer opens a signed-in page.
+    const after = await get(paths.apps, leaver.cookie);
+    expect(after.status).toBe(302);
   });
 
   // 25, 25a and 26 moved to the panes that own their journeys: the Sessions pane's Revoke,

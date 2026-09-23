@@ -1,4 +1,3 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { ReactNode, RefObject } from "react";
@@ -21,13 +20,28 @@ import {
 } from "./derive";
 import type { Filter } from "./derive";
 import { JsonTree } from "./JsonTree";
-import { OutcomeBadge, SearchBox, Swatch, Titled, useCopied } from "./parts";
+import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import {
+  BACK,
+  EYEBROW,
+  HOVER_RING,
+  LEVEL_HEAD,
+  NOTE,
+  OutcomeBadge,
+  SearchBox,
+  SkelBar,
+  Swatch,
+  Titled,
+  useCopied,
+} from "./parts";
 
 /**
  * The record — one event as a request inspector, in a right-hand drawer at wide and a
  * full-screen level on the phone.
  *
- * A Base UI **Dialog**, not a hand-rolled panel: focus is trapped, Escape closes, the page
+ * A **Sheet** (a Base UI Dialog), not a hand-rolled panel: focus is trapped, Escape closes, the page
  * behind it is inert, and `finalFocus` puts the caret back on the row that opened it. A reader
  * who opened the fortieth row with the keyboard must not be returned to the top of the table.
  *
@@ -78,31 +92,29 @@ export function RecordDrawer({
   const gone = record.isError && record.error instanceof ApiError && record.error.status === 404;
 
   return (
-    <Dialog.Root open onOpenChange={(next) => (next ? undefined : onClose())}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="audit-scrim" />
-        <Dialog.Popup className="audit-drawer" finalFocus={opener} data-slot="dialog-content">
+    <Sheet open onOpenChange={(next) => (next ? undefined : onClose())}>
+      <SheetContent variant="panel" finalFocus={opener}>
           {gone || head === undefined ? (
             <>
               <Head title={{ title: gone ? `Record ${id}` : "Record", secondary: null }} onClose={onClose} />
-              <div className="a-dbody">
+              <div className={BODY}>
                 {gone ? (
-                  <div className="empty empty--inline">
-                    <div className="empty-title">That record is gone</div>
-                    <div className="empty-text">Audit rows are kept for {retentionDays} days.</div>
-                    <button type="button" className="btn btn--outline btn--sm" onClick={onClose}>
+                  <Empty variant="inline">
+                    <EmptyTitle>That record is gone</EmptyTitle>
+                    <EmptyDescription>Audit rows are kept for {retentionDays} days.</EmptyDescription>
+                    <Button variant="outline" size="sm" className="mt-4" onClick={onClose}>
                       Close
-                    </button>
-                  </div>
+                    </Button>
+                  </Empty>
                 ) : (
-                  <p className="note">Reading the record…</p>
+                  <p className={NOTE}>Reading the record…</p>
                 )}
               </div>
             </>
           ) : (
             <>
               <Head title={titleOf(head)} time={fmtStamp(head.ts)} cls={outcomeClass(head.outcome)} onClose={onClose} />
-              <div className="a-dbody">
+              <div className={BODY}>
                 {/* No debounce here: this search filters a body already in hand, so there is
                     nothing to wait for and every keystroke can highlight at once. */}
                 <SearchBox
@@ -114,7 +126,7 @@ export function RecordDrawer({
                 />
 
                 <div>
-                  <p className="eyebrow">Record</p>
+                  <p className={EYEBROW}>Record</p>
                   <Fields row={head} onFilter={onFilter} />
                 </div>
 
@@ -122,28 +134,28 @@ export function RecordDrawer({
                   <>
                     <BodySkeleton label="Arguments" />
                     <BodySkeleton label="Result" />
-                    <p className="note">Bodies are read on their own, by id — the fields above came with the row.</p>
+                    <p className={NOTE}>Bodies are read on their own, by id — the fields above came with the row.</p>
                   </>
                 ) : (
                   <>
                     <Section label="Arguments" value={full?.args} open={open} setOpen={setOpen} needle={needle} />
                     <Section label="Result" value={full?.result} open={open} setOpen={setOpen} needle={needle} />
-                    {full?.noBodies === undefined ? null : <p className="note">{NO_BODIES_SENTENCE[full.noBodies]}</p>}
+                    {full?.noBodies === undefined ? null : <p className={NOTE}>{NO_BODIES_SENTENCE[full.noBodies]}</p>}
                     <Section label="Detail" value={head.detail} open={open} setOpen={setOpen} needle={needle} />
                     {/* Said once for the whole record rather than per section: three "no
                         matches" under three headings reads as three failures. */}
                     {needle.trim() !== "" && matchesIn([full?.args, full?.result, head.detail], needle) === 0 ? (
-                      <p className="note">No matches in this record.</p>
+                      <p className={NOTE}>No matches in this record.</p>
                     ) : null}
                   </>
                 )}
 
                 <Chain row={head} rows={rows} onOpenRecord={onOpenRecord} />
 
-                <div className="a-actions">
-                  <button
-                    type="button"
-                    className="btn btn--outline btn--sm"
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
                     disabled={head.client?.sessionId === undefined}
                     onClick={() => {
                       const sessionId = head.client?.sessionId;
@@ -151,26 +163,25 @@ export function RecordDrawer({
                     }}
                   >
                     Show this session
-                  </button>
+                  </Button>
                   {/* The clipboard gets the FULL row where it has landed and the slim one
                       otherwise — never a mixture, which would be a shape no read answers. */}
-                  <button
-                    type="button"
-                    className="btn btn--outline btn--sm"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     aria-live="polite"
                     onClick={() => {
                       void navigator.clipboard?.writeText(JSON.stringify(full ?? head, null, 1)).then(markCopied, () => undefined);
                     }}
                   >
                     {copied ? "Copied" : "Copy as JSON"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             </>
           )}
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -188,18 +199,22 @@ function Head({
   onClose: () => void;
 }): ReactNode {
   return (
-    <div className="a-dhead">
-      <button type="button" className="a-dback" onClick={onClose}>
+    <div className={LEVEL_HEAD}>
+      <button type="button" className={`${BACK} hidden max-md:inline-flex`} onClick={onClose}>
         ‹ Audit
       </button>
       {cls === undefined ? null : <Swatch cls={cls} />}
-      <Dialog.Title render={<span />} className="a-dtitle mono">
+      {/* One line at wide, clipped; on the phone it wraps, since the level has the room. */}
+      <SheetTitle
+        render={<span />}
+        className="min-w-0 truncate font-mono text-base font-semibold max-md:flex-[0_1_auto] max-md:overflow-visible max-md:whitespace-normal max-md:wrap-anywhere"
+      >
         <Titled of={title} />
-      </Dialog.Title>
-      {time === undefined ? null : <span className="note a-dtime">{time}</span>}
-      <button type="button" className="btn btn--outline btn--sm a-dclose wide-only" onClick={onClose}>
+      </SheetTitle>
+      {time === undefined ? null : <span className={`${NOTE} whitespace-nowrap`}>{time}</span>}
+      <Button variant="outline" size="sm" className="ml-auto max-md:hidden" onClick={onClose}>
         Close
-      </button>
+      </Button>
     </div>
   );
 }
@@ -248,9 +263,12 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
       "outcome",
       <span key="o">
         <OutcomeBadge cls={shown.cls} />
-        {shown.label === null ? null : <> <span className="a-olabel">{shown.label}</span></>}
-        {shown.code === null ? null : <> <span className="a-dim mono">{shown.code}</span></>}
-        {sentence === null ? null : <span className="note a-why">{sentence}</span>}
+        {/* The label is WORDS, so it is set in words: a label in mono beside the mono ids
+            reads as a second code. What the outcome MEANS goes under it, in prose, capped at
+            the sheet's measure so a three-clause refusal does not run the drawer's width. */}
+        {shown.label === null ? null : <> <span className="font-sans">{shown.label}</span></>}
+        {shown.code === null ? null : <> <span className="font-mono text-muted-foreground">{shown.code}</span></>}
+        {sentence === null ? null : <span className={WHY}>{sentence}</span>}
       </span>,
     ],
     ["duration", fmtDuration(row.durationMs)],
@@ -266,16 +284,16 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
     ["id", String(row.id)],
   ];
   return (
-    <table className="a-ftab">
-      <tbody>
+    <table className="w-full border-collapse max-md:block">
+      <tbody className="max-md:block">
         {rows.map(([key, value]) => (
           /* The outcome row is the one whose value is TWO lines — a chip line and a sentence
              under it — so it is the one that must top-align. Centred, its key drifts down
              beside the sentence and the chip line is left with no key at all. Every other row
              is one line, where top and centre are the same thing. */
-          <tr key={key} className={key === "outcome" ? "a-ftab-row--top" : undefined}>
-            <td className="a-ftab-k">{key}</td>
-            <td className="a-ftab-v">{value}</td>
+          <tr key={key} className={key === "outcome" ? `${FIELD_ROW} max-md:items-start` : FIELD_ROW}>
+            <td className={`${cellOf(key)} w-[1%] whitespace-nowrap text-muted-foreground max-md:w-auto`}>{key}</td>
+            <td className={`${cellOf(key)} font-mono break-all`}>{value}</td>
           </tr>
         ))}
       </tbody>
@@ -285,7 +303,7 @@ function Fields({ row, onFilter }: { row: AuditWindowRow | AuditEventRow; onFilt
 
 function IdButton({ value, onPick }: { value: string; onPick: () => void }): ReactNode {
   return (
-    <button type="button" onClick={onPick} title={`Filter by ${value}`}>
+    <button type="button" className={ID_BUTTON} onClick={onPick} title={`Filter by ${value}`}>
       {value}
     </button>
   );
@@ -310,7 +328,7 @@ function Section({
   const path = label.toLowerCase();
   return (
     <div>
-      <p className="eyebrow">{label}</p>
+      <p className={EYEBROW}>{label}</p>
       <JsonTree
         value={value}
         path={path}
@@ -336,9 +354,9 @@ function matchesIn(bodies: unknown[], needle: string): number {
 function BodySkeleton({ label }: { label: string }): ReactNode {
   return (
     <div aria-busy="true">
-      <p className="eyebrow">{label}</p>
-      <span className="a-skel" style={{ width: "70%", display: "block" }} />
-      <span className="a-skel" style={{ width: "52%", display: "block", marginTop: 6 }} />
+      <p className={EYEBROW}>{label}</p>
+      <SkelBar width="70%" className="block" />
+      <SkelBar width="52%" className="mt-1.5 block" />
     </div>
   );
 }
@@ -366,23 +384,59 @@ function Chain({
   if (siblings.length <= 1) return null;
   return (
     <div>
-      <p className="eyebrow">This approval, end to end</p>
-      <div className="a-tl">
+      <p className={EYEBROW}>This approval, end to end</p>
+      <div className="flex flex-col gap-0.5">
         {siblings.map((sibling) => (
-          <button type="button" key={sibling.id} onClick={() => onOpenRecord(sibling)}>
-            <span className="a-tl-t">{fmtClock(sibling.ts)}</span>
-            <span className={sibling.id === row.id ? "a-tl-e a-tl--now" : "a-tl-e"}>
+          <button type="button" key={sibling.id} className={SIBLING} onClick={() => onOpenRecord(sibling)}>
+            <span className="w-[52px] flex-none font-mono text-muted-foreground">{fmtClock(sibling.ts)}</span>
+            <span className={sibling.id === row.id ? "font-mono font-semibold" : "font-mono"}>
               <Titled of={titleOf(sibling)} />
             </span>
             <OutcomeBadge cls={outcomeClass(sibling.outcome)} />
-            <span className="a-tl-r">{sibling.principal}</span>
+            <span className="ml-auto pl-2 text-muted-foreground">{sibling.principal}</span>
           </button>
         ))}
       </div>
-      <p className="note">
-        Every row carrying this <span className="mono">detail.approvalId</span>, oldest first — the refused call, the
+      <p className={NOTE}>
+        Every row carrying this <span className="font-mono">detail.approvalId</span>, oldest first — the refused call, the
         request, your answer, and the dispatch that followed.
       </p>
     </div>
   );
 }
+
+/** The drawer's scrolling body: its sections 14px apart. */
+const BODY = "flex flex-1 flex-col gap-3.5 overflow-auto px-4 py-3.5 max-md:py-3";
+
+/**
+ * A row of the field table. On the phone it is one grid row per field, a fixed key column and
+ * the value beside it, with a hairline under EVERY row. A `<table>` cannot be asked for that, so
+ * its parts become blocks and the row becomes the grid.
+ */
+const FIELD_ROW =
+  "max-md:grid max-md:min-h-control-touch max-md:grid-cols-[84px_minmax(0,1fr)] max-md:items-center max-md:border-b max-md:border-row-border";
+
+/**
+ * A field table cell, key or value. Both carry the same 20px line height, so the outcome row —
+ * the one whose value runs to two lines, a chip line and a sentence — tops both cells: the
+ * key's line lands on the chip line and the sentence hangs beneath it. Centred, the key would
+ * drift down beside the sentence. On the phone a cell is a wrapping flex row.
+ */
+const cellOf = (key: string): string =>
+  key === "outcome"
+    ? `${CELL} align-top max-md:content-start max-md:items-start`
+    : `${CELL} max-md:items-center`;
+
+const CELL =
+  "border-0 py-0.5 pr-2 pl-0 text-xs leading-5 max-md:flex max-md:flex-wrap max-md:gap-x-1.5 max-md:gap-y-1 max-md:self-stretch max-md:px-0 max-md:py-[5px] max-md:leading-[18px]";
+
+/** An id in the field table: it filters the list by itself. On the phone it fills its row, so
+ *  the tap target is the row and not the text. */
+const ID_BUTTON =
+  "cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-xs leading-[inherit] text-inherit underline underline-offset-2 max-md:inline-flex max-md:items-center max-md:self-stretch";
+
+/** What the outcome means, on its own line under the code. */
+const WHY = `${NOTE} mt-0.5 block font-sans leading-normal [word-break:normal] wrap-anywhere max-md:mt-1 max-md:flex-[1_1_100%]`;
+
+/** A line of the approval's timeline, opening that row's record. */
+const SIBLING = `flex min-h-control-xs w-full cursor-pointer items-center gap-2 rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit ${HOVER_RING} max-md:min-h-control-touch`;

@@ -9,7 +9,11 @@ import {
   outcomeLabel,
 } from "./derive";
 import type { AuditSelection, Lane, OutcomeClass } from "./derive";
-import { SkelBar, Swatch, WarnIcon } from "./parts";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { FILL, NOTE, SkelBar, Swatch, WarnIcon } from "./parts";
 
 /**
  * The lane strip: what happened, to whom, when — one lane per principal, one cell per hour of
@@ -70,7 +74,7 @@ export function LaneStrip({
 
   /* Pointer events, and MOUSE or PEN only. A touch drag on a strip this short is the reader
      trying to scroll the page, so on touch the presets and the axis are the controls — which
-     is also why the narrow stylesheet hides the brush. */
+     is also why the brush is not drawn below 768px. */
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === "touch") return;
     dragFrom.current = timeAt(event.clientX);
@@ -111,38 +115,44 @@ export function LaneStrip({
     selection.since <= dayAt(index) + DAY - 1 && selection.until >= dayAt(index);
 
   return (
-    <div className="card a-strip">
-      <div className="a-striphead">
-        <span className="a-striprange">
+    <Card size="flush" className={STRIP}>
+      <div className="flex flex-wrap items-center gap-2.5 max-md:gap-x-2 max-md:gap-y-1.5 max-md:text-xs">
+        <span className="text-sm font-semibold max-md:text-xs max-md:whitespace-nowrap">
           {fmtDayTime(selection.since)} → {fmtDayTime(selection.until)}
         </span>
-        <div className="a-presets">
+        {/* On the phone the presets pull right onto the window text's own row, at their own
+            width rather than stretched to fill it. */}
+        <div className="inline-flex gap-1 max-md:ml-auto max-md:flex-[0_0_auto]">
           <Preset on={selection.until - selection.since <= HOUR} label="1h" onPick={() => back(1)} />
           <Preset on={selection.until - selection.since === 24 * HOUR} label="24h" onPick={() => back(24)} />
           <Preset on={!selection.brushed} label={`${retentionDays}d`} onPick={() => onBrush(null)} />
         </div>
-        <span className="note wide-only">
+        <span className={`${NOTE} max-md:hidden`}>
           an hour per cell, coloured by the worst outcome in it — drag to select
         </span>
         {selection.brushed ? (
-          <button type="button" className="btn btn--outline btn--sm btn--mini a-stripend" onClick={() => onBrush(null)}>
+          <Button variant="outline" size="xs" className="ml-auto" onClick={() => onBrush(null)}>
             Whole window
-          </button>
+          </Button>
         ) : (
-          <span className="a-stripend wide-only" />
+          <span className="ml-auto max-md:hidden" />
         )}
-        <span className="badge wide-only">{fmtCount(selected)} events selected</span>
+        <Badge className="max-md:hidden">{fmtCount(selected)} events selected</Badge>
       </div>
 
       {total > ceiling ? (
-        <div className="a-ceiling" role="status">
+        <Alert variant="warning" size="compact" role="status">
           <WarnIcon />
           <span>{ceilingNotice(ceiling, total)}</span>
-        </div>
+        </Alert>
       ) : null}
 
+      {/* `--gut` is the lane-name column, and the brush is positioned against it: the cells
+          start where the names end, so a percentage of the strip is not a percentage of the
+          window. The phone sets it to 0, names sitting above their cells, and draws no brush:
+          a drag there is a scroll, so the presets and the axis are the controls. */}
       <div
-        className="a-lanes"
+        className="relative flex cursor-crosshair flex-col gap-[3px] select-none [--gut:114px] max-md:cursor-default max-md:gap-0.5 max-md:[--gut:0px]"
         ref={lanesRef}
         tabIndex={0}
         role="group"
@@ -152,20 +162,26 @@ export function LaneStrip({
         onKeyDown={onKeyDown}
       >
         {lanes.map((lane) => (
-          <div className="a-lane" key={lane.name}>
-            <span className="a-lane-nm" title={lane.title}>
+          <div className={LANE} key={lane.name}>
+            <span
+              className="w-[104px] flex-none truncate font-mono text-2xs text-fg-subtle max-md:w-full max-md:flex-[1_1_100%] max-md:leading-[13px]"
+              title={lane.title}
+            >
               {lane.name}
             </span>
-            <span className="a-cells" aria-hidden="true">
+            <span className={CELLS} aria-hidden="true">
               {lane.cells.map((cell, hour) => (
-                <span key={hour} className={cell === null ? "a-c" : `a-c a-c--${cell === "not-loaded" ? "nl" : cell}`} />
+                <span
+                  key={hour}
+                  className={`flex-1 rounded-[1px] ${cell === null ? "bg-muted" : FILL[cell === "not-loaded" ? "nl" : cell]}`}
+                />
               ))}
             </span>
           </div>
         ))}
         {selection.brushed ? (
           <div
-            className="a-brush"
+            className="pointer-events-none absolute -top-[3px] -bottom-[3px] rounded-[2px] border-x-2 border-primary bg-[rgba(24,24,27,0.07)] max-md:hidden"
             style={{
               // Against `--gut`, because the cells begin where the lane names end: a plain
               // percentage of the strip would place the brush an entire name column early.
@@ -176,11 +192,12 @@ export function LaneStrip({
         ) : null}
       </div>
 
-      <div className="a-axis">
+      <div className="ml-[114px] flex text-2xs text-muted-foreground max-md:ml-0 max-md:gap-0.5">
         {Array.from({ length: retentionDays }, (_, index) => (
           <button
             key={index}
             type="button"
+            className="flex-1 cursor-pointer rounded-[4px] border-0 bg-transparent px-0 py-0.5 text-left font-[family-name:inherit] text-2xs text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:font-medium aria-pressed:text-foreground max-md:min-h-control-touch max-md:text-center"
             aria-pressed={dayOn(index)}
             onClick={() => onBrush({ since: dayAt(index), until: dayAt(index) + DAY })}
           >
@@ -189,26 +206,26 @@ export function LaneStrip({
         ))}
       </div>
 
-      <div className="a-legend">
-        <span className="a-legend-i a-legend-lbl wide-only">Worst outcome in the hour:</span>
+      <div className="flex flex-wrap items-center gap-3 text-2xs text-muted-foreground max-md:gap-x-2.5 max-md:gap-y-1 max-md:leading-4">
+        <span className={`${LEGEND_ITEM} font-medium text-fg-subtle max-md:hidden`}>Worst outcome in the hour:</span>
         {/* At wide the legend says what each colour MEANS, in the hub's own words; the class
             name alone is what fits at 375. Never the raw codes: a `-32001` beside a swatch is
             a number to go and look up, and the record is the one place that prints one. */}
         {OUTCOME_CLASSES.map((cls) => (
-          <span className="a-legend-i" key={cls}>
+          <span className={LEGEND_ITEM} key={cls}>
             <Swatch cls={cls} />
-            <span className="narrow-only">{cls}</span>
-            <span className="wide-only">{LEGEND_WORDS[cls]}</span>
+            <span className="hidden max-md:inline">{cls}</span>
+            <span className="max-md:hidden">{LEGEND_WORDS[cls]}</span>
           </span>
         ))}
         {anyNotLoaded ? (
-          <span className="a-legend-i">
+          <span className={LEGEND_ITEM}>
             <Swatch cls="nl" />
             not loaded
           </span>
         ) : null}
       </div>
-    </div>
+    </Card>
   );
 
   /** A preset window, ending where the LOADED window ends — not at the browser's clock, which
@@ -218,16 +235,18 @@ export function LaneStrip({
   }
 }
 
+/** A preset: a 24px control in the dense strip, the touch height on the phone. */
 function Preset({ on, label, onPick }: { on: boolean; label: string; onPick: () => void }): ReactNode {
   return (
-    <button
-      type="button"
-      className={`btn btn--sm btn--mini ${on ? "btn--primary" : "btn--outline"}`}
+    <Button
+      variant={on ? "default" : "outline"}
+      size="xs"
+      className="max-md:h-control-touch max-md:px-[11px] max-md:text-xs"
       aria-pressed={on}
       onClick={onPick}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -235,20 +254,31 @@ function Preset({ on, label, onPick }: { on: boolean; label: string; onPick: () 
  *  when the rows land. */
 export function LaneStripSkeleton(): ReactNode {
   return (
-    <div className="card a-strip" aria-busy="true">
+    <Card size="flush" className={STRIP} aria-busy="true">
       <span className="sr-only">Loading the audit window…</span>
       <SkelBar width="280px" height={14} />
       {Array.from({ length: 5 }, (_, index) => (
-        <div className="a-lane" key={index}>
+        <div className={LANE} key={index}>
           <SkelBar width="104px" />
-          <span className="a-cells">
+          <span className={CELLS}>
             <SkelBar width="100%" height={16} />
           </span>
         </div>
       ))}
-    </div>
+    </Card>
   );
 }
+
+/** The strip's card: a column of its rows, tighter on the phone. */
+const STRIP = "flex flex-col gap-1.5 px-3.5 py-3 max-md:gap-1 max-md:px-3 max-md:py-2";
+
+/** One principal: its name, then its hours; on the phone the name sits on a line above them. */
+const LANE = "flex items-center gap-2.5 max-md:flex-wrap max-md:gap-0.5";
+
+/** A lane's hours, one cell each: 16px tall, and 10px and touching on the phone. */
+const CELLS = "flex h-4 min-w-0 flex-1 gap-px max-md:h-2.5 max-md:flex-[1_1_100%] max-md:gap-0";
+
+const LEGEND_ITEM = "inline-flex items-center gap-[5px]";
 
 /**
  * What each colour means, in words, at the wide tier.

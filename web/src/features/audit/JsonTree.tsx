@@ -43,7 +43,7 @@ export function JsonTree({
 }): ReactNode {
   const found = treeSearch(value, path, needle);
   return (
-    <div className="a-tree">
+    <div className="font-mono text-xs leading-[19px]">
       <Node
         value={value}
         name={path}
@@ -88,19 +88,19 @@ function Node({
   /** Paths the current search has to have open for its matches to be on screen. */
   opened: Set<string>;
 }): ReactNode {
-  const indent = { "--ind": `${depth * INDENT}px` } as React.CSSProperties;
+  const indent = { paddingLeft: depth * INDENT };
 
   // A leaf — a primitive, or a stub the cap put where a body was. Its key is on the same line,
   // because a key on a line of its own doubles the height of every recorded body.
   if (isBodyStub(value) || value === null || typeof value !== "object") {
     return (
-      <div className="a-tn" style={indent}>
-        <span className="a-tog" />
-        <span className="a-tkey">
+      <div className={NODE} style={indent}>
+        <span className={TOGGLE} />
+        <span className="text-muted-foreground">
           <Hl text={name} needle={needle} />:
         </span>
         {isBodyStub(value) ? (
-          <span className="a-stub">
+          <span className={STUB}>
             <Hl text={stubLabel(value)} needle={needle} />
           </span>
         ) : (
@@ -119,20 +119,20 @@ function Node({
 
   return (
     <>
-      <div className="a-tn" style={indent}>
+      <div className={NODE} style={indent}>
         <button
           type="button"
-          className="a-tog"
+          className={TOGGLE}
           aria-expanded={isOpen}
           aria-label={`${isOpen ? "Collapse" : "Expand"} ${name}`}
           onClick={() => onToggle(path)}
         >
           {isOpen ? "▾" : "▸"}
         </button>
-        <span className="a-tkey">
+        <span className="text-muted-foreground">
           <Hl text={name} needle={needle} />
         </span>
-        <span className="a-tcount">
+        <span className="text-ring">
           {Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}
           {isOpen ? "" : " …"}
         </span>
@@ -156,11 +156,28 @@ function Node({
   );
 }
 
+/**
+ * One line of the tree: the toggle, the key, and the value or the count beside it.
+ *
+ * A recorded value is the app's text and can be any length: a 220-character string in a flex
+ * row that cannot wrap pushes the whole tree past the drawer. So every span in the line may
+ * shrink and wraps `anywhere`, since the value has no spaces to break at; the toggle keeps its
+ * width.
+ */
+const NODE = "flex gap-1.5 [&>span]:min-w-0 [&>span]:wrap-anywhere";
+
+/** The ▸/▾ column, 12px, present on a leaf too so every key lines up. */
+const TOGGLE =
+  "w-3 flex-none cursor-pointer border-0 bg-transparent p-0 text-left font-[family-name:inherit] text-ring";
+
+/** A chip the ledger put where a value was: a cap's stub, or the gateway's `‹redacted›`. */
+const STUB = "rounded-[4px] bg-muted px-1 text-fg-subtle";
+
 /** A primitive value. A `‹redacted›` string is the gateway's own marker rather than an app's
  *  text, so it wears the stub chip instead of quotation marks. */
 function Leaf({ value, needle }: { value: unknown; needle: string }): ReactNode {
   if (typeof value === "string") {
-    if (value === REDACTED_LEAF) return <span className="a-stub">{REDACTED_LEAF}</span>;
+    if (value === REDACTED_LEAF) return <span className={STUB}>{REDACTED_LEAF}</span>;
     return (
       <span>
         "<Hl text={value} needle={needle} />"
@@ -168,7 +185,7 @@ function Leaf({ value, needle }: { value: unknown; needle: string }): ReactNode 
     );
   }
   return (
-    <span className="a-tnum">
+    <span className="text-a-num">
       <Hl text={String(value)} needle={needle} />
     </span>
   );
@@ -190,7 +207,7 @@ function Hl({ text, needle }: { text: string; needle: string }): ReactNode {
     <>
       {parts.map((part, index) =>
         index % 2 === 1 ? (
-          <mark className="a-hit" key={index}>
+          <mark className="rounded-[2px] bg-a-hit" key={index}>
             {part}
           </mark>
         ) : (

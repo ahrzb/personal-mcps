@@ -1,8 +1,16 @@
-import { Dialog } from "@base-ui/react/dialog";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Page, PageTitle } from "@/chrome/Page";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/cn";
 import { useApi } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import { usePreviewTransient } from "@/preview/transient";
@@ -31,8 +39,8 @@ import { LaneStrip, LaneStripSkeleton } from "./LaneStrip";
 import { EVENTS_PAGE, EventsView } from "./EventsView";
 import { RecordDrawer } from "./RecordDrawer";
 import { SESSIONS_PAGE, SessionsView } from "./SessionsView";
-import { SummaryView } from "./SummaryView";
-import { SearchBox, SkelBar, useNarrow, useSlashFocus } from "./parts";
+import { GRID3, SUMMARY, SummaryView } from "./SummaryView";
+import { BACK, LEVEL_HEAD, NOTE, SearchBox, SkelBar, useNarrow, useSlashFocus } from "./parts";
 
 /**
  * `/audit` — the audit ledger as an explorer: three readings of one filtered set, a per-principal
@@ -76,7 +84,9 @@ export function AuditPage(): ReactNode {
   const data = window.data;
   return (
     <Shell active="audit">
-      <main className="page--workspace audit">
+      {/* The workspace's gutters stand; its cards sit 12px apart, as the demo draws them, not the
+          24px free-standing cards get — this page is one instrument, not a stack of panels. */}
+      <Page shape="workspace" className="gap-3 pt-5 max-md:gap-1.5 max-md:pt-2.5">
         {data === undefined ? (
           window.isError ? (
             <FailedExplorer message={window.error.message} onRetry={() => void window.refetch()} />
@@ -93,7 +103,7 @@ export function AuditPage(): ReactNode {
             }
           />
         )}
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -234,16 +244,30 @@ function Explorer({
         }
       />
 
-      <div className="a-fbar">
-        <button type="button" className="btn btn--outline a-filtersbtn" onClick={() => setFilterLevel(true)}>
+      {/* The filter bar. `data-slot` is what `scripts/audit-search-check.mts` scopes its Clear
+          to, since a Clear under "Nothing matches" can be on screen at the same time. On the
+          phone, Filters opens the level the hidden rail's groups move to, and it and the search
+          share one row. */}
+      <div data-slot="filter-bar" className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          className="hidden max-md:flex max-md:flex-[0_0_auto] max-md:px-3.5"
+          onClick={() => setFilterLevel(true)}
+        >
           Filters{selection.filters.length > 0 ? ` · ${selection.filters.length}` : ""}
-        </button>
+        </Button>
+        {/* A held filter: its field dim, its value, and the × that drops it. Not a Badge: a
+            24px mono chip that clips its own square remove button, 44px on the phone. */}
         {selection.filters.map((filter) => (
-          <span className="a-fchip" key={`${filter.field}:${filter.value}`}>
-            <span className="a-fchip-k">{filter.field}</span>
-            <span className="a-fchip-v">{filter.value}</span>
+          <span
+            className="inline-flex h-control-xs items-center overflow-hidden rounded-[7px] bg-muted font-mono text-xs max-md:h-control-touch max-md:rounded-[9px]"
+            key={`${filter.field}:${filter.value}`}
+          >
+            <span className="pr-1 pl-2.5 text-muted-foreground">{filter.field}</span>
+            <span className="pr-1">{filter.value}</span>
             <button
               type="button"
+              className="size-control-xs cursor-pointer border-0 bg-transparent p-0 text-ring hover:bg-border hover:text-foreground max-md:size-control-touch"
               aria-label={`Remove the ${filter.field} filter ${filter.value}`}
               onClick={() =>
                 go({ filters: selection.filters.filter((held) => held !== filter) })
@@ -263,31 +287,28 @@ function Explorer({
           placeholder="Search events and bodies…  ( / )"
           label="Search events and bodies"
           busy={searching}
+          className="min-w-[260px] max-md:h-control-touch max-md:min-w-0 max-md:flex-[1_1_120px]"
         />
         {selection.filters.length > 0 || selection.q !== "" ? (
-          <button
-            type="button"
-            className="btn btn--outline btn--sm"
-            onClick={() => go({ filters: [], q: "" })}
-          >
+          <Button variant="outline" size="sm" onClick={() => go({ filters: [], q: "" })}>
             Clear
-          </button>
+          </Button>
         ) : null}
       </div>
 
       {/* A failed search REPORTS itself and leaves the rows it had. Replacing the page with an
           error card would throw away an answer that is still on screen and still true. */}
       {failure === null ? null : (
-        <div className="alert alert--danger" role="status">
+        <Alert variant="danger" role="status">
           {failure.message} The rows below are the last answer.{" "}
-          <button type="button" className="btn btn--outline btn--sm" onClick={failure.retry}>
+          <Button variant="outline" size="sm" onClick={failure.retry}>
             Try again
-          </button>
-        </div>
+          </Button>
+        </Alert>
       )}
 
-      <div className="a-body">
-        <aside className="card a-rail">
+      <div className={BODY}>
+        <Card size="flush" render={<aside />} className={RAIL}>
           <FacetRail
             groups={derived.groups}
             selected={derived.selected.length}
@@ -298,10 +319,11 @@ function Explorer({
               setExpandedGroups((held) => ({ ...held, [field]: held[field] !== true }))
             }
           />
-        </aside>
+        </Card>
         {/* Dimmed while a new search loads, so the rows read as the PREVIOUS answer rather than
-            as the one being typed. A skeleton here is what tore the page down. */}
-        <div className={searching ? "a-main a-main--stale" : "a-main"} aria-busy={searching}>
+            as the one being typed — and still readable, because they are still true. A skeleton
+            here is what tore the page down (postmortem 2026-09-21). */}
+        <div className={searching ? `${MAIN} opacity-55 [transition:opacity_0.12s]` : MAIN} aria-busy={searching}>
           {rows.length === 0 && selection.filters.length === 0 && selection.q === "" ? (
             <EmptyLedger />
           ) : derived.selected.length === 0 ? (
@@ -399,9 +421,8 @@ const HOUR = 3_600_000;
  * The header: the title, what the selection amounts to, the export and the view segment.
  *
  * `Export JSONL` is a plain anchor, never a fetch — the route streams the whole match set in
- * chunks and a browser download is the only consumer that makes sense of that. The segment is a
- * `.segmented` with `aria-current` on the chosen arm, which is both the shared sheet's own active
- * style and the state a screen reader needs.
+ * chunks and a browser download is the only consumer that makes sense of that. The segment is
+ * Tabs: three in-page readings of one selection, the current one `aria-selected`.
  */
 function Header({
   subtitle,
@@ -416,41 +437,62 @@ function Header({
   onView: (view: AuditView) => void;
 }): ReactNode {
   return (
-    <div className="a-head">
-      <h1 className="page-title a-ttl">Audit log</h1>
-      <p className="note a-sub">{subtitle}</p>
+    <div className={HEAD}>
+      <PageTitle className="[grid-area:ttl]">Audit log</PageTitle>
+      <p className={`${NOTE} [grid-area:sub]`}>{subtitle}</p>
       {/* Two labels, one accessible name. At 375px "Export JSONL" is a third of the title row,
           and the format is on the file it downloads — so the visible word shortens and
           `aria-label` keeps the full one for anyone not reading the pixels. */}
       {exportTo === undefined ? null : (
         <a
-          className="btn btn--outline btn--sm a-exp"
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "[grid-area:exp] max-md:px-3.5")}
           href={exportTo}
           download="audit.jsonl"
           aria-label="Export JSONL"
         >
-          <span className="wide-only">Export JSONL</span>
-          <span className="narrow-only">Export</span>
+          <span className="max-md:hidden">Export JSONL</span>
+          <span className="hidden max-md:inline">Export</span>
         </a>
       )}
-      <div className="segmented a-views" role="group" aria-label="View">
-        {VIEWS.map((each) => (
-          <button
-            key={each}
-            type="button"
-            aria-current={each === view ? "page" : undefined}
-            onClick={() => onView(each)}
-          >
-            {each[0]?.toUpperCase()}
-            {each.slice(1)}
-          </button>
-        ))}
-      </div>
+      <Tabs value={view} onValueChange={(next) => onView(next as AuditView)} className="[grid-area:seg]">
+        <TabsList aria-label="View" className="max-md:mt-0.5">
+          {VIEWS.map((each) => (
+            <TabsTrigger key={each} value={each} className="max-md:flex-1">
+              {each[0]?.toUpperCase()}
+              {each.slice(1)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
     </div>
   );
 }
 
 const VIEWS: AuditView[] = ["summary", "sessions", "events"];
+
+/** The head's two rows of title with the actions beside them, as a grid so the phone can
+ *  re-area the same markup rather than reorder it: title and export on one row, the subtitle
+ *  under them, the segment full width under that. */
+const HEAD =
+  "grid grid-cols-[1fr_auto_auto] items-center gap-x-3 [grid-template-areas:'ttl_exp_seg'_'sub_exp_seg'] max-md:grid-cols-[1fr_auto] max-md:gap-y-1 max-md:[grid-template-areas:'ttl_exp'_'sub_sub'_'seg_seg']";
+
+/**
+ * The rail beside the main pane. At the regular tier the rail goes above it, and the pane
+ * keeps its own content width. On the phone the column STRETCHES, not the wide tier's
+ * `flex-start`: that one declaration is the difference between a page that fits and one that
+ * scrolls sideways, because a column that sizes each child to its content let the events table
+ * take the width of its widest unbreakable line, and the card and the page went with it.
+ */
+const BODY = "flex items-start gap-3 md:max-lg:flex-col max-md:flex-col max-md:items-stretch";
+
+/** Sticky, because the rail is how the reader narrows a long list and scrolling the list must
+ *  not take the controls off screen. Above the pane at the regular tier, a wrapping row of
+ *  groups; gone on the phone, where Filters opens its groups as a level. */
+const RAIL =
+  "sticky top-3 max-h-[calc(100vh-24px)] w-rail flex-none overflow-auto px-2 py-2.5 md:max-lg:static md:max-lg:flex md:max-lg:max-h-none md:max-lg:w-full md:max-lg:flex-wrap md:max-lg:gap-x-6 md:max-lg:gap-y-0 md:max-lg:px-3.5 md:max-lg:py-3 max-md:hidden";
+
+/** The pane the views draw in. */
+const MAIN = "flex min-w-0 flex-1 flex-col gap-3";
 
 /** The window in flight. The strip, the rail and the pane keep their shapes so the page does not
  *  jump when the rows land; Export is absent because there is no selection to export yet. */
@@ -463,36 +505,36 @@ function LoadingExplorer({ search }: { search: SearchBag }): ReactNode {
         onView={() => undefined}
       />
       <LaneStripSkeleton />
-      <div className="a-body">
-        <aside className="card a-rail">
+      <div className={BODY}>
+        <Card size="flush" render={<aside />} className={RAIL}>
           <FacetRailSkeleton />
-        </aside>
-        <div className="a-main">
-          <div className="card a-pad" aria-busy="true">
+        </Card>
+        <div className={MAIN}>
+          <Card size="flush" className={SUMMARY} aria-busy="true">
             <span className="sr-only">Loading the audit log…</span>
-            <div className="a-grid3">
+            <div className={GRID3}>
               {[0, 1, 2].map((index) => (
                 <div key={index}>
                   <SkelBar width="90px" height={26} />
-                  <div style={{ marginTop: 8 }}>
+                  <div className="mt-2">
                     <SkelBar width="70%" />
                   </div>
                 </div>
               ))}
             </div>
             <SkelBar width="100%" height={64} />
-            <div className="a-grid3">
+            <div className={GRID3}>
               {[0, 1, 2].map((index) => (
                 <div key={index}>
                   {[0, 1, 2, 3].map((row) => (
-                    <div key={row} style={{ margin: "4px 0" }}>
+                    <div key={row} className="my-1">
                       <SkelBar width="100%" />
                     </div>
                   ))}
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         </div>
       </div>
     </>
@@ -504,47 +546,47 @@ function LoadingExplorer({ search }: { search: SearchBag }): ReactNode {
 function FailedExplorer({ message, onRetry }: { message: string; onRetry: () => void }): ReactNode {
   return (
     <>
-      <div className="a-head">
-        <h1 className="page-title a-ttl">Audit log</h1>
+      <div className={HEAD}>
+        <PageTitle className="[grid-area:ttl]">Audit log</PageTitle>
       </div>
-      <div className="empty">
-        <div className="empty-title">Couldn&apos;t load the audit log</div>
-        <div className="empty-text">{message} Nothing was changed.</div>
-        <button type="button" className="btn btn--outline btn--sm" onClick={onRetry}>
+      <Empty>
+        <EmptyTitle>Couldn&apos;t load the audit log</EmptyTitle>
+        <EmptyDescription>{message} Nothing was changed.</EmptyDescription>
+        <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
           Try again
-        </button>
-      </div>
+        </Button>
+      </Empty>
     </>
   );
 }
 
 const EmptyLedger = (): ReactNode => (
-  <div className="card">
-    <div className="empty empty--inline">
-      <div className="empty-title">Nothing recorded yet</div>
-      <div className="empty-text">Calls, approvals and config changes will appear here.</div>
-    </div>
-  </div>
+  <Card size="flush">
+    <Empty variant="inline">
+      <EmptyTitle>Nothing recorded yet</EmptyTitle>
+      <EmptyDescription>Calls, approvals and config changes will appear here.</EmptyDescription>
+    </Empty>
+  </Card>
 );
 
 const NothingMatches = ({ onClear }: { onClear: () => void }): ReactNode => (
-  <div className="card">
-    <div className="empty empty--inline">
-      <div className="empty-title">Nothing matches</div>
-      <div className="empty-text">Widen the window or drop a filter.</div>
-      <button type="button" className="btn btn--outline btn--sm" onClick={onClear}>
+  <Card size="flush">
+    <Empty variant="inline">
+      <EmptyTitle>Nothing matches</EmptyTitle>
+      <EmptyDescription>Widen the window or drop a filter.</EmptyDescription>
+      <Button variant="outline" size="sm" className="mt-4" onClick={onClear}>
         Clear
-      </button>
-    </div>
-  </div>
+      </Button>
+    </Empty>
+  </Card>
 );
 
 /**
  * The phone's Filters level: the rail's own groups on a full screen, headed `‹ Audit`, under a
  * sticky **Show N events**.
  *
- * A Base UI Dialog for the record's reason — focus trapped, Escape closes, the page behind inert —
- * and open state held here rather than in the URL, because it is a way of reaching the filters
+ * A Sheet for the record's reason — focus trapped, Escape closes, the page behind inert — and
+ * open state held here rather than in the URL, because it is a way of reaching the filters
  * rather than a filter: a shared link should open the list, not the drawer over it.
  */
 function FiltersLevel({
@@ -561,30 +603,29 @@ function FiltersLevel({
   children: ReactNode;
 }): ReactNode {
   return (
-    <Dialog.Root open onOpenChange={(next) => (next ? undefined : onClose())}>
-      <Dialog.Portal>
-        <Dialog.Popup className="audit-level" data-slot="dialog-content">
-          <div className="a-lhead">
-            <button type="button" className="a-dback" style={{ display: "inline-flex" }} onClick={onClose}>
-              ‹ Audit
-            </button>
-            <Dialog.Title render={<b />} style={{ fontSize: 14 }}>
-              Filters
-            </Dialog.Title>
-            {filters > 0 ? <span className="badge">{filters} on</span> : null}
-            <button type="button" className="btn btn--outline btn--sm a-lclear" onClick={onClear}>
-              Clear
-            </button>
-          </div>
-          <div className="a-lbody">{children}</div>
-          <div className="a-lfoot">
-            <button type="button" className="btn btn--primary" onClick={onClose}>
-              Show {fmtCount(count)} events
-            </button>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Sheet open onOpenChange={(next) => (next ? undefined : onClose())}>
+      <SheetContent variant="level">
+        <div className={LEVEL_HEAD}>
+          {/* A level is always a level, so its way back shows at every width. */}
+          <button type="button" className={`${BACK} inline-flex`} onClick={onClose}>
+            ‹ Audit
+          </button>
+          <SheetTitle render={<b />} className="text-base">
+            Filters
+          </SheetTitle>
+          {filters > 0 ? <Badge>{filters} on</Badge> : null}
+          <Button variant="outline" size="sm" className="ml-auto" onClick={onClear}>
+            Clear
+          </Button>
+        </div>
+        <div className="flex-1 overflow-auto px-2 pt-2 pb-3">{children}</div>
+        <div className="sticky bottom-0 flex border-t bg-background px-4 py-3">
+          <Button className="h-control-touch flex-1" onClick={onClose}>
+            Show {fmtCount(count)} events
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 

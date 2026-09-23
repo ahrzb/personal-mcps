@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { cn } from "@/lib/cn";
 import { fmtCount } from "./derive";
 import type { OutcomeClass } from "./derive";
 
@@ -13,32 +16,83 @@ import type { OutcomeClass } from "./derive";
  * live at the bottom.
  */
 
+/** A small muted line: a count, a caption, a hint. At most 72 characters a line, like prose. */
+export const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
+
+/** A small uppercase label over a group: a facet, a panel, a body section. */
+export const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
+
+/** A box's hover outline, drawn inside it so the row it sits in does not move. */
+export const HOVER_RING = "hover:shadow-[inset_0_0_0_1px_var(--color-border)]";
+
+/**
+ * A bar-backed row, as a toggle or a link: the facet rail's values and the summary's changes. It
+ * sets no height, since the two differ. Its bar is `absolute` and painted over whatever is not
+ * positioned, so every label in it says `relative`.
+ */
+export const FROW = `relative flex w-full cursor-pointer items-center gap-[7px] rounded-[5px] border-0 bg-transparent px-[5px] py-0 text-left font-[family-name:inherit] text-xs text-inherit aria-pressed:bg-border aria-pressed:font-semibold ${HOVER_RING}`;
+
+/** A list card's foot: Load more and what the list holds. The foot wraps on the phone rather
+ *  than pushing the card wider on its one long sentence. */
+export const MORE = "flex items-center gap-2.5 border-t px-3.5 py-2.5 max-md:flex-wrap";
+
+/** The record's head and the Filters level's: a bar over the body, which on the phone is the
+ *  level header, with `‹ Audit` on a line of its own above the title. */
+export const LEVEL_HEAD =
+  "flex items-center gap-2.5 border-b px-4 py-3 max-md:flex-wrap max-md:gap-y-0.5 max-md:pt-1 max-md:pb-2.5";
+
+/** `‹ Audit`, the way back out of a level: a 44px line of its own on the phone. It sets no
+ *  display: the record shows it on the phone only, the Filters level at every width. */
+export const BACK =
+  "cursor-pointer items-center border-0 bg-transparent p-0 font-[family-name:inherit] text-base font-medium text-muted-foreground max-md:h-control-touch max-md:flex-[1_1_100%]";
+
+/** The hatch that means "not loaded": an hour the ceiling cut off, which must never read as an
+ *  hour in which nothing happened. A background IMAGE with no colour under it. */
+export const HATCH =
+  "bg-[repeating-linear-gradient(45deg,var(--color-dim-fg)_0_2px,var(--color-sunken)_2px_4px)]";
+
+/** Each outcome's fill, and the hatch's. One class per key, so a mark never wears two fills. */
+export const FILL: Record<OutcomeClass | "nl", string> = {
+  ok: "bg-o-ok",
+  approval: "bg-o-approval",
+  archived: "bg-o-archived",
+  denied: "bg-o-denied",
+  error: "bg-o-error",
+  nl: HATCH,
+};
+
 /** The class name is ALWAYS printed beside the colour (§13), so this is never rendered alone —
- *  it is the mark beside a word, not the word. */
-export function Swatch({ cls }: { cls: OutcomeClass | "nl" }): ReactNode {
-  return <span className={`a-sw a-sw--${cls}`} aria-hidden="true" />;
+ *  it is the mark beside a word, not the word. `className` is its row's: a bar-backed row
+ *  raises it over the bar. */
+export function Swatch({ cls, className }: { cls: OutcomeClass | "nl"; className?: string }): ReactNode {
+  return (
+    <span className={cn("inline-block size-[9px] flex-none rounded-[2px]", FILL[cls], className)} aria-hidden="true" />
+  );
 }
 
-/** Which shared badge modifier an outcome class wears: green for the one that ran, red for the
- *  two that failed, amber for the two the owner can still act on. */
-const BADGE_OF: Record<OutcomeClass, string> = {
-  ok: "badge badge--success",
-  approval: "badge badge--warning",
-  archived: "badge badge--warning",
-  denied: "badge badge--danger",
-  error: "badge badge--danger",
-};
+/** Which badge tone an outcome class wears: green for the one that ran, red for the two that
+ *  failed, amber for the two the owner can still act on. */
+const BADGE_OF = {
+  ok: "success",
+  approval: "warning",
+  archived: "warning",
+  denied: "danger",
+  error: "danger",
+} as const satisfies Record<OutcomeClass, string>;
 
 /** An outcome as a chip: the class NAME, in the class's colour. Never the colour alone, and
  *  never the raw code — the record's field table is where the code is said. */
 export function OutcomeBadge({ cls, count }: { cls: OutcomeClass; count?: number }): ReactNode {
   return (
-    <span className={BADGE_OF[cls]}>
+    <Badge variant={BADGE_OF[cls]}>
       {cls}
       {count === undefined ? null : ` ${fmtCount(count)}`}
-    </span>
+    </Badge>
   );
 }
+
+/** What a title is about, beside it: dim, and never bold even inside a bold title. */
+export const SECONDARY = "font-normal text-muted-foreground";
 
 /**
  * A title with what the row is ABOUT beside it, dim — the rendering of `derive.titleOf` and
@@ -51,7 +105,7 @@ export function Titled({ of }: { of: { title: string; secondary: string | null }
   return (
     <>
       <span>{of.title}</span>
-      {of.secondary === null ? null : <span className="a-sub2"> {of.secondary}</span>}
+      {of.secondary === null ? null : <span className={SECONDARY}> {of.secondary}</span>}
     </>
   );
 }
@@ -86,6 +140,7 @@ export function SearchBox({
   label,
   inputRef,
   busy = false,
+  className,
 }: {
   /** The settled text, from the URL. */
   initial: string;
@@ -98,6 +153,9 @@ export function SearchBox({
   inputRef?: React.RefObject<HTMLInputElement | null>;
   /** A read for this text is in flight. */
   busy?: boolean;
+  /** The box's width and narrow height where it sits: the filter bar's box is 260px at least
+   *  and grows to the touch height; the record's is the drawer's width. */
+  className?: string;
 }): ReactNode {
   const [typed, setTyped] = useState(initial);
   const emitted = useRef(initial);
@@ -119,9 +177,11 @@ export function SearchBox({
   useEffect(() => clear, []);
 
   return (
-    <div className="a-search">
-      <SearchIcon />
-      <input
+    <InputGroup size="sm" className={className}>
+      <InputGroupAddon>
+        <SearchIcon />
+      </InputGroupAddon>
+      <InputGroupInput
         ref={inputRef}
         value={typed}
         placeholder={placeholder}
@@ -141,11 +201,11 @@ export function SearchBox({
       {/* Inside the box, because the box is what the reader is looking at while they wait —
           and announced, because the only other sign is rows that have not changed yet. */}
       {busy ? (
-        <span className="note a-searching" role="status">
+        <InputGroupAddon className={NOTE} role="status">
           Searching…
-        </span>
+        </InputGroupAddon>
       ) : null}
-    </div>
+    </InputGroup>
   );
 }
 
@@ -167,14 +227,27 @@ export function WarnIcon(): ReactNode {
   );
 }
 
-/** A block of the right height while a read is in flight. The page's own, not `chrome/States`'
- *  Tailwind one, because these stand in for a strip and a rail rather than for table rows. */
-export function SkelBar({ width, height }: { width: string; height?: number }): ReactNode {
-  return <span className="a-skel" style={{ width, ...(height === undefined ? {} : { height }) }} />;
+/**
+ * A still bar of the right height while a read is in flight, shaded muted → bar → muted. The
+ * page's own, not `ui/skeleton`, because that one pulses and is a block: this one is an INLINE
+ * span, so where its parent is a block rather than a flex row it draws nothing, as it always
+ * has. `data-slot="skeleton"` is what `scripts/audit-search-check.mts` watches for.
+ */
+export function SkelBar({ width, height, className }: { width: string; height?: number; className?: string }): ReactNode {
+  return (
+    <span
+      data-slot="skeleton"
+      className={cn(
+        "h-3 rounded-sm bg-[linear-gradient(90deg,var(--color-muted),var(--color-a-bar),var(--color-muted))]",
+        className,
+      )}
+      style={{ width, ...(height === undefined ? {} : { height }) }}
+    />
+  );
 }
 
-/** The narrow breakpoint, spelled once. A media query cannot read a custom property, so
- *  `styles.css` names 767 in prose and every rule writes it — including this one. */
+/** The narrow breakpoint, spelled once: the query every `max-md:` class on this page answers to
+ *  (app.css's `--breakpoint-md`, 768px). */
 const NARROW = "(max-width: 767px)";
 
 /**
@@ -183,7 +256,7 @@ const NARROW = "(max-width: 767px)";
  * A hook rather than a CSS rule because one decision genuinely cannot be made in CSS: the
  * strip names FOUR principals at narrow and six at wide, and the folded lane's label counts
  * the rest — so hiding two lanes with `display: none` would leave "2 others" beside four
- * hidden ones. Everything else about the phone is in the stylesheet.
+ * hidden ones. Everything else about the phone is in the `max-md:` classes.
  */
 export function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(false);

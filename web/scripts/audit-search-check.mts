@@ -67,6 +67,16 @@ const BURST_READS = 2;
  *  "PAGE — SEARCHING" on `AuditDetailStates`, which has a board and no picture otherwise. */
 const OUT = process.env.OUT ?? null;
 
+/* What the walk finds on the page. By role, label and `data-slot` rather than by class: the page
+   draws in utilities, whose class strings say how a thing looks, not what it is. */
+
+/** The Events tab of the view segment. */
+const EVENTS_TAB = 'role=tab[name="Events"]';
+/** A row of the events table. */
+const EVENT_ROW = "[data-slot=table-body] > tr";
+/** The filter bar's own Clear, not the one "Nothing matches" can draw at the same time. */
+const CLEAR = "[data-slot=filter-bar] button:has-text('Clear')";
+
 const failures: string[] = [];
 
 /** One behaviour, reported as it is checked so a failing run still shows what did work. */
@@ -112,8 +122,8 @@ async function inputState(page: Page): Promise<{ present: boolean; sameNode: boo
  * nothing had happened.
  */
 async function eventCount(page: Page): Promise<number> {
-  const foot = await page.textContent(".a-more .note");
-  const match = /from ([\d,]+) events/.exec(foot ?? "");
+  const foot = await page.evaluate(() => document.body.textContent);
+  const match = /rows from ([\d,]+) events/.exec(foot ?? "");
   return match === null ? -1 : Number(match[1]?.replace(/,/g, ""));
 }
 
@@ -132,9 +142,7 @@ async function windowReads(page: Page): Promise<number> {
  *  never moves and the router's own state is the only place to read it. */
 async function routerQ(page: Page): Promise<string> {
   return await page.evaluate(() => {
-    const clear = document.querySelector<HTMLElement>(".a-fbar .btn");
-    void clear;
-    const link = document.querySelector<HTMLAnchorElement>("a.a-exp");
+    const link = document.querySelector<HTMLAnchorElement>('a[download="audit.jsonl"]');
     const href = link?.getAttribute("href") ?? "";
     const at = href.indexOf("?");
     return at < 0 ? "" : (new URLSearchParams(href.slice(at + 1)).get("text") ?? "");
@@ -155,8 +163,8 @@ try {
   await page.goto(`${ORIGIN}${STATE}`, { waitUntil: "load" });
   await mounted(page);
   await settle(page);
-  await page.click('[data-view="events"], .a-views button:nth-child(3)');
-  await page.waitForSelector(".a-ev");
+  await page.click(EVENTS_TAB);
+  await page.waitForSelector(EVENT_ROW);
 
   const before = await eventCount(page);
   check("the events view draws rows to begin with", before > 0, `${before} events`);
@@ -171,7 +179,9 @@ try {
       for (const record of records) {
         for (const node of record.addedNodes) {
           if (!(node instanceof HTMLElement)) continue;
-          if (node.matches(".a-skel") || node.querySelector(".a-skel") !== null) seen.push(node.className || node.tagName);
+          if (node.matches("[data-slot=skeleton]") || node.querySelector("[data-slot=skeleton]") !== null) {
+            seen.push(node.className || node.tagName);
+          }
         }
       }
     }).observe(document.body, { childList: true, subtree: true });
@@ -214,14 +224,16 @@ try {
   // Past the 250ms debounce and INSIDE the seed responder’s own 250ms, which is the only
   // window in which a search is in flight at all.
   await page.waitForTimeout(380);
-  const during = await page.evaluate(() => {
-    const main = document.querySelector<HTMLElement>(".a-main");
+  // The pane is `aria-busy` while its rows are the previous answer, and that is also what dims
+  // it — so the stale pane is the busy element that holds the rows, drawn below full opacity.
+  const during = await page.evaluate((row) => {
+    const main = document.querySelector<HTMLElement>('[aria-busy="true"]');
     return {
-      rows: document.querySelectorAll(".a-ev").length,
-      stale: main !== null && main.classList.contains("a-main--stale"),
+      rows: document.querySelectorAll(row).length,
+      stale: main !== null && main.querySelector(row) !== null && Number(getComputedStyle(main).opacity) < 1,
       busy: document.querySelector('[role="status"]')?.textContent ?? "",
     };
-  });
+  }, EVENT_ROW);
   check("mid-search the previous rows stay, dimmed", during.rows > 0 && during.stale, JSON.stringify(during));
   check("and the box says it is searching", during.busy.includes("Searching"), during.busy);
   // The searching page is a BOARD state with no other picture: the gallery seeds a resting page,
@@ -232,7 +244,7 @@ try {
   /* ---- the burst: fast typing on a slow machine, which is where the race lived ---- */
   const cdp = await context.newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
-  await page.click(".a-fbar .btn:has-text('Clear')");
+  await page.click(CLEAR);
   await page.waitForTimeout(PAUSE);
 
   const readsBefore = await windowReads(page);
@@ -250,8 +262,12 @@ try {
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
 
   /* ---- Clear: the one thing that may re-seed the box from outside ---- */
-  const full = await page.evaluate(() => Number(document.querySelector(".a-rail .a-railnote")?.textContent?.match(/of ([\d,]+)/)?.[1]?.replace(/,/g, "") ?? -1));
-  await page.click(".a-fbar .btn:has-text('Clear')");
+  // The rail's first line, "N of M in window".
+  const full = await page.evaluate(() => {
+    const line = [...document.querySelectorAll("aside p")].find((each) => / in window$/.test(each.textContent ?? ""));
+    return Number(line?.textContent?.match(/of ([\d,]+)/)?.[1]?.replace(/,/g, "") ?? -1);
+  });
+  await page.click(CLEAR);
   await page.waitForTimeout(PAUSE);
   const cleared = await inputState(page);
   check("Clear empties the box", cleared.value === "", `value="${cleared.value}"`);
@@ -265,8 +281,8 @@ try {
     await phone.goto(`${ORIGIN}${STATE}`, { waitUntil: "load" });
     await mounted(phone);
     await settle(phone);
-    await phone.click(".a-views button:nth-child(3)");
-    await phone.waitForSelector(".a-ev");
+    await phone.click(EVENTS_TAB);
+    await phone.waitForSelector(EVENT_ROW);
     await phone.click('input[aria-label="Search events and bodies"]');
     await phone.keyboard.type("slac");
     // Past the debounce and inside the responder's own delay: the only moment the page is

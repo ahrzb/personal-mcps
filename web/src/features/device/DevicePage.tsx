@@ -2,8 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { AuthFrame } from "@/chrome/AuthFrame";
+import { Kv, KvList } from "@/chrome/Kv";
 import { useDocumentTitle } from "@/chrome/Shell";
 import { Failure, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { Field, FieldDescription, FieldError, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useApi, useAppEnv } from "@/lib/api-context";
 import { ApiError } from "@/lib/http";
 import { deviceApi, paths } from "@/lib/paths";
@@ -14,7 +22,7 @@ import { deviceViewOf, relativeTime } from "./derive";
 
 /**
  * `/device` — the RFC 8628 device-flow verdict page (§13), reached from a URL the CLI printed.
- * CHROMELESS, as the server page was: the `.auth` column, the brand, one card.
+ * CHROMELESS, as the server page was: `AuthFrame`'s column, the brand, one `Card size="auth"`.
  *
  * The port of `server/src/pages/device.tsx`, element for element. The URL decides the moment
  * (`derive.deviceViewOf`); only a present `?user_code=` is read, and that read CLAIMS the code
@@ -37,9 +45,9 @@ export function DevicePage(): ReactNode {
   else if (view.kind === "enter-code") card = <EnterCodeCard userCode="" error={view.error} />;
   else if (read.isPending) {
     card = (
-      <div className="auth-card">
+      <Card size="auth">
         <Skeleton rows={5} />
-      </div>
+      </Card>
     );
   } else if (read.isError) {
     // A 404 is the server's word that the code is not live — the enter-code card again, the
@@ -53,14 +61,7 @@ export function DevicePage(): ReactNode {
   } else card = <ConfirmCard request={read.data.request} />;
 
   return (
-    <div className="auth">
-      <div className="brand">
-        <BrandMark />
-        <span>personal-mcps</span>
-      </div>
-      {card}
-      {view.kind === "decided" ? null : <div className="auth-foot">Codes expire after 10 minutes.</div>}
-    </div>
+    <AuthFrame foot={view.kind === "decided" ? undefined : "Codes expire after 10 minutes."}>{card}</AuthFrame>
   );
 }
 
@@ -71,36 +72,33 @@ export function DevicePage(): ReactNode {
  */
 function EnterCodeCard({ userCode, error }: { userCode: string; error: string | null }): ReactNode {
   return (
-    <div className="auth-card">
-      <div className="auth-title">Approve a device</div>
-      <form method="get" action={paths.device} className="form">
-        <div className="field">
-          <label className="label" htmlFor="user_code">
-            Device code
-          </label>
-          <input
+    <Card size="auth">
+      <CardTitle>Approve a device</CardTitle>
+      <FieldGroup render={<form method="get" action={paths.device} />}>
+        <Field>
+          <Label htmlFor="user_code">Device code</Label>
+          <Input
             id="user_code"
             type="text"
             name="user_code"
-            className="input--mono"
             placeholder="XXXX-XXXX"
             defaultValue={userCode}
             aria-invalid={error === null ? undefined : "true"}
           />
           {error === null ? (
-            <div className="field-hint">Enter the code the pmcp CLI printed.</div>
+            <FieldDescription>Enter the code the pmcp CLI printed.</FieldDescription>
           ) : (
-            <div className="field-error">{error}</div>
+            <FieldError>{error}</FieldError>
           )}
-        </div>
-        <button type="submit" className="btn btn--primary btn--block">
+        </Field>
+        <Button type="submit" className="w-full">
           Continue
-        </button>
-      </form>
-      <div className="center" style={{ fontSize: "var(--text-sm)" }}>
+        </Button>
+      </FieldGroup>
+      <div className="text-center text-sm">
         <Link to={paths.apps}>Cancel</Link>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -136,52 +134,53 @@ function ConfirmCard({ request }: { request: DeviceRequest }): ReactNode {
   };
 
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Approve CLI sign-in</div>
-        <div className="auth-desc">A device is asking to sign in with this code.</div>
+        <CardTitle>Approve CLI sign-in</CardTitle>
+        <CardDescription>A device is asking to sign in with this code.</CardDescription>
       </div>
 
-      <div className="field">
-        <div className="eyebrow">Device code</div>
-        <div className="code-display">{request.userCode}</div>
-      </div>
-
-      <div className="kv">
-        <div className="kv-row">
-          <div className="kv-key">IP address</div>
-          <div className="mono">{request.ip}</div>
-        </div>
-        <div className="kv-row">
-          <div className="kv-key">Client</div>
-          <div>{request.client}</div>
-        </div>
-        <div className="kv-row">
-          <div className="kv-key">Requested</div>
-          <div>{relativeTime(request.requestedAt, Date.now())}</div>
+      <div className="flex flex-col gap-1.5">
+        <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Device code</div>
+        <div className="flex h-11 items-center justify-center rounded-md bg-muted font-mono text-lg font-semibold tracking-[3px] max-md:h-code-display-touch">
+          {request.userCode}
         </div>
       </div>
 
-      <div className="alert alert--warning">
+      <KvList variant="block">
+        <Kv k="IP address">
+          <span className="font-mono">{request.ip}</span>
+        </Kv>
+        <Kv k="Client">{request.client}</Kv>
+        <Kv k="Requested">{relativeTime(request.requestedAt, Date.now())}</Kv>
+      </KvList>
+
+      <Alert variant="warning">
         <WarningIcon />
         <div>
-          <div className="alert-title">Grants full admin access</div>
-          <div className="alert-text">
+          <AlertTitle>Grants full admin access</AlertTitle>
+          <AlertDescription>
             Approving signs this device in as {bootstrap.username} with full control of your namespace — apps, grants,
             and tokens.
-          </div>
+          </AlertDescription>
         </div>
-      </div>
+      </Alert>
 
-      <div className="confirm-actions">
-        <button type="button" className="btn btn--danger-outline" disabled={pending} onClick={() => void decide("deny")}>
+      <div className="flex gap-3 max-md:flex-col-reverse max-md:gap-2.5">
+        <Button
+          type="button"
+          variant="danger-outline"
+          className="flex-auto"
+          disabled={pending}
+          onClick={() => void decide("deny")}
+        >
           Deny
-        </button>
-        <button type="button" className="btn btn--primary" disabled={pending} onClick={() => void decide("approve")}>
+        </Button>
+        <Button type="button" className="flex-auto" disabled={pending} onClick={() => void decide("approve")}>
           Approve
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -191,29 +190,17 @@ function ConfirmCard({ request }: { request: DeviceRequest }): ReactNode {
  */
 function DecidedCard({ decision }: { decision: "approved" | "denied" }): ReactNode {
   return (
-    <div className="auth-card" style={{ alignItems: "center", textAlign: "center", gap: "var(--space-6)" }}>
+    <Card size="auth" className="items-center gap-3 text-center">
       {decision === "approved" ? <ApprovedIcon /> : <DeniedIcon />}
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)", alignItems: "center" }}>
-        <div className="auth-title">{decision === "approved" ? "Device approved" : "Device denied"}</div>
-        <div style={{ fontSize: "var(--text-sm)", color: "var(--muted-fg)", lineHeight: 1.5 }}>
+      <div className="flex flex-col items-center gap-1.5">
+        <CardTitle>{decision === "approved" ? "Device approved" : "Device denied"}</CardTitle>
+        <div className="text-sm leading-normal text-muted-foreground">
           {decision === "approved"
             ? "You can return to your terminal — the CLI finishes sign-in on its own."
             : "You can close this tab. The CLI sign-in was cancelled."}
         </div>
       </div>
-    </div>
-  );
-}
-
-/** The hub mark — duplicated from the Shell, whose header this page does not render. */
-function BrandMark(): ReactNode {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.5" />
-      <path d="M12 8.5V3.5" />
-      <path d="M14.5 14.5L18.5 18.5" />
-      <path d="M9.5 14.5L5.5 18.5" />
-    </svg>
+    </Card>
   );
 }
 

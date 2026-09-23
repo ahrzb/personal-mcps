@@ -30,7 +30,13 @@ import type {
 import { effectiveRolesOf, itemEntry, reachabilityFor, redactPathsIn, ROLE_FAMILIES } from "./door";
 import { FAMILY_OF_KIND, familyCount, familyEntries, subjectOf } from "./grant-editor";
 import type { GrantEditor, GrantFamilyView } from "./grant-editor";
-import { Kv } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
+import { Details, DetailsBody, DetailsHead } from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { FieldError } from "@/components/ui/field";
+import { EYEBROW, NOTE } from "./AgentFrame";
 
 export function AppGrantDetails({
   agent,
@@ -71,55 +77,55 @@ export function AppGrantDetails({
     const matched = editor.matchedNames.get(name) ?? { tools: [], prompts: [], resources: [] };
     const standing = modeOf.get(name);
     return (
-      <div className="details">
-        <div className="dh">
-          <div className="title-row">
-            <span className="listing-title mono">{name}</span>
-            <span className="badge badge--muted">role</span>
-          </div>
-          <p className="note">
+      <Details>
+        <DetailsHead>
+          <TitleRow>
+            <span className="font-mono text-lg font-semibold">{name}</span>
+            <Badge variant="muted">role</Badge>
+          </TitleRow>
+          <p className={NOTE}>
             {builtin
               ? "Built in: every family, present and future."
               : `Declared by ${row.name} ${kind === "tunnel" ? "at connect" : "in config"}.`}
           </p>
-        </div>
-        <div className="db">
-          <section className="card card--pad">
-            <div className="eyebrow">For {agent}</div>
-            <div className="kv">
+        </DetailsHead>
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>For {agent}</div>
+            <KvList>
               <Kv k="Standing">
                 {standing === "allow" ? "in Allowed" : standing === "approval" ? "in Ask first" : "not granted"}
               </Kv>
-            </div>
-          </section>
-          <section className="card card--pad">
-            <div className="eyebrow">Patterns</div>
-            <div className="kv">
+            </KvList>
+          </Card>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>Patterns</div>
+            <KvList>
               {(builtin
                 ? ROLE_FAMILIES.map((family): [string, string[]] => [family, [".*"]])
                 : familyEntries(declared[name])
               ).map(([family, patterns]) => (
                 <Kv k={family} key={family}>
-                  <span className="mono">{patterns.join(", ")}</span>
+                  <span className="font-mono">{patterns.join(", ")}</span>
                 </Kv>
               ))}
-            </div>
-          </section>
-          <section className="card card--pad">
-            <div className="eyebrow">Matches today</div>
-            <div className="kv">
+            </KvList>
+          </Card>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>Matches today</div>
+            <KvList>
               {ROLE_FAMILIES.map((family) => (
                 <Kv k={family} key={family}>
                   {matched[family].length === 0 ? "none" : matched[family].join(", ")}
                 </Kv>
               ))}
-            </div>
-          </section>
-          <p className="note">
+            </KvList>
+          </Card>
+          <p className={NOTE}>
             A role widens when the app widens it. To keep a single item regardless, add it directly from its row.
           </p>
-        </div>
-      </div>
+        </DetailsBody>
+      </Details>
     );
   }
 
@@ -129,35 +135,35 @@ export function AppGrantDetails({
       const matched = editor.matchedNames.get(name) ?? { tools: [], prompts: [], resources: [] };
       const matches = [...matched.tools, ...matched.prompts, ...matched.resources];
       return (
-        <div className="details">
-          <div className="dh">
-            <div className="title-row">
-              <span className="listing-title mono">{name}</span>
-              <span className="badge badge--muted">pattern</span>
-            </div>
-            <p className="note">An entry that is not one item: anchored, * aliases .*.</p>
-          </div>
-          <div className="db">
-            <section className="card card--pad">
-              <div className="eyebrow">For {agent}</div>
-              <div className="kv">
+        <Details>
+          <DetailsHead>
+            <TitleRow>
+              <span className="font-mono text-lg font-semibold">{name}</span>
+              <Badge variant="muted">pattern</Badge>
+            </TitleRow>
+            <p className={NOTE}>An entry that is not one item: anchored, * aliases .*.</p>
+          </DetailsHead>
+          <DetailsBody>
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>For {agent}</div>
+              <KvList>
                 <Kv k="Standing">{entry.mode === "allow" ? "in Allowed" : "in Ask first"}</Kv>
-              </div>
-            </section>
-            <section className="card card--pad">
-              <div className="eyebrow">Matches today · {matches.length}</div>
+              </KvList>
+            </Card>
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>Matches today · {matches.length}</div>
               {matches.length === 0 ? (
-                <p className="note">nothing — kept, dormant</p>
+                <p className={NOTE}>nothing — kept, dormant</p>
               ) : (
                 matches.map((each) => (
-                  <div className="mono" key={each}>
+                  <div className="font-mono" key={each}>
                     {each}
                   </div>
                 ))
               )}
-            </section>
-          </div>
-        </div>
+            </Card>
+          </DetailsBody>
+        </Details>
       );
     }
   }
@@ -175,23 +181,23 @@ export function AppGrantDetails({
     const source = via.length > 0 ? `via ${via.join(", ")}` : "direct";
     const derived = view.derived?.find((each) => each.subject === name);
     return (
-      <div className="details">
-        <div className="dh">
-          <div className="title-row">
-            <span className="listing-title mono">{name}</span>
-            <span className="badge badge--muted">{selKind}</span>
-          </div>
+      <Details>
+        <DetailsHead>
+          <TitleRow>
+            <span className="font-mono text-lg font-semibold">{name}</span>
+            <Badge variant="muted">{selKind}</Badge>
+          </TitleRow>
           {/* The app's own prose, WHOLE — this card has room for the structure a row does
               not: paragraphs, lists, fences. The markup is `pages/markdown.ts`'s
               `renderMarkdown` output, rendered on the wire because that module is the only
               thing allowed to produce it. A resource's line is its media type, which is not
               prose and is drawn as text. */}
           <DescriptionNote item={item} family={family} derived={derived} />
-        </div>
-        <div className="db">
-          <section className="card card--pad">
-            <div className="eyebrow">For {agent}</div>
-            <div className="kv">
+        </DetailsHead>
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>For {agent}</div>
+            <KvList>
               <Kv k="Standing">
                 {here.mode === null
                   ? "not reachable"
@@ -211,24 +217,24 @@ export function AppGrantDetails({
                       : "Not asked."
                     : "—"}
               </Kv>
-            </div>
-          </section>
+            </KvList>
+          </Card>
           {family !== "tools" ? null : (
-            <section className="card card--pad">
-              <div className="eyebrow">Arguments</div>
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>Arguments</div>
               {derived === undefined || derived.arguments.length === 0 ? (
-                <p className="note">none</p>
+                <p className={NOTE}>none</p>
               ) : (
-                <div className="kv">
+                <KvList>
                   {derived.arguments.map((argument) => (
                     <Kv k={argument.name} key={argument.name}>
                       {argument.type === "" ? "" : `${argument.type} · `}
                       {argument.required ? "required" : "optional"}
                     </Kv>
                   ))}
-                </div>
+                </KvList>
               )}
-            </section>
+            </Card>
           )}
           <HubCard
             row={row}
@@ -239,8 +245,8 @@ export function AppGrantDetails({
             agents={agents}
             diagnostics={diagnostics}
           />
-        </div>
-      </div>
+        </DetailsBody>
+      </Details>
     );
   }
 
@@ -250,18 +256,18 @@ export function AppGrantDetails({
     resources: familyCount(views.resources, editor.standing, "resources"),
   };
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="title-row">
-          <span className="listing-title">{row.name}</span>
-          <span className="badge badge--mono">{kind}</span>
-        </div>
-        <p className="note">Select a role, tool, prompt or resource on the left for its details.</p>
-      </div>
-      <div className="db">
-        <section className="card card--pad">
-          <div className="eyebrow">Catalog</div>
-          <div className="kv">
+    <Details>
+      <DetailsHead>
+        <TitleRow>
+          <span className="text-lg font-semibold">{row.name}</span>
+          <Badge variant="mono">{kind}</Badge>
+        </TitleRow>
+        <p className={NOTE}>Select a role, tool, prompt or resource on the left for its details.</p>
+      </DetailsHead>
+      <DetailsBody>
+        <Card size="sm" render={<section />}>
+          <div className={EYEBROW}>Catalog</div>
+          <KvList>
             <Kv k="Tools">
               {counts.tools.total} · {counts.tools.reached} reached by {agent}
             </Kv>
@@ -274,11 +280,11 @@ export function AppGrantDetails({
             <Kv k="Roles">
               {Object.keys(declared).length === 0 ? "none declared" : Object.keys(declared).join(", ")}
             </Kv>
-          </div>
-        </section>
-        <section className="card card--pad">
-          <div className="eyebrow">Grant set for {agent}</div>
-          <div className="kv">
+          </KvList>
+        </Card>
+        <Card size="sm" render={<section />}>
+          <div className={EYEBROW}>Grant set for {agent}</div>
+          <KvList>
             <Kv k="Allowed">
               {editor.entries.filter((entry) => entry.mode === "allow").length === 0
                 ? "nothing"
@@ -295,10 +301,10 @@ export function AppGrantDetails({
                     .map((entry) => entry.entry)
                     .join(", ")}
             </Kv>
-          </div>
-        </section>
-      </div>
-    </div>
+          </KvList>
+        </Card>
+      </DetailsBody>
+    </Details>
   );
 }
 
@@ -349,21 +355,21 @@ function HubCard({
         ? service.source
         : `service ${service.source} · tool ${tool.source}`;
   return (
-    <section className="card card--pad">
-      <div className="eyebrow">What only the hub knows</div>
-      <div className="kv">
+    <Card size="sm" render={<section />}>
+      <div className={EYEBROW}>What only the hub knows</div>
+      <KvList>
         <Kv k="Scoped MCP identity">
           <div>
-            <span className="mono">{app}</span>
+            <span className="font-mono">{app}</span>
             {" / "}
-            <span className="mono">{member}</span>
+            <span className="font-mono">{member}</span>
           </div>
           <Copyable value={endpoint} />
         </Kv>
         {family !== "tools" ? null : (
           <Kv k="TypeScript identity">
             <div>
-              {path === null ? "unavailable" : <span className="mono">{path}</span>}
+              {path === null ? "unavailable" : <span className="font-mono">{path}</span>}
               {source === null ? null : ` · ${source}`}
             </div>
             {/* Only the sentences about THIS member and its service — each diagnostic names
@@ -378,16 +384,14 @@ function HubCard({
                   (entry.family === "tool" && entry.canonicalName === member),
               )
               .map((entry) => (
-                <div className="field-error" key={`${entry.family}/${entry.canonicalName}`}>
-                  {entry.message}
-                </div>
+                <FieldError key={`${entry.family}/${entry.canonicalName}`}>{entry.message}</FieldError>
               ))}
           </Kv>
         )}
         <Kv k="Reachable by">{reachableBy(declared, agents, app, member)}</Kv>
         {family !== "tools" ? null : <Kv k="Redaction">{redactionText(row, member)}</Kv>}
-      </div>
-    </section>
+      </KvList>
+    </Card>
   );
 }
 
@@ -427,9 +431,10 @@ function DescriptionNote({
 }): ReactNode {
   if (family === "resources") {
     const media = item.mimeType ?? "";
-    return media === "" ? null : <div className="note">{media}</div>;
+    return media === "" ? null : <div className={NOTE}>{media}</div>;
   }
   const prose = derived?.description;
   if (prose === undefined || prose.block === "") return null;
-  return <div className="note md" dangerouslySetInnerHTML={{ __html: prose.block }} />;
+  // `md` is the prose sheet's hook: the rendered markup carries no class of its own.
+  return <div className={`${NOTE} md`} dangerouslySetInnerHTML={{ __html: prose.block }} />;
 }

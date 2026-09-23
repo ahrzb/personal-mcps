@@ -13,7 +13,12 @@ import { useOp } from "@/lib/queries";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { DELETE_AGENT_TEXT } from "../AgentsPage";
 import type { AgentPageData } from "../AgentFrame";
-import { Kv } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
+import { Details, DetailsBody, DetailsHead, Listing, ListingHead, ListingScroll, ListingTitle } from "@/chrome/Listing";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { DialogFooter } from "@/components/ui/dialog";
 
 /** The danger zone's own sentence — longer than the list's, because this card is where the
  *  cascade into clients is stated. */
@@ -27,59 +32,58 @@ export function DangerPane({ data, confirming }: { data: AgentPageData; confirmi
   const remove = useOp<{ slug: string }>("agent_delete", { agent });
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <span className="listing-title">Danger zone</span>
-        </div>
-        <div className="scroll">
+      <Listing>
+        <ListingHead>
+          <ListingTitle render={<span />}>Danger zone</ListingTitle>
+        </ListingHead>
+        <ListingScroll>
           {remove.isError ? (
-            <div className="alert alert--danger" role="alert">
-              <div className="alert-text">{remove.error.message}</div>
-            </div>
+            <Alert variant="danger" role="alert">
+              <AlertDescription>{remove.error.message}</AlertDescription>
+            </Alert>
           ) : null}
-          <section className="card card--pad card--danger">
-            <h2 className="card-title">Delete agent</h2>
-            <p className="card-desc">{DELETE_AGENT_FULL}</p>
-            <div className="actions actions--start">
-              <button
-                type="button"
-                className="btn btn--danger-outline"
+          <Card render={<section />} className="border-danger-border">
+            <CardTitle render={<h2 />}>Delete agent</CardTitle>
+            <CardDescription render={<p />}>{DELETE_AGENT_FULL}</CardDescription>
+            {/* The action row: wrapping, its button the row's full width on a phone. */}
+            <div className="flex flex-wrap items-center gap-3 max-md:*:flex-1">
+              <Button
+                variant="danger-outline"
                 onClick={() => void navigate({ to: paths.agentPane(agent, "danger"), search: { confirm: "delete-agent" } })}
               >
                 Delete {agent}
-              </button>
+              </Button>
             </div>
-          </section>
-        </div>
-      </div>
-      <div className="details">
-        <div className="dh">
-          <div className="listing-title">What deletion removes</div>
-        </div>
-        <div className="db">
-          <section className="card card--pad">
-            <div className="kv">
+          </Card>
+        </ListingScroll>
+      </Listing>
+      <Details>
+        <DetailsHead>
+          <div className="text-lg font-semibold">What deletion removes</div>
+        </DetailsHead>
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <KvList>
               <Kv k="Grants">{data.held.length} apps</Kv>
               <Kv k="Tokens">{data.tokens.length}</Kv>
               <Kv k="Clients">{data.clients.length} — the binding cascades</Kv>
               <Kv k="History">kept — audit rows name the principal, not the row</Kv>
-            </div>
-          </section>
-        </div>
-      </div>
+            </KvList>
+          </Card>
+        </DetailsBody>
+      </Details>
       {confirming ? (
         <ConfirmDialog
           title={`Delete agent “${agent}”?`}
           text={DELETE_AGENT_TEXT}
           onClose={() => dropKeys(["confirm"])}
         >
-          <div className="actions">
-            <button type="button" className="btn btn--ghost" onClick={() => dropKeys(["confirm"])}>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => dropKeys(["confirm"])}>
               Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--danger"
+            </Button>
+            <Button
+              variant="danger"
               disabled={remove.isPending}
               onClick={() =>
                 remove.mutate(
@@ -91,8 +95,8 @@ export function DangerPane({ data, confirming }: { data: AgentPageData; confirmi
               }
             >
               Delete
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </ConfirmDialog>
       ) : null}
     </>

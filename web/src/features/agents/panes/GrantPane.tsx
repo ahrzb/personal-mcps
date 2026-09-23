@@ -23,8 +23,13 @@ import type { AppRow } from "@/lib/types";
 import { effectiveRolesOf, reachabilityFor, ROLE_FAMILIES } from "../door";
 import { itemProse, KIND_OF_FAMILY, subjectOf } from "../grant-editor";
 import { statusOf } from "../derive";
+import { MUTED, NOTE } from "../AgentFrame";
 import type { AgentPageData } from "../AgentFrame";
 import { FilterForm } from "./FilterForm";
+import { GroupHead, GroupHeadNote, Listing, ListingHead, ListingScroll, ListingTitle, Sum } from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 
 /** One endpoint of a grantable app, with the declared roles that grant it — read through the
  *  door, so `only via all or by name` is what the door actually says. */
@@ -131,12 +136,12 @@ export function GrantPane({
   const total = data.grantable.length;
 
   return (
-    <div className="listing listing--wide">
-      <div className="lh">
-        <div className="title-row">
-          <span className="listing-title">Grant another app</span>
-          <span className="note">apps {agent} holds nothing on</span>
-        </div>
+    <Listing wide>
+      <ListingHead>
+        <TitleRow>
+          <ListingTitle render={<span />}>Grant another app</ListingTitle>
+          <span className={NOTE}>apps {agent} holds nothing on</span>
+        </TitleRow>
         <FilterForm
           to={paths.agentPane(agent, "grant")}
           keep={shown === "" ? {} : { show: shown }}
@@ -144,29 +149,29 @@ export function GrantPane({
           placeholder="search apps and endpoints…"
           label="Search"
         />
-        <div className="sum">
+        <Sum>
           What each app does; open it to see every endpoint and which roles grant it. Grant opens the app with nothing
           granted yet.
-        </div>
-      </div>
-      <div className="scroll">
+        </Sum>
+      </ListingHead>
+      <ListingScroll>
         {total === 0 ? (
-          <p className="note gh-state">
+          <p className={`${NOTE} p-4`}>
             {agent} already holds a grant on every active app. Archived apps are not listed; unarchive one to grant it.
           </p>
         ) : (
           <>
-            <div className="gh">
+            <GroupHead>
               <span>Apps · {cards.length === total ? total : `${cards.length} of ${total}`}</span>
-              <span className="gh-note">active, not archived · nothing is written until you save</span>
-            </div>
+              <GroupHeadNote render={<span />}>active, not archived · nothing is written until you save</GroupHeadNote>
+            </GroupHead>
             {cards.map((card) => (
               <GrantCard key={card.app.slug} card={card} agent={agent} q={q} />
             ))}
           </>
         )}
-      </div>
-    </div>
+      </ListingScroll>
+    </Listing>
   );
 }
 
@@ -191,16 +196,18 @@ function GrantCard({ card, agent, q }: { card: GrantCardView; agent: string; q: 
     ...(q === "" ? {} : { q }),
   };
   return (
-    <div className="appcard">
-      <div className="appcard-main">
-        <div className="title-row">
-          <span className="listing-title">{app.name}</span>
-          <span className="badge badge--mono">{app.slug}</span>
-          <span className="badge badge--mono">{app.kind}</span>
-          {status === null ? null : <span className="badge badge--muted">{status}</span>}
-        </div>
+    // One app to a row: what it is on the left, Grant on the right; below 1024px one column,
+    // Grant spanning it under what it grants.
+    <div className="grid grid-cols-[1fr_auto] gap-x-4 border-b border-row-border px-4 py-3.5 max-lg:grid-cols-1 max-lg:gap-y-2">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <TitleRow>
+          <span className="text-lg font-semibold">{app.name}</span>
+          <Badge variant="mono">{app.slug}</Badge>
+          <Badge variant="mono">{app.kind}</Badge>
+          {status === null ? null : <Badge variant="muted">{status}</Badge>}
+        </TitleRow>
         {app.description === "" ? null : <div>{app.description}</div>}
-        <div className="note">
+        <div className={NOTE}>
           {card.counts === "" ? null : `${card.counts} · `}roles{" "}
           {card.roles.length === 0 ? "none" : card.roles.join(", ")} ·{" "}
           <Link to={paths.agentPane(agent, "grant")} search={toggleSearch}>
@@ -208,28 +215,37 @@ function GrantCard({ card, agent, q }: { card: GrantCardView; agent: string; q: 
           </Link>
         </div>
         {card.open ? (
-          <div className="eps">
+          // Its endpoints, scrolling inside the card: a card stays a card however many
+          // endpoints the app advertises.
+          <div className="mt-2 max-h-[260px] overflow-auto rounded-md border">
             {card.endpoints.map((endpoint) => (
-              <div className="ep" key={`${endpoint.family}/${endpoint.name}`}>
+              <div
+                className="grid grid-cols-[1fr_auto] items-center gap-x-2.5 border-b border-row-border px-2.5 py-1 text-xs last:border-b-0"
+                key={`${endpoint.family}/${endpoint.name}`}
+              >
                 <div>
-                  <span className="ep-family">{endpoint.family}</span>
-                  <span className="mono">{endpoint.name}</span>
+                  <span className="mr-1.5 text-2xs tracking-[0.04em] text-ring uppercase">{endpoint.family}</span>
+                  <span className="font-mono">{endpoint.name}</span>
                   {endpoint.description === "" ? null : (
                     // An attribute holds text and nothing else — a `title` cannot carry a
                     // fence, so the app's Markdown rides here as the source it is.
-                    <span className="ep-info" title={endpoint.description} aria-label={endpoint.description}>
+                    <span
+                      className="ml-1.5 inline-flex size-4 cursor-help items-center justify-center rounded-full border border-ring text-2xs font-semibold text-muted-foreground"
+                      title={endpoint.description}
+                      aria-label={endpoint.description}
+                    >
                       i
                     </span>
                   )}
                 </div>
-                <div className="ep-roles">
+                <div className="inline-flex flex-wrap justify-end gap-1">
                   {endpoint.roles.length === 0 ? (
-                    <span className="muted">only via all or by name</span>
+                    <span className={MUTED}>only via all or by name</span>
                   ) : (
                     endpoint.roles.map((role) => (
-                      <span className="badge badge--mono" key={role}>
+                      <Badge variant="mono" key={role}>
                         {role}
-                      </span>
+                      </Badge>
                     ))
                   )}
                 </div>
@@ -238,8 +254,8 @@ function GrantCard({ card, agent, q }: { card: GrantCardView; agent: string; q: 
           </div>
         ) : null}
       </div>
-      <div className="appcard-end">
-        <Link className="btn btn--primary btn--sm" to={paths.agentApp(agent, app.slug)}>
+      <div className="flex flex-col items-end max-lg:items-stretch">
+        <Link className={buttonVariants({ size: "sm", className: "max-lg:w-full" })} to={paths.agentApp(agent, app.slug)}>
           Grant
         </Link>
       </div>

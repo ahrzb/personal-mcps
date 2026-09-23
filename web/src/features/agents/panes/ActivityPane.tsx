@@ -29,8 +29,29 @@ import { Skeleton } from "@/chrome/States";
 import { NO_BODIES_SENTENCE } from "@/features/audit/derive";
 import type { ApprovalRow, AuditRow, NoBodiesReason } from "@/lib/types";
 import { effectiveRolesOf, grantEntryOf, reachabilityFor, spelledOf } from "../door";
+import { EYEBROW, MUTED, NOTE } from "../AgentFrame";
 import type { AgentPageData } from "../AgentFrame";
-import { Kv } from "@/chrome/Kv";
+import { Kv, KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  GroupHead,
+  GroupHeadNote,
+  Listing,
+  ListingHead,
+  ListingMore,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 /** One page of Recent calls, and the step **Load 20 more** takes. */
 const ACTIVITY_PAGE = 20;
@@ -114,29 +135,39 @@ export function ActivityPane({
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row title-row--split">
-            <span className="listing-title">Activity</span>
-            <span className="note">the last 7 days, the retention window</span>
+      <Listing>
+        <ListingHead>
+          <TitleRow split>
+            <ListingTitle render={<span />}>Activity</ListingTitle>
+            <span className={NOTE}>the last 7 days, the retention window</span>
             {/* The window ends here and the ledger goes on: a control rather than a note,
-                because leaving for the full trail is a thing the reader DOES. */}
-            <a className="btn btn--outline btn--sm title-row-end" href={auditHref} title={auditHref}>
+                because leaving for the full trail is a thing the reader DOES. The link is the
+                row's end itself (`TitleRowEnd`'s classes, on the link rather than on a box
+                around it), so on a page with levels below 1024px the button spans the line. */}
+            <a
+              className={buttonVariants({
+                variant: "outline",
+                size: "sm",
+                className: "ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full",
+              })}
+              href={auditHref}
+              title={auditHref}
+            >
               Open in Audit
               <IconExternal />
             </a>
-          </div>
+          </TitleRow>
           {/* `last N` rather than `N`: N is what this page drew, and a bare count would read
               as the week's total. */}
-          <div className="sum">
+          <Sum>
             last {rows.length} calls · {ok} ok · {denied} denied · {pending} awaiting approval
-          </div>
-        </div>
-        <div className="scroll">
-          <div className="gh">
+          </Sum>
+        </ListingHead>
+        <ListingScroll>
+          <GroupHead>
             <span>Awaiting approval · {pending}</span>
-            <span className="gh-note">each expires an hour after it was asked</span>
-          </div>
+            <GroupHeadNote render={<span />}>each expires an hour after it was asked</GroupHeadNote>
+          </GroupHead>
           {history.isPending ? <Skeleton rows={2} /> : null}
           {requests.map((row) => (
             <ApprovalRowView
@@ -148,10 +179,10 @@ export function ActivityPane({
               deciding={decide.isPending}
             />
           ))}
-          <div className="gh">
+          <GroupHead>
             <span>Recent calls · {rows.length}</span>
-            <span className="gh-note">newest first</span>
-          </div>
+            <GroupHeadNote render={<span />}>newest first</GroupHeadNote>
+          </GroupHead>
           {trail.isPending ? <Skeleton rows={3} /> : null}
           {rows.map((row) => (
             <CallRow key={row.id} row={row} agent={agent} now={data.now} />
@@ -159,7 +190,7 @@ export function ActivityPane({
           {/* The walk's own foot: a link, never a script — and it always says something,
               because "the list stopped" and "the week stopped" are different facts and only
               one of them is the end. */}
-          <div className="more">
+          <ListingMore>
             {more ? (
               <>
                 <Link
@@ -173,19 +204,19 @@ export function ActivityPane({
                 >
                   Load {ACTIVITY_PAGE} more
                 </Link>
-                <span className="note">
+                <span className={NOTE}>
                   more older calls in the last 7 days · everything before that is in{" "}
                   <a href={auditHref}>Audit</a>
                 </span>
               </>
             ) : (
-              <span className="note">
+              <span className={NOTE}>
                 That is the whole week — older calls are in <a href={auditHref}>Audit</a>.
               </span>
             )}
-          </div>
-        </div>
-      </div>
+          </ListingMore>
+        </ListingScroll>
+      </Listing>
       <ActivityDetails
         data={data}
         selected={selected}
@@ -243,84 +274,69 @@ function ApprovalRowView({
   deciding: boolean;
 }): ReactNode {
   return (
-    <div className={row.status === "pending" ? "cr" : "cr cr--dim"}>
+    <ListRow dim={row.status !== "pending"}>
       <div>
-        <span className="mono muted">{row.appSlug}</span>{" "}
-        <Link
-          className="row-link mono"
-          to={paths.agentPane(agent, "activity")}
-          search={{ sel: `approval:${row.id}` }}
-        >
+        <span className={`font-mono ${MUTED}`}>{row.appSlug}</span>{" "}
+        <Link className={ROW_LINK} to={paths.agentPane(agent, "activity")} search={{ sel: `approval:${row.id}` }}>
           {row.tool}
         </Link>
-        <div className="cr-detail mono">{JSON.stringify(row.args)}</div>
+        <ListRowDetail className="font-mono">{JSON.stringify(row.args)}</ListRowDetail>
       </div>
-      <div className="cr-control">
-        <span className="muted">{formatLastSeen(Date.parse(row.createdAt), now)}</span>
+      <ListRowControl>
+        <span className={MUTED}>{formatLastSeen(Date.parse(row.createdAt), now)}</span>
         {row.status === "pending" ? (
           <>
-            <button
-              type="button"
-              className="btn btn--outline btn--sm"
-              disabled={deciding}
-              onClick={() => onDecide("reject")}
-            >
+            <Button variant="outline" size="sm" disabled={deciding} onClick={() => onDecide("reject")}>
               Reject
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={deciding}
-              onClick={() => onDecide("approve")}
-            >
+            </Button>
+            <Button size="sm" disabled={deciding} onClick={() => onDecide("approve")}>
               Approve
-            </button>
+            </Button>
           </>
         ) : (
-          <span
-            className={
-              row.status === "approved" || row.status === "used" ? "badge badge--success" : "badge badge--muted"
-            }
-          >
-            {row.status}
-          </span>
+          <Badge variant={row.status === "approved" || row.status === "used" ? "success" : "muted"}>{row.status}</Badge>
         )}
-      </div>
-    </div>
+      </ListRowControl>
+    </ListRow>
   );
 }
 
 function CallRow({ row, agent, now }: { row: AuditRow; agent: string; now: number }): ReactNode {
   return (
-    <div className="cr">
+    <ListRow>
       <div>
-        <span className="mono muted">{row.app ?? ""}</span>{" "}
-        <Link
-          className="row-link mono"
-          to={paths.agentPane(agent, "activity")}
-          search={{ sel: `call:${row.id}` }}
-        >
+        <span className={`font-mono ${MUTED}`}>{row.app ?? ""}</span>{" "}
+        <Link className={ROW_LINK} to={paths.agentPane(agent, "activity")} search={{ sel: `call:${row.id}` }}>
           {row.tool ?? ""}
         </Link>
-        <div className="cr-detail">
+        <ListRowDetail>
           {formatLastSeen(row.ts, now)}
           {row.durationMs === undefined ? "" : ` · ${row.durationMs} ms`}
-        </div>
+        </ListRowDetail>
       </div>
-      <div className="cr-control">
-        <span className={outcomeClass(row.outcome)}>{OUTCOME_WORD[row.outcome] ?? "error"}</span>
-      </div>
-    </div>
+      <ListRowControl>
+        <Badge variant={outcomeVariant(row.outcome)}>{OUTCOME_WORD[row.outcome] ?? "error"}</Badge>
+      </ListRowControl>
+    </ListRow>
   );
 }
 
 /** A call's outcome word as a badge — green for the one that ran, amber for the one the owner
  *  can still act on, red for everything the door refused. */
-function outcomeClass(outcome: string): string {
-  if (outcome === "ok") return "badge badge--success";
-  if (outcome === "-32003") return "badge badge--warning";
-  return "badge badge--danger";
+function outcomeVariant(outcome: string): "success" | "warning" | "danger" {
+  if (outcome === "ok") return "success";
+  if (outcome === "-32003") return "warning";
+  return "danger";
 }
+
+/** A row's tool name as its link, stretched by its `::after` over the whole `ListRow`, so a
+ *  click anywhere on the row opens its details; the control column sits above it. */
+const ROW_LINK = "font-mono after:absolute after:inset-0";
+
+/** A block of JSON: wrapped anywhere, so a one-line body wraps inside the card rather than
+ *  scrolling sideways. */
+const CODE =
+  "m-0 overflow-x-auto rounded-md bg-muted px-3.5 py-3 font-mono text-xs leading-[1.6] wrap-anywhere whitespace-pre-wrap text-fg-subtle";
 
 function ActivityDetails({
   data,
@@ -340,116 +356,107 @@ function ActivityDetails({
     const row = selected.row;
     const why = whyItWaits(data, row);
     return (
-      <div className="details">
-        <div className="dh">
-          <div className="title-row">
-            <span className="listing-title mono">{row.tool}</span>
-            <span className="badge badge--warning">{row.status}</span>
-          </div>
-          <p className="note">
-            {agent} wants to call this on <span className="mono">{row.appSlug}</span> · asked{" "}
+      <Details>
+        <DetailsHead>
+          <TitleRow>
+            <span className="font-mono text-lg font-semibold">{row.tool}</span>
+            <Badge variant="warning">{row.status}</Badge>
+          </TitleRow>
+          <p className={NOTE}>
+            {agent} wants to call this on <span className="font-mono">{row.appSlug}</span> · asked{" "}
             {formatLastSeen(Date.parse(row.createdAt), data.now)} · expires in{" "}
             {formatUntil(Date.parse(row.expiresAt), data.now)}
           </p>
-        </div>
-        <div className="db">
-          <section className="card card--pad">
-            <div className="eyebrow">Arguments · post-redaction</div>
-            <pre className="code">{JSON.stringify(row.args)}</pre>
-          </section>
+        </DetailsHead>
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>Arguments · post-redaction</div>
+            <pre className={CODE}>{JSON.stringify(row.args)}</pre>
+          </Card>
           {why === null ? null : (
-            <section className="card card--pad">
-              <div className="eyebrow">Why it waits</div>
-              <div className="kv">
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>Why it waits</div>
+              <KvList>
                 <Kv k="Grant">{why}</Kv>
-              </div>
-            </section>
+              </KvList>
+            </Card>
           )}
-          <div className="actions actions--start">
-            <button
-              type="button"
-              className="btn btn--outline btn--sm"
-              disabled={deciding}
-              onClick={() => onDecide(row.id, "reject")}
-            >
+          {/* The decision's row: wrapping, each button an equal share of it on a phone. */}
+          <div className="flex flex-wrap items-center gap-3 max-md:*:flex-1">
+            <Button variant="outline" size="sm" disabled={deciding} onClick={() => onDecide(row.id, "reject")}>
               Reject
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={deciding}
-              onClick={() => onDecide(row.id, "approve")}
-            >
+            </Button>
+            <Button size="sm" disabled={deciding} onClick={() => onDecide(row.id, "approve")}>
               Approve
-            </button>
+            </Button>
           </div>
-        </div>
-      </div>
+        </DetailsBody>
+      </Details>
     );
   }
   if (selected.kind === "call") {
     const row = selected.row;
     const noBodies = noBodiesReason(row, data.byslug);
     return (
-      <div className="details">
-        <div className="dh">
-          <div className="title-row">
-            <span className="listing-title mono">{row.tool ?? ""}</span>
-            <span className={outcomeClass(row.outcome)}>{OUTCOME_WORD[row.outcome] ?? "error"}</span>
-          </div>
-          <p className="note">
-            <span className="mono">{row.app ?? ""}</span> · {formatLastSeen(row.ts, data.now)}
+      <Details>
+        <DetailsHead>
+          <TitleRow>
+            <span className="font-mono text-lg font-semibold">{row.tool ?? ""}</span>
+            <Badge variant={outcomeVariant(row.outcome)}>{OUTCOME_WORD[row.outcome] ?? "error"}</Badge>
+          </TitleRow>
+          <p className={NOTE}>
+            <span className="font-mono">{row.app ?? ""}</span> · {formatLastSeen(row.ts, data.now)}
             {row.durationMs === undefined ? "" : ` · ${row.durationMs} ms`}
           </p>
-        </div>
-        <div className="db">
+        </DetailsHead>
+        <DetailsBody>
           {noBodies === null ? null : (
-            <section className="card card--pad">
-              <p className="note">{NO_BODIES_SENTENCE[noBodies]}</p>
-            </section>
+            <Card size="sm" render={<section />}>
+              <p className={NOTE}>{NO_BODIES_SENTENCE[noBodies]}</p>
+            </Card>
           )}
           {row.args === undefined ? null : (
-            <section className="card card--pad">
-              <div className="eyebrow">Arguments</div>
-              <pre className="code">{JSON.stringify(row.args, null, 2)}</pre>
-            </section>
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>Arguments</div>
+              <pre className={CODE}>{JSON.stringify(row.args, null, 2)}</pre>
+            </Card>
           )}
           {row.result === undefined ? null : (
-            <section className="card card--pad">
-              <div className="eyebrow">Result</div>
-              <pre className="code">{JSON.stringify(row.result, null, 2)}</pre>
-            </section>
+            <Card size="sm" render={<section />}>
+              <div className={EYEBROW}>Result</div>
+              <pre className={CODE}>{JSON.stringify(row.result, null, 2)}</pre>
+            </Card>
           )}
-          <p className="note">
+          <p className={NOTE}>
             The same row the audit page shows.{" "}
             {/* The fragment names no element on the explorer and is inert rather than broken
                 (§13, 2026-09-21); it stays because the shape is a deep link somebody has
                 bookmarked, and `?expand=` is what opens the record. */}
             <a href={`${paths.audit({ expand: String(row.id) })}#event-${row.id}`}>Open in the audit trail</a>.
           </p>
-        </div>
-      </div>
+        </DetailsBody>
+      </Details>
     );
   }
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="listing-title">Activity</div>
-        <p className="note">Select a request or a call for its details.</p>
-      </div>
-      <div className="db">
-        <section className="card card--pad">
-          <div className="eyebrow">7 days</div>
-          <div className="kv">
+    <Details>
+      <DetailsHead>
+        <div className="text-lg font-semibold">Activity</div>
+        <p className={NOTE}>Select a request or a call for its details.</p>
+      </DetailsHead>
+      <DetailsBody>
+        <Card size="sm" render={<section />}>
+          <div className={EYEBROW}>7 days</div>
+          <KvList>
             <Kv k="Calls">
               {summary.calls} · {summary.ok} ok
             </Kv>
             <Kv k="Denied">{summary.denied}</Kv>
             <Kv k="Awaiting approval">{summary.pending}</Kv>
-          </div>
-        </section>
-      </div>
-    </div>
+          </KvList>
+        </Card>
+      </DetailsBody>
+    </Details>
   );
 }
 

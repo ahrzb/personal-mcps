@@ -21,6 +21,9 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { Badge, BadgeRemove } from "@/components/ui/badge";
+import { RadioGroup, RadioGroupSegment } from "@/components/ui/radio-group";
+import { GroupHead, GroupHeadNote, ListRow, ListRowControl, ListRowDetail, Via } from "@/chrome/Listing";
 
 /** What one entry's control can say. `none` contributes NOTHING to the saved set — that is
  *  how this editor revokes, since the op replaces the pair's whole set. */
@@ -146,7 +149,7 @@ export type ChooseEntry = (entry: string, choice: GrantChoice) => void;
 
 /* ------------------------------------------------------------ the control --- */
 
-/** The three buttons, in the order the boards fix them, with the mode each writes. */
+/** The three segments, in the order the boards fix them, with the mode each writes. */
 const SEGMENTS: { value: GrantChoice; label: string; rank: number }[] = [
   { value: "none", label: "none", rank: 0 },
   { value: "approval", label: "ask", rank: 1 },
@@ -156,10 +159,10 @@ const SEGMENTS: { value: GrantChoice; label: string; rank: number }[] = [
 const RANK: Record<GrantChoice, number> = { none: 0, approval: 1, allow: 2 };
 
 /**
- * One row's three-way control: three radios in a `.seg`, the checked one being the DIRECT
- * entry's mode. Where the rest of the set already grants more than this row does, the
- * implied button is drawn hollow and everything below it is disabled — lowering it means
- * lowering the entry that grants it, which is what the disabled button's title says.
+ * One row's three-way control: a radio group of three segments, the checked one being the
+ * DIRECT entry's mode. Where the rest of the set already grants more than this row does, the
+ * implied segment is drawn hollow and everything below it is disabled — lowering it means
+ * lowering the entry that grants it, which is what the disabled segment's title says.
  *
  * One exception to "below the implied mode is disabled": the segment that is checked AND
  * carries an entry. The direct ask under an allowing role is the row the `ask entry · no
@@ -170,37 +173,33 @@ export function Seg({ control, onChoose }: { control: RowControl; onChoose: Choo
   const impliedRank = control.implied === null ? -1 : RANK[control.implied];
   const title = `${control.impliedBy.join(", ")} grants ${control.implied === "allow" ? "allow" : "ask"} — change the role to lower it`;
   return (
-    <span className="seg">
+    <RadioGroup
+      variant="segment"
+      value={control.value}
+      onValueChange={(value: GrantChoice) => onChoose(control.entry, value)}
+    >
       {SEGMENTS.map((segment) => {
         const checked = control.value === segment.value;
         const held = checked && control.value !== "none";
         const disabled = segment.rank < impliedRank && !held;
         const implied = segment.rank === impliedRank && !checked;
         // Amber marks ASK, and only where ask is the state being shown — a live-but-unset
-        // ask button is not a warning about anything.
+        // ask segment is not a warning about anything.
         const warn = segment.value === "approval" && (checked || implied);
         return (
-          <label
+          <RadioGroupSegment
             key={segment.value}
-            className={`seg-opt${implied ? " impl" : ""}${warn ? " seg-opt--warn" : ""}`}
+            value={segment.value}
+            disabled={disabled}
+            implied={implied}
+            tone={warn ? "warning" : "default"}
             title={disabled ? title : undefined}
           >
-            {/* The title sits on the input as well: a pointer reaches the label, a keyboard
-                reaches the input, and both are owed the reason. */}
-            <input
-              type="radio"
-              name={`e.${control.entry}`}
-              value={segment.value}
-              checked={checked}
-              disabled={disabled}
-              title={disabled ? title : undefined}
-              onChange={() => onChoose(control.entry, segment.value)}
-            />
-            <span>{segment.label}</span>
-          </label>
+            {segment.label}
+          </RadioGroupSegment>
         );
       })}
-    </span>
+    </RadioGroup>
   );
 }
 
@@ -208,14 +207,9 @@ export function Seg({ control, onChoose }: { control: RowControl; onChoose: Choo
  *  not draw — a held role the app no longer declares, and the direct ask under an allow. */
 export function DropButton({ entry, onChoose }: { entry: string; onChoose: ChooseEntry }): ReactNode {
   return (
-    <button
-      type="button"
-      className="badge-x"
-      title="remove this entry"
-      onClick={() => onChoose(entry, "none")}
-    >
+    <BadgeRemove title="remove this entry" onClick={() => onChoose(entry, "none")}>
       ×
-    </button>
+    </BadgeRemove>
   );
 }
 
@@ -229,6 +223,10 @@ export function DropButton({ entry, onChoose }: { entry: string; onChoose: Choos
  */
 export type RowLink = (sel: string) => { to: string; search: Record<string, string> };
 
+/** A row's name as its link, stretched by its `::after` over the whole `ListRow`, so a click
+ *  anywhere on the row opens its details; the control column sits above it. */
+const ROW_LINK = "font-mono after:absolute after:inset-0";
+
 /** One listing row of the grant editor. */
 export function GrantRow({
   row,
@@ -241,92 +239,94 @@ export function GrantRow({
 }): ReactNode {
   if (row.kind === "undeclared") {
     return (
-      <div className="cr">
+      <ListRow>
         <div>
-          <span className="mono">{row.entry}</span> <span className="badge badge--warning">undeclared</span>
-          <div className="cr-detail">granted, but the app has not declared it — dormant</div>
+          <span className="font-mono">{row.entry}</span> <Badge variant="warning">undeclared</Badge>
+          <ListRowDetail>granted, but the app has not declared it — dormant</ListRowDetail>
         </div>
-        <div className="cr-control">
+        <ListRowControl>
           {/* No three-way control here: the entry names nothing the app declares, so there
               is nothing to raise or lower — the × is the only thing to do with it. The
               server drew a hidden field beside it to keep the entry across a submit; the
               draft keeps it instead. */}
-          <span className={row.standing === "allow" ? "badge badge--success" : "badge badge--warning"}>
+          <Badge variant={row.standing === "allow" ? "success" : "warning"}>
             {row.standing === "allow" ? "in Allowed" : "in Ask first"}
             <DropButton entry={row.entry} onChoose={onChoose} />
-          </span>
-        </div>
-      </div>
+          </Badge>
+        </ListRowControl>
+      </ListRow>
     );
   }
   if (row.kind === "role") {
     return (
-      <div className="cr">
+      <ListRow>
         <div>
-          <Link className="row-link mono" {...link(row.sel)}>
+          <Link className={ROW_LINK} {...link(row.sel)}>
             {row.entry}
           </Link>
           {row.builtin ? (
             <>
               {" "}
-              <span className="badge badge--muted">built-in</span>
+              <Badge variant="muted">built-in</Badge>
             </>
           ) : null}
-          <div className="cr-detail">{row.detail}</div>
+          <ListRowDetail>{row.detail}</ListRowDetail>
         </div>
-        <div className="cr-control">
+        <ListRowControl>
           <Seg control={row.control} onChoose={onChoose} />
-        </div>
-      </div>
+        </ListRowControl>
+      </ListRow>
     );
   }
   if (row.kind === "pattern") {
     return (
-      <div className="cr">
+      <ListRow>
         <div>
-          <Link className="row-link mono" {...link(row.sel)}>
+          <Link className={ROW_LINK} {...link(row.sel)}>
             {row.entry}
           </Link>
-          <div className={row.dormant ? "cr-detail cr-detail--warn" : "cr-detail"}>{row.detail}</div>
+          <ListRowDetail warn={row.dormant}>{row.detail}</ListRowDetail>
         </div>
-        <div className="cr-control">
+        <ListRowControl>
           <Seg control={row.control} onChoose={onChoose} />
-        </div>
-      </div>
+        </ListRowControl>
+      </ListRow>
     );
   }
   return (
-    <div className="cr">
+    <ListRow>
       <div>
-        <Link className="row-link mono" {...link(row.sel)}>
+        <Link className={ROW_LINK} {...link(row.sel)}>
           {row.name}
         </Link>
         {/* The app's own prose, rendered by the hub and inline only: a row is one line high,
             and a fence or a list in a description must not be allowed to make it three. The
             markup is `pages/markdown.ts`'s output — the one renderer allowed to produce it —
             which is why this is the one `dangerouslySetInnerHTML` in the listing; a media
-            type, which is not prose, is drawn as a child instead. */}
+            type, which is not prose, is drawn as a child instead. `md` is the prose sheet's
+            hook, the one global class app prose can be styled through (its markup carries
+            none of its own). */}
         {row.description.html === null ? (
-          <div className="cr-detail md">{row.description.text}</div>
+          <ListRowDetail className="md">{row.description.text}</ListRowDetail>
         ) : (
-          <div className="cr-detail md" dangerouslySetInnerHTML={{ __html: row.description.html }} />
+          <ListRowDetail className="md" dangerouslySetInnerHTML={{ __html: row.description.html }} />
         )}
       </div>
-      <div className="cr-control">
+      <ListRowControl>
         {row.noEffect ? (
-          <span className="badge badge--warning" title="allow wins over ask">
+          <Badge variant="warning" title="allow wins over ask">
             ask entry · no effect
             <DropButton entry={row.entry} onChoose={onChoose} />
-          </span>
+          </Badge>
         ) : null}
         {row.via.length === 0 ? null : (
-          <span className="via">
+          <Via>
             {row.alsoVia ? "also via" : "via"} {row.via.join(", ")}
-          </span>
+          </Via>
         )}
         <Seg control={row.control} onChoose={onChoose} />
-      </div>
-    </div>
+      </ListRowControl>
+    </ListRow>
   );
 }
 
@@ -342,17 +342,19 @@ export function GrantGroup({
   return (
     <>
       {group.title === "" ? null : (
-        <div className="gh">
+        <GroupHead>
           <span>
             {group.title}
             {group.count === "" ? null : ` · ${group.count}`}
           </span>
-          {group.note === "" ? null : <span className="gh-note">{group.note}</span>}
-        </div>
+          {group.note === "" ? null : <GroupHeadNote render={<span />}>{group.note}</GroupHeadNote>}
+        </GroupHead>
       )}
-      {group.state === null
-        ? group.rows.map((row) => <GrantRow key={row.entry} row={row} link={link} onChoose={onChoose} />)
-        : <p className="note gh-state">{group.state}</p>}
+      {group.state === null ? (
+        group.rows.map((row) => <GrantRow key={row.entry} row={row} link={link} onChoose={onChoose} />)
+      ) : (
+        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{group.state}</p>
+      )}
     </>
   );
 }

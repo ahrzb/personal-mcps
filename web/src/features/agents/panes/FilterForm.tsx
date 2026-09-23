@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Input } from "@/components/ui/input";
 
 /**
  * A listing's filter, as both panes that have one draw it: a form of its OWN, whose submit is
@@ -38,14 +39,14 @@ export function FilterForm({
   const [typed, setTyped] = useState(q);
   return (
     <form
-      className="lh-filter"
+      className="flex"
       onSubmit={(event) => {
         event.preventDefault();
         const trimmed = typed.trim();
         void navigate({ to, search: { ...keep, ...(trimmed === "" ? {} : { q: trimmed }) } });
       }}
     >
-      <input
+      <Input
         type="search"
         name="q"
         value={typed}

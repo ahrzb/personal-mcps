@@ -28,6 +28,10 @@ import { Shell } from "@/chrome/Shell";
 import { LevelHeader, PaneRail, paneGroups } from "@/chrome/Panes";
 import type { LevelHeaderModel, PaneEntry } from "@/chrome/Panes";
 import { Failure, Refreshing, Skeleton } from "@/chrome/States";
+import { Crumb, CrumbSep, Page, PageHead, PageSubtitle, PageTitle, Pane, TitleRow, Workspace } from "@/chrome/Page";
+import { Tiles } from "@/chrome/Listing";
+import { buttonVariants } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import type { AppRow, ApprovalRow, ListedAgent } from "@/lib/types";
 import {
   accessOf,
@@ -37,6 +41,15 @@ import {
   heldAppsOf,
 } from "./derive";
 import type { AgentAccess, AgentClient, AgentToken } from "./derive";
+
+/**
+ * The page's three text styles, shared by every pane: a 12px muted aside capped at a reading
+ * measure (legacy.css's `.note`), an 11px uppercase card label (`.eyebrow`), and a 13px muted
+ * figure (`.muted`). Each also sets its size, so each reads the same whatever it sits in.
+ */
+export const NOTE = "max-w-[72ch] text-xs text-muted-foreground";
+export const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
+export const MUTED = "text-sm text-muted-foreground";
 
 /** The accessible name of this page's pane navigation. The pill row every OTHER paned page
  *  draws below the breakpoint is deliberately absent here: this page's narrow level 1 is the
@@ -137,8 +150,8 @@ export function useAgentPage(slug: string): AgentPageState {
  * The page around a pane: the breadcrumb, the header and its four totals, the narrow level
  * header, the rail, and the pane itself.
  *
- * `--framed`: on THIS page the rail is a column of the three-pane box rather than a list
- * standing beside a card — /settings and /apps/<slug> keep the unframed shape.
+ * The rail is a column of the one framed box (`Workspace`), and the pane beside it is the
+ * split one: a listing and its details.
  */
 export function AgentFrame({
   data,
@@ -151,7 +164,7 @@ export function AgentFrame({
 }: {
   data: AgentPageData;
   rail: PaneEntry[];
-  /** §13's narrow level, read by the narrow stylesheet ALONE. */
+  /** §13's narrow level, read by CSS ALONE: `Page` writes it as `data-level`. */
   level: 1 | 2 | 3;
   levelHeader: LevelHeaderModel;
   notice: Notice | null;
@@ -162,43 +175,39 @@ export function AgentFrame({
   const { agent, tiles } = data;
   return (
     <Shell active="agents">
-      <main className="page--workspace" data-level={String(level)}>
+      <Page shape="workspace" level={level}>
         <LevelHeader header={levelHeader} />
-        <div className="page-head">
+        <PageHead>
           <div>
             {/* ONE row: where the page sits, what it is, and what it is for. The pane the URL
                 names is already the entry the rail marks, so neither the app nor the pane is
                 repeated up here. */}
-            <div className="title-row">
-              <Link className="crumb" to={paths.agents}>
-                Agents
-              </Link>
-              <span className="crumb-sep" aria-hidden="true">
-                ›
-              </span>
-              <h1 className="page-title mono">{agent.slug}</h1>
-              {agent.description === "" ? null : <span className="page-subtitle">{agent.description}</span>}
+            <TitleRow>
+              <Crumb render={<Link to={paths.agents} />}>Agents</Crumb>
+              <CrumbSep />
+              <PageTitle className="font-mono">{agent.slug}</PageTitle>
+              {agent.description === "" ? null : <PageSubtitle render={<span />}>{agent.description}</PageSubtitle>}
               <Refreshing active={refreshing} />
-            </div>
-            {agent.name === agent.slug ? null : <p className="page-subtitle">{agent.name}</p>}
-            <p className="page-subtitle">Created {formatStamp(agent.createdAt)}</p>
+            </TitleRow>
+            {agent.name === agent.slug ? null : <PageSubtitle>{agent.name}</PageSubtitle>}
+            <PageSubtitle>Created {formatStamp(agent.createdAt)}</PageSubtitle>
           </div>
           {/* ONE line, the parts separated by the hub's own middot — four tiles side by side
               would read as four independent facts rather than one partition. */}
-          <div className="tiles">
+          <Tiles>
             {`${tiles.apps} apps · ${tiles.allowed} allow · ${tiles.askFirst} ask first · ${tiles.dormant} dormant`}
-          </div>
-        </div>
+          </Tiles>
+        </PageHead>
 
         {/* After the header, not before it: this page's alert sits between the title block
             and the three-pane box, which is where `pages/agent-detail.tsx` drew it. */}
         {notice === null ? null : <NoticeBanner notice={notice} />}
 
-        <div className="paned paned--framed">
+        <Workspace>
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(rail)} />
-          <div className="pane pane--split">{children}</div>
-        </div>
-      </main>
+          <Pane split>{children}</Pane>
+        </Workspace>
+      </Page>
     </Shell>
   );
 }
@@ -208,14 +217,14 @@ export function AgentFrame({
 export function AgentPagePending(): ReactNode {
   return (
     <Shell active="agents">
-      <main className="page--workspace" data-level="2">
-        <div className="page-head">
+      <Page shape="workspace" level={2}>
+        <PageHead>
           <div>
-            <h1 className="page-title mono">…</h1>
+            <PageTitle className="font-mono">…</PageTitle>
           </div>
-        </div>
+        </PageHead>
         <Skeleton rows={8} />
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -224,9 +233,9 @@ export function AgentPagePending(): ReactNode {
 export function AgentPageFailed({ message, retry }: { message: string; retry: () => void }): ReactNode {
   return (
     <Shell active="agents">
-      <main className="page--table">
+      <Page shape="table">
         <Failure message={message} onRetry={retry} />
-      </main>
+      </Page>
     </Shell>
   );
 }
@@ -240,15 +249,15 @@ export function AgentPageFailed({ message, retry }: { message: string; retry: ()
 export function AgentPageNotFound({ what }: { what: string }): ReactNode {
   return (
     <Shell active="agents">
-      <main className="page--document">
-        <div className="empty">
-          <div className="empty-title">No such page</div>
-          <div className="empty-text">{what}</div>
-          <Link className="btn btn--primary" to={paths.agents}>
+      <Page shape="document">
+        <Empty>
+          <EmptyTitle>No such page</EmptyTitle>
+          <EmptyDescription>{what}</EmptyDescription>
+          <Link className={buttonVariants({ className: "mt-4" })} to={paths.agents}>
             Back to Agents
           </Link>
-        </div>
-      </main>
+        </Empty>
+      </Page>
     </Shell>
   );
 }

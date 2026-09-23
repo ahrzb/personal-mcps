@@ -34,11 +34,31 @@ import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import type { Notice } from "@/lib/notice";
 import type { Violation } from "@/lib/types";
 import { usePreviewTransient } from "@/preview/transient";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { DialogFooter } from "@/components/ui/dialog";
+import {
+  GroupHead,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  SaveBar,
+  SaveBarCount,
+  SaveBarEnd,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
 import {
   AgentFrame,
   AgentPageFailed,
   AgentPageNotFound,
   AgentPagePending,
+  NOTE,
   useAgentPage,
 } from "./AgentFrame";
 import type { AgentPageData } from "./AgentFrame";
@@ -198,56 +218,58 @@ export function AgentAppView({
       notice={notice}
       refreshing={refreshing || families.refreshing}
     >
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">{current.name}</span>
-            <span className="badge badge--mono">{app}</span>
-            <span className="badge badge--mono">{current.kind}</span>
-            {status === null ? null : <span className="badge badge--muted">{status}</span>}
-          </div>
-          <div className="sum">
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>{current.name}</ListingTitle>
+            <Badge variant="mono">{app}</Badge>
+            <Badge variant="mono">{current.kind}</Badge>
+            {status === null ? null : <Badge variant="muted">{status}</Badge>}
+          </TitleRow>
+          <Sum>
             {savedSpelled.length === 0 ? (
-              <span className="badge badge--warning badge--dashed">new grant · nothing saved yet</span>
+              <Badge variant="warning" className="border-dashed">
+                new grant · nothing saved yet
+              </Badge>
             ) : null}
             {reachLine(agent, editor.reach)}
-          </div>
+          </Sum>
           {/* The filter is its own form and a navigation, for the reason the server gave it:
               `?q=` is the page's input, and a form cannot nest inside the editor below. */}
           <FilterForm to={base} keep={{}} q={q} placeholder="filter, or type a pattern…" label="Filter" />
-        </div>
+        </ListingHead>
 
         {refusal === null ? null : (
-          <div className="alert alert--danger" role="alert">
-            <div className="alert-text">{refusal}</div>
-          </div>
+          <Alert variant="danger" role="alert">
+            <AlertDescription>{refusal}</AlertDescription>
+          </Alert>
         )}
 
         {/* No `<form class="listing-form">` around the rows and the save row: the server
             needed one element to submit, and its own rule was `display: contents`, so the
             box tree here is the same one the sheet lays out. */}
-        <div className="scroll">
+        <ListingScroll>
           {editor.groups.map((group) => (
             <GrantGroup key={`${group.title}/${group.count}`} group={group} link={link} onChoose={choose} />
           ))}
           {editor.offer === null ? null : (
             <>
-              <div className="gh">
+              <GroupHead>
                 <span>As a pattern</span>
-              </div>
-              <div className="cr">
+              </GroupHead>
+              <ListRow>
                 <div>
-                  <span className="mono">{editor.offer.entry}</span>
-                  <div className="cr-detail">{editor.offer.detail}</div>
+                  <span className="font-mono">{editor.offer.entry}</span>
+                  <ListRowDetail>{editor.offer.detail}</ListRowDetail>
                 </div>
-                <div className="cr-control">
+                <ListRowControl>
                   {/* Ask and Allow SAVE, as the server's two submit buttons did: accepting an
                       offer is a decision about the set, not a pending edit. */}
                   {(["approval", "allow"] as const).map((mode) => (
-                    <button
+                    <Button
                       key={mode}
-                      type="button"
-                      className="btn btn--outline btn--sm"
+                      variant="outline"
+                      size="sm"
                       disabled={save.isPending}
                       onClick={() => {
                         const entry = editor.offer?.entry;
@@ -258,48 +280,43 @@ export function AgentAppView({
                       }}
                     >
                       {mode === "approval" ? "Ask" : "Allow"}
-                    </button>
+                    </Button>
                   ))}
-                </div>
-              </div>
+                </ListRowControl>
+              </ListRow>
             </>
           )}
-          {editor.nothingMatches ? <p className="note gh-state">Nothing matches “{q}”.</p> : null}
-        </div>
+          {editor.nothingMatches ? <p className={`${NOTE} p-4`}>Nothing matches “{q}”.</p> : null}
+        </ListingScroll>
 
-        <div className="save">
-          <button
-            type="button"
-            className="btn btn--danger-outline btn--sm"
+        <SaveBar>
+          <Button
+            variant="danger-outline"
+            size="sm"
             onClick={() => void navigate({ to: base, search: { ...(q === "" ? {} : { q }), confirm: "remove-app" } })}
           >
             Remove from {agent}
-          </button>
-          <span className="save-end">
-            <span className="muted">
+          </Button>
+          <SaveBarEnd render={<span />}>
+            <SaveBarCount>
               saved · {editor.saved.allow} allow · {editor.saved.approval} ask
-            </span>
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
+            </SaveBarCount>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setDraft(draftOf(savedSpelled));
                 void navigate({ to: base, search: {} });
               }}
             >
               Discard
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              disabled={save.isPending}
-              onClick={() => save.mutate({ entries: draft })}
-            >
+            </Button>
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate({ entries: draft })}>
               {save.isPending ? "Saving…" : "Save"}
-            </button>
-          </span>
-        </div>
-      </div>
+            </Button>
+          </SaveBarEnd>
+        </SaveBar>
+      </Listing>
       <AppGrantDetails
         agent={agent}
         agents={data.agents}
@@ -317,13 +334,12 @@ export function AgentAppView({
           text={`${agent} loses every entry on ${app}. History stays; a waiting request expires.`}
           onClose={() => dropKeys(["confirm"])}
         >
-          <div className="actions">
-            <button type="button" className="btn btn--ghost" onClick={() => dropKeys(["confirm"])}>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => dropKeys(["confirm"])}>
               Cancel
-            </button>
-            <button
-              type="button"
-              className="btn btn--danger"
+            </Button>
+            <Button
+              variant="danger"
               disabled={save.isPending}
               onClick={() =>
                 save.mutate(
@@ -340,8 +356,8 @@ export function AgentAppView({
               }
             >
               Remove
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </ConfirmDialog>
       ) : null}
     </AgentFrame>

@@ -17,6 +17,10 @@ import { skeletonStates } from "./skeleton";
 import { dialogStates } from "./dialog";
 import { sheetStates } from "./sheet";
 import { tabsStates } from "./tabs";
+import { pageStates } from "./page";
+import { listingStates } from "./listing";
+import { kvStates } from "./kv";
+import { authFrameStates } from "./auth-frame";
 
 /**
  * Every state of the `primitives` bench, one file per component so each of pass 2's P1b
@@ -43,4 +47,8 @@ export const primitivesStates: Record<string, PrimitiveState> = {
   ...dialogStates,
   ...sheetStates,
   ...tabsStates,
+  ...pageStates,
+  ...listingStates,
+  ...kvStates,
+  ...authFrameStates,
 };

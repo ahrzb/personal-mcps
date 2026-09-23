@@ -26,7 +26,7 @@ import { Skeleton } from "@/chrome/States";
 import { usePreviewTransient } from "@/preview/transient";
 import type { AgentClient, AgentToken } from "../derive";
 import type { AgentPageData } from "../AgentFrame";
-import { Kv } from "./Kv";
+import { Kv } from "@/chrome/Kv";
 
 /** §8's four expiries, as the control beside Issue offers them. `never` is the op's own word
  *  for "no expiry", passed through unchanged; the rest are seconds, which is what

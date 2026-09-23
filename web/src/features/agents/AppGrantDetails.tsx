@@ -30,7 +30,7 @@ import type {
 import { effectiveRolesOf, itemEntry, reachabilityFor, redactPathsIn, ROLE_FAMILIES } from "./door";
 import { FAMILY_OF_KIND, familyCount, familyEntries, subjectOf } from "./grant-editor";
 import type { GrantEditor, GrantFamilyView } from "./grant-editor";
-import { Kv } from "./panes/Kv";
+import { Kv } from "@/chrome/Kv";
 
 export function AppGrantDetails({
   agent,

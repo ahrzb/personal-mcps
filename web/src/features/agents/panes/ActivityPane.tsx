@@ -30,7 +30,7 @@ import { NO_BODIES_SENTENCE } from "@/features/audit/derive";
 import type { ApprovalRow, AuditRow, NoBodiesReason } from "@/lib/types";
 import { effectiveRolesOf, grantEntryOf, reachabilityFor, spelledOf } from "../door";
 import type { AgentPageData } from "../AgentFrame";
-import { Kv } from "./Kv";
+import { Kv } from "@/chrome/Kv";
 
 /** One page of Recent calls, and the step **Load 20 more** takes. */
 const ACTIVITY_PAGE = 20;

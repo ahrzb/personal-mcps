@@ -13,7 +13,7 @@ import { useOp } from "@/lib/queries";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
 import { DELETE_AGENT_TEXT } from "../AgentsPage";
 import type { AgentPageData } from "../AgentFrame";
-import { Kv } from "./Kv";
+import { Kv } from "@/chrome/Kv";
 
 /** The danger zone's own sentence — longer than the list's, because this card is where the
  *  cascade into clients is stated. */

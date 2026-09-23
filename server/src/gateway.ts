@@ -691,7 +691,10 @@ async function probeAvailability(app: App): Promise<HubError | null> {
   // deps: tunnel.status · upstream.availability
   if (app.slug === PMCP_SLUG) return null;
   if (app.kind === "tunnel") {
-    return (await tunnelStatus(app.id)) === "online" ? null : unavailable();
+    // Most offline tunnels are refused HERE, before the DO's forward could name its own
+    // class, so this row is where §15's "offline or timed out?" gets answered. "offline" is
+    // in errors.ts's dispatched-nothing set: the wire keeps the bare "app unavailable".
+    return (await tunnelStatus(app.id)) === "online" ? null : unavailable("offline");
   }
   // The REFUSAL, not a boolean: §7 spells "known unavailable" for a proxied app as
   // `not_connected` OR `needs_reconnect`, and only the module that owns the credential can

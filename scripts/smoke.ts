@@ -338,7 +338,7 @@ async function main(): Promise<number> {
         "hub_execute result",
       );
       const execution = asRecord(executed.structuredContent, "hub_execute structuredContent");
-      expect(execution.kind === "completed", `hub_execute kind ${String(execution.kind)}`);
+      expect(execution.kind === "completed", `hub_execute did not complete: ${JSON.stringify(execution)}`);
       const value = asRecord(execution.value, "hub_execute value");
       expect(value.echo === "hub", `hub_execute echo ${String(value.echo)}`);
       expect(value.principal === `agent:${AGENT}`, `hub_execute principal ${String(value.principal)}`);

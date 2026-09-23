@@ -879,6 +879,11 @@ describe("§15 deadline, disconnect, and the audit chokepoint", () => {
     expect(offline.body.error?.code).toBe(-32000);
     expect(offline.body.error?.message).not.toMatch(/may have executed/);
     expect(fixture.fake.callCount(TOOL), "nothing was queued for the absent app").toBe(1);
+    // The availability probe refuses this one before the DO is asked to forward, and its
+    // row owes the class as much as the forward's own would: a class-free -32000 here
+    // is how a deploy-severed tunnel read as an unexplained failure on 2026-09-23.
+    const [offlineRow] = await callRows(fixture);
+    expect(offlineRow.detail, "the offline refusal's row named no cause").toMatchObject({ failureClass: "offline" });
   });
 
   it("14b. §10/§15 · a DO RPC that fails under a waiting consumer refuses -32000 with a failure class in the row, never the unclassified -32603: a forcibly restarted instance is downtime, and the ledger is where §15's at-most-once question about that call is answered", async () => {

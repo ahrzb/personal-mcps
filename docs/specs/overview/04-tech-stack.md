@@ -55,7 +55,14 @@
   authentication — bearer-sourced (CLI) sessions are rejected there, so a stolen CLI
   token cannot enroll new credentials and become persistent account takeover. "Recent"
   is better-auth's own `session.freshAge` (default 24 h), read from its config so the hub
-  never keeps a second window. Session
+  never keeps a second window. *(2026-09-23, decision 38: with `/settings` in the client, the
+  gate stands at two prefixes that are one rule — the `/settings/*` shell document and
+  `/api/hub/settings/*`, every read and write the panes make — so the browser's only way to
+  reach credential management is through the hub's recent-authentication check. better-auth's
+  own mount still serves those endpoints to any cookie session without a freshness check
+  (only `/list-sessions` and passkey *registration* read `freshAge`; §13's Password pane and
+  its row pin that for `/change-password`), so the check guards the browser's path, not the
+  mount.)* Session
   lifetime config is shared between web and CLI sessions (better-auth default 7 d
   sliding) — a conscious coupling; don't tune it up for CLI convenience without
   accepting the browser exposure.
@@ -79,7 +86,8 @@
   the `maxPasswordLength` default of 128 stands — §12's generated passwords are random
   and unaffected); `revokeOtherSessions: true` deletes **every** session of the user —
   CLI device-flow sessions and the current browser session included — then mints a fresh
-  session and sets its cookie on the response, so the hub's translation route must
+  session and sets its cookie on the response, so the hub's ~~translation~~ route
+  *(2026-09-23, decision 38: `POST /api/hub/settings/change-password`, JSON in and out)* must
   forward that `Set-Cookie` and the CLI signs in again; and app and agent tokens are
   untouched by a change, because nothing derives them from the password (the `token`
   table above holds random secrets).

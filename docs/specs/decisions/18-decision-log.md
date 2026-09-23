@@ -106,8 +106,9 @@
     future work. *(Amended 2026-09-18: the decision's "pages stay server-rendered, no
     SPA" half is withdrawn for two route families and only those. `/apps/*` and
     `/agents/*` are a React SPA over a cookie-authenticated JSON surface at `/api/hub`;
-    login/device, Settings, approvals, audit and the consent screen stay server-rendered.
-    What forced it: every pane of `/apps/<slug>` blocked its HTML on four live MCP
+    ~~login/device, Settings, approvals, audit and the consent screen stay server-rendered.~~
+    *(2026-09-21, decision 36: audit joined the SPA. 2026-09-23, decision 38: the rest did
+    too — the "stay server-rendered" half is withdrawn whole.)* What forced it: every pane of `/apps/<slug>` blocked its HTML on four live MCP
     catalog reads with no deadline, so one silent upstream held the whole document, and
     every interaction was a full-page form POST that lost the editor's draft on refusal.
     The PWA and push halves stand unchanged — the service worker still has no fetch
@@ -597,3 +598,53 @@
     or contract changes: `audit_query` returns `detail` as it always did. And there is no
     migration and no backfill — rows written before this date carry no reason, and every
     reader says so rather than inferring one.
+
+38. **Every page is the SPA — first with the look held constant, then shadcn**
+    *(2026-09-23, §13/§4/§19/§16/§17; withdraws decision 21's remaining "stay
+    server-rendered" half; the brief and route inventory are
+    `docs/superpowers/plans/2026-09-23-everything-spa.md` and `…-everything-spa-routes.md`)*.
+    The owner asked for "a proper migration to shadcn + Base UI + Tailwind", chose to keep the
+    current look with screenshots as the gate ("A is wiser, as it's more testable"), then asked
+    "can we make all and everything into a SPA?" and chose **everything, in two passes**. The six
+    pages decision 21 still kept on the server — `/login`, `/device`, `/settings/*`,
+    `/approvals`, `/approvals/<id>` and `/oauth/consent` — become SPA routes, so §13 has **one
+    rendering**, not two sharing a design language.
+
+    **The two passes, and why the look is held constant.** Pass 1 moves every page into the
+    client **looking exactly as it does today**: its gate is `visual:compare` against baselines
+    shot from the server rendering before any page moved (`design/baseline/`), and a difference
+    that is right is named in `web/visual-accepted.json` with its reason rather than absorbed by
+    a looser threshold. Pass 2, only after pass 1 has shipped whole, swaps the hand-written
+    primitives for shadcn components themed to the current tokens, gated by the **same**
+    baselines, and ends with Tailwind's preflight on and `styles.css` deleted. Each pass changes
+    one variable while the other is held still, which is what makes a screenshot a pass/fail
+    gate rather than an opinion: a combined rewrite would make every difference ambiguous
+    between "the port is wrong" and "the new component looks different".
+
+    **What does not move.** The server stays the authority. Every check a page handler makes
+    today — the session, recent authentication on `/settings`, CSRF, origin, the relative-only
+    `/login` landing, the consent screen's binding to its signed request, the device code's
+    claim — survives at the route that replaces it, and the row that pins it is ported rather
+    than deleted. Every URL keeps answering (a shell document behind the same gate and the same
+    document-level 404/400), so the `-32003` link, the push tap, the CLI's `/device?user_code=`,
+    better-auth's `/login?<signed>` and `/oauth/consent?<signed>` redirects and every bookmark
+    still land. The four form targets whose answer is a navigation a `fetch` cannot perform —
+    `/login`'s three sign-in routes and sign-out, and the consent POST — stay form posts the
+    client renders, exactly as `/apps/connect` did at the first cutover.
+
+    **What is given up, by the owner's choice.** No page works with scripting off any more —
+    decision 21's last scripting-off surface goes, and with it the `:target` sidebar and the
+    `?confirm=` dialogs' no-script property (the dialogs keep their URLs). And `/login` loads the
+    whole client bundle where it loaded one stylesheet and one inline script: the sign-in page,
+    the one a phone meets first, gets heavier. *ponytail: one bundle; a separate login entry the
+    day the login page's weight is measured to matter.* The server-rendered states preview
+    (`server/dev/preview.ts`, `fixtures.ts`, `wrangler.preview.jsonc`) retires with the last
+    page, and the React gallery inherits its role as the kept demo of every state.
+
+    The rejected alternative was **leaving the credential and consent pages on the server** —
+    the half decision 21 kept for a reason (they are the pages that decide trust, and they
+    worked without script). It loses on the owner's stated goal: pass 2 would then restyle two
+    renderings of one design, the design language would keep two implementations, and every
+    shared chrome element (the shell, the rail, the notices, the dialogs) would keep a server
+    and a client spelling to hold in step. The trust argument is answered by keeping every check
+    server-side (above), not by keeping the markup there.

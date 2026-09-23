@@ -7,20 +7,74 @@ password change"); `/apps/<slug>` added as the app detail page behind the same r
 marked 2026-09-02 below is **spec ahead of code** — implemented as its own workflow, after
 §21 (D14); a reader must not mistake it for shipped behavior.*
 
-Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is required:
+*Amended 2026-09-23 — decision 38: every page below is the SPA. `/login`, `/device`,
+`/settings/*`, `/approvals`, `/approvals/<id>` and `/oauth/consent` move into the client in a
+first pass that holds their look constant (gated by screenshots), then onto shadcn in a
+second. Each page's section gains the routes that replace its handler; the route inventory
+behind them is `docs/superpowers/plans/2026-09-23-everything-spa-routes.md`. Spec ahead of
+code until each page family ships, in the order approvals → settings → device → consent →
+login.*
+
+Deliberately tiny — ~~server-rendered pages (Hono JSX)~~ browser pages *(2026-09-23, decision
+38: all of them the SPA, one rendering)* only where a browser is required:
 
 - `/login` — username + password, TOTP challenge, passkey button. Sign-in landing: a
   `?next=` deep link is honoured only when it is hub-relative; anything else — absolute,
   scheme-relative, or the `/\` spelling a browser folds into `//` — lands on `/apps`.
+  *(2026-09-23, decision 38:)* `GET /login` answers the SPA shell with **no session gate**
+  and **no** `#pmcp-bootstrap` — nothing of a session exists yet to put in one. What it
+  carries instead is a `<script type="application/json" id="pmcp-login">` holding the page's
+  whole server-computed state, `{ step, redirectTo }`: the card to draw (with the error and
+  the echoed username a refused attempt left on the query) and the landing, computed by the
+  one relative-only rule (and §19.5 step 1's constant OAuth landing) **on the server**. Both
+  of the landing's consumers — the cards' hidden `callbackURL` and the passkey ceremony's
+  post-verify navigation — read that one value, so the rule is never spelled in the client.
+  The three sign-in forms and Sign out **stay real form posts** to the hub's translation
+  routes (`/login/sign-in/username`, `/login/two-factor/verify-totp`,
+  `/login/two-factor/verify-backup-code`, `/login/sign-out`), which the client renders: each
+  answers a 303 that carries better-auth's `Set-Cookie`, the landing it judges again with the
+  same rule, and §19.5's authorize chain ending at a third-party redirect — a navigation no
+  `fetch` can perform. The shell's **Sign out**, on every page, posts `/login/sign-out` —
+  never better-auth's own `/api/auth/sign-out`, which refuses a control-less form post and
+  answers JSON rather than a redirect. Every link on the page is a document navigation, so
+  the island is recomputed for each query, and the page calls no `/api/hub` route.
 - `/device` — device-approval page (user enters the code the CLI printed). Since we
   hand-build it anyway: it shows the requesting IP and user-agent and states plainly
   that approval grants **full admin CLI control of the namespace** (RFC 8628 §5.4 /
   cross-device-flow BCP: the user-code channel is unauthenticated, so the page is the
   phishing defense); the approval POST carries a CSRF token; device-code lifetime is
   set to ~10 minutes (down from better-auth's 30-minute default).
+  *(2026-09-23, decision 38:)* the shell behind the ordinary owner session. The code's
+  details come from `GET /api/hub/device?user_code=<code>`, which makes the **same**
+  better-auth verify call the page made, with the owner's cookie — so the first signed-in
+  viewer still claims a pending code exactly as rendering the page did — and answers
+  `{ request: { userCode, ip, client, requestedAt, expiresAt } }`, the confirm card's five
+  facts and nothing else, or a `404` carrying "That code is not valid. Check it and try
+  again.". The verdict is `POST /api/hub/device/decide` `{ userCode, decision: "approve" |
+  "deny" }` through the write gate (session, origin, `X-Pmcp-Csrf`) into better-auth's own
+  approve/deny, answering `{ next, reload: false }` — `/device?decided=approved|denied`, or
+  `/device?error=…`, the URL the form's 303 named (the answer shape is under *The SPA's
+  server surface* below). `?decided=`, `?error=` and an absent
+  `user_code` stay URL state the client reads.
 - `/settings` — sign-in and access for the owner, now seven panes behind the existing
   framed-workspace rail. Every route/POST under the prefix requires a recent
   cookie-authenticated owner session; bearer sessions are rejected.
+  *(2026-09-23, decision 38:)* the seven pane URLs answer the shell behind that same prefix
+  gate, and **`/api/hub/settings/*` is the same rule on the JSON side** — one prefix
+  middleware resolving every read and write under it with recent authentication, so neither
+  surface can grow an ungated route. The panes read `GET /api/hub/settings` — ONE read for the
+  rail and every pane, as the shell rule below demands: `{ twoFactor, passkeys, sessions,
+  tokens, connections, execution, limits }`, where `limits` carries the password minimum and
+  the timeout bounds so the page prints configured numbers rather than second literals, and
+  `sessions` never carries a session token. Every form target `/settings/X` becomes
+  `POST /api/hub/settings/X`, JSON in: the eight credential routes, `tokens/token_revoke`,
+  `clients/connection_revoke` and `execution/hub_settings_update` — the two ops-backed panes
+  name their one op each, and no generic dispatcher survives under `/settings`. A write whose
+  form answered a 303 answers `{ next, reload }`: `next` is the URL the 303 named, flash
+  included, still built on the server and still landing on the pane that drew the control;
+  `reload` says better-auth replaced the session (and with it the CSRF token the document
+  holds), so the client loads `next` as a document. Query-derived state — the pane, `?kind=`,
+  `?confirm=`, the flash, `?field=` — is the client's, read from its own URL.
 
   | Group | Pane | Route | Rail marker |
   |---|---|---|---|
@@ -43,8 +97,9 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     ends every session the old one may have opened), and **Update password**. It rides
     core better-auth's `POST /change-password` (`{ currentPassword, newPassword,
     revokeOtherSessions }`, verified against `better-auth@1.7.1` — no plugin) through the
-    same hub translation route every credential form uses, gated like every other
-    credential POST — session, **recent authentication**, CSRF. That gate is load-bearing,
+    same hub ~~translation route every credential form uses~~ route every credential write
+    uses *(2026-09-23, decision 38: `POST /api/hub/settings/change-password`, JSON in)*, gated
+    like every other credential POST — session, **recent authentication**, CSRF. That gate is load-bearing,
     not belt-and-braces: in 1.7.1 `/change-password` sits behind
     `sensitiveSessionMiddleware`, which proves an authoritative session and nothing about
     its age (`freshSessionMiddleware` is the one that reads `freshAge`, and this endpoint
@@ -83,9 +138,10 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
       cookie is replaced in the same response, the Sessions pane afterwards shows one
       session created just now, and the recent-authentication window restarts. Two
       consequences follow and the copy hides neither: every CLI session is among the
-      "others" (`pmcp login` again), and the translation route **must** forward
+      "others" (`pmcp login` again), and the ~~translation~~ hub route **must** forward
       better-auth's `Set-Cookie` to the browser exactly as it does for sign-in — dropping
-      it signs the owner out. `N` is counted by the hub from `/list-sessions` immediately
+      it signs the owner out *(2026-09-23: on its JSON answer, which then says `reload`, since
+      the CSRF token the document holds died with the old session)*. `N` is counted by the hub from `/list-sessions` immediately
       before the call (all sessions minus the current one); better-auth returns no count.
     - The pane shows when the session was last confirmed ("Confirmed your identity N
       minutes ago." — the session's `createdAt`, the same value the gate reads), so the
@@ -95,7 +151,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
     and the codes never ride a URL); TOTP setup (QR plus the grouped secret for manual
     entry, a 6-digit verify posted to the pane's own `/settings/two-factor/verify-totp`
     — a refused code redraws the same enrolment in place with the error under the boxes,
-    a verified one lands on the enabled arm); the backup codes revealed exactly once after
+    a verified one lands on the enabled arm) *(2026-09-23, decision 38: Enable answers
+    `{ enrollment, backupCodes }` in its JSON body — the QR still drawn on the server, the
+    secret and codes still in a body and never a URL; the verify posts `{ code }` alone and a
+    refusal answers `422` with better-auth's words, the client redrawing the enrolment it
+    already holds, so the secret and the codes are no longer posted back in hidden fields for
+    the server to re-validate; a verified code answers `{ next, reload: true }`)*; the backup codes revealed exactly once after
     enabling or regenerating; enabled → **Regenerate backup codes**, **Disable
     two-factor** (confirm dialog). ~~The rail dot is the one marker that is a status, not a
     count.~~ *(2026-09-17, decision 32: the second is the app page's Recording dot, which
@@ -165,8 +226,12 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   - **Execution** *(added 2026-09-18, §23)* — two integer millisecond fields,
     default and maximum, with `1,000 <= default <= max <= 300,000`, one Save action,
     CSRF, and the existing `hub_settings_get`/`hub_settings_update` operation path.
-    Invalid pairs redraw at 400 with field-linked messages; success reads back the
-    committed pair. Copy states that settings are owner-wide, new executions snapshot
+    Invalid pairs redraw ~~at 400~~ with field-linked messages; success reads back the
+    committed pair. *(2026-09-23, decision 38: the refusal is a `422` carrying the op's
+    field-scoped violations, and the client redraws — the owner's own text kept, each sentence
+    under the control it names. The two controls still post the owner's text, and the server
+    still turns a clean integer into a number and leaves anything else for the op to refuse
+    in its own words.)* Copy states that settings are owner-wide, new executions snapshot
     them at admission, and updating them never extends an active run.
 - `/audit` — read-only, cookie-session-gated view over the audit table (§5): ~~a plain
   server-rendered table, newest first, with the same filters as `audit_query`
@@ -574,6 +639,18 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   warning "That request is no longer pending." — a lost race, not a failure, so never
   the red "failed" notice *(2026-09-03, G52)*. `/approvals/<id>` is the detail page the
   `-32003` error links to; only the namespace owner can open it.
+  *(2026-09-23, decision 38:)* both are the SPA shell behind the ordinary owner session, and
+  `/approvals/<id>` keeps its document-level `404` — an id outside this owner's listing is
+  refused before any HTML, byte-identical to one that never existed. The list reads the two
+  `GET /api/hub/approvals` resources the nav badge already reads (`?status=pending`, and
+  `?limit=` for the history, asked one past the page's limit plus the pending count so
+  "Older →" knows whether to render); the detail reads `GET /api/hub/approvals/<id>`, the same
+  owner-scoped lookup, `404` for foreign and unknown alike. Approve and Reject are
+  `approval_decide` through the op allowlist, from both pages, and land on `/approvals` with
+  the notice as the form's 303 did — the lost race still the warning, keyed on the op. The
+  per-browser push opt-in posts the browser's `PushSubscription` to
+  `POST /api/hub/approvals/push` through the write gate; the VAPID public key it subscribes
+  with rides the shell's bootstrap beside the origin, configuration no API reports.
 - `/apps` — cookie-session-gated app management: active apps (kind, status —
   online/offline for tunneled, connection state for OAuth-proxied — roles, last seen)
   with archive/delete actions; an archived section with unarchive/delete; an add-app
@@ -1474,6 +1551,18 @@ Deliberately tiny — server-rendered pages (Hono JSX) only where a browser is r
   **and** authorizes a client) and is gated like the strictest one. §19 pins the flow.
   The list of connections it produces, with Revoke, is the Connected clients pane of
   `/settings` above; `/oauth/connections` redirects there.
+  *(2026-09-23, decision 38:)* the SPA shell, behind the owner session and — before any HTML —
+  the provider's own signature check on the query, so an edited or expired request is still
+  the plain `400` it was. The screen reads `GET /api/hub/oauth/consent?<the same query>`: the
+  client appends its URL's query **verbatim**, never parsing or rebuilding it, and the server
+  runs the unchanged read over that one request's raw query — the provider re-verifying the
+  signature — answering exactly what the screen shows or echoes (`oauthQuery`, the client's
+  name, the self-registered marker, the redirect origin, the scopes, the namespace, the agent
+  list) and nothing more. The consent POST **stays a form post** the client renders — its
+  answer is a 303 to the client's third-party `redirect_uri`, which no `fetch` can follow into
+  the address bar — carrying the bootstrap's CSRF token and, as `oauth_query`, the value the
+  read returned: the bytes the provider just verified, not a string the client assembled.
+  Its gate and its verify-before-write order are untouched.
 
 **Panes behind a rail** *(added 2026-09-02)*. One shell component serves all three paned
 pages — `/settings`, `/apps/<slug>` and `/agents/<slug>` *(2026-09-16: three, not two;
@@ -1557,10 +1646,14 @@ value — never a layout one.
   the connection) with the notice there, and a finished Connect (the upstream callback)
   lands the same way; `/apps`'s own row controls still
   land on `/apps` *(2026-09-03, owner question 37(b))*. Confirm-dialog state
-  (`?confirm=…`) rides the owning pane's URL for the same reason.
+  (`?confirm=…`) rides the owning pane's URL for the same reason. *(2026-09-23, decision
+  38: `/settings`' writes are JSON under `/api/hub/settings/`, each keeping its form target's
+  final segment; the redirect-back becomes the `next` its answer names — the same URL, built
+  by the same code, landing on the same pane.)*
 - **A page's gate is every pane's gate**: `/settings/*` is recent-auth and no-bearer
   (§4); `/apps/<slug>/*` and `/agents/<slug>/*` are the ordinary owner session
-  *(2026-09-16)*.
+  *(2026-09-16)*. *(2026-09-23: and `/api/hub/settings/*` is `/settings/*`'s rule, as one
+  prefix, on every read and write the panes make.)*
 - ~~Known follow-up, recorded not solved: the mobile top nav holds four items (Apps,
   Audit, Approvals, Settings) and has no `Agents` entry — 390 px cannot hold five, so the
   deferred agents pages will need a scroller or an overflow menu before they get a slot.~~
@@ -1585,7 +1678,12 @@ Tapping the scrim or the close control closes it. This replaces the horizontally
 five-entry nav on narrow screens; **the wide shell is unchanged**. Every page inherits it —
 it is the shell, not a page rule.
 
-**No script — on the server-rendered pages.** The sidebar is `:target`-driven: the
+*(2026-09-23, decision 38: there are no server-rendered pages left, so the paragraph below
+describes a mechanism that retires with `layout.tsx`. The Base UI Dialog of its 2026-09-18
+amendment is the only drawer; the `:target` rules stay in `styles.css`, unused, until pass 2
+deletes the sheet.)*
+
+~~**No script — on the server-rendered pages.**~~ The sidebar is `:target`-driven: the
 hamburger is `<a href="#menu" class="menu-open" aria-label="Menu">`, the sidebar `<nav
 id="menu" class="menu">`, the close control `<a href="#" aria-label="Close menu">`, the
 scrim `<a href="#" class="scrim" aria-hidden="true">`; CSS shows the menu and the scrim on
@@ -1597,14 +1695,23 @@ five entries and the same `styles.css` classes are driven by a Base UI Dialog in
 traps focus and closes on Escape, which a bare `:target` cannot. The rules are untouched and
 shared; only the mechanism differs, and it differs only where a script is already running.)*
 
-**Two renderings, one design language** *(2026-09-18)*. `/apps/*`, `/agents/*` **and
+~~**Two renderings, one design language**~~ **One rendering** *(2026-09-18; one since
+2026-09-23, decision 38)*. `/apps/*`, `/agents/*` **and
 `/audit`** *(2026-09-21, decision 36)* are a React SPA; `/login`,
 `/device`, `/settings/*`, `/approvals*` ~~, `/audit`~~ and `/oauth/consent`
-stay server-rendered. Both read `/styles.css` — it is the shared sheet and the source of
-truth for every token and every page-chrome class — and the SPA adds `/app.css` after it,
+~~stay server-rendered~~ *(2026-09-23: are too — every browser page is the client, and no
+page is rendered from Hono JSX any more)*. ~~Both read~~ The client reads `/styles.css` — it is the
+~~shared~~ sheet and the source of
+truth for every token and every page-chrome class — and ~~the SPA~~ adds `/app.css` after it,
 carrying only what Tailwind's utility engine and the Base UI primitives need in order to
 coexist with it. Tailwind's preflight is deliberately not imported, because it would strip
-the list markers `.md ul` / `.md ol` depend on.
+the list markers `.md ul` / `.md ol` depend on. *(2026-09-23: that holds through pass 1,
+whose gate is that nothing looks different — `visual:compare` against the server-rendered
+baselines in `design/baseline/`, a right difference named in `web/visual-accepted.json`
+with its reason, never a loosened threshold. Pass 2 moves the hand-written primitives onto
+the shadcn components in `web/src/components/ui/`, themed to these tokens and the density
+ladder, against the same baselines, and ends with the preflight on and `styles.css`
+deleted.)*
 
 **The SPA's server surface** is `/api/hub`, under the already-reserved `api` segment: ~~ten~~
 **twelve** *(2026-09-21, decision 36: the two the explorer adds — below)*
@@ -1616,6 +1723,25 @@ without a preflight the hub never answers, so the header is itself a barrier and
 re-spelling of the form field. The op dispatcher admits exactly nine names, all of which
 take scalar arguments; `/settings`' own ops stay unreachable through it, so the ordinary
 gate can never become a bypass of §4's recent-authentication prefix.
+
+*(2026-09-23, decision 38 — what the five newly moved pages add, each described under its
+page above:)* ~~twelve~~ **sixteen** reads — `GET /api/hub/approvals/<id>`,
+`GET /api/hub/settings`, `GET /api/hub/device` and `GET /api/hub/oauth/consent` — and, for
+writes, `POST /api/hub/approvals/push`, `POST /api/hub/device/decide`, and the eleven
+`/settings` writes under `/api/hub/settings/`. That prefix is one rule, not eleven: every
+read and write under it resolves the session **with recent authentication**, answering the
+same 401 to a stale session as to none — the JSON twin of the `/settings/*` page gate, so
+`/settings`' ops reach the browser only through it, and `token_revoke` from the Tokens pane
+keeps the pane's stricter gate although the ordinary allowlist also admits it. And one
+answer shape joins the surface: a write that replaces a form POST whose answer was a `303`
+answers `200 { next, reload }` — `next` the very URL the 303 named, flash included, built by
+the same server code and never from input; `reload` true exactly when the answer forwards
+better-auth's `Set-Cookie`, because the session and with it the document's CSRF token was
+replaced, so the client loads `next` as a document rather than routing to it. The flash
+protocol therefore stays the server's to write, and the client stays its reader. Four form
+posts survive beside the surface, each because its answer is a navigation a `fetch` cannot
+perform: `/login`'s three sign-in routes with `/login/sign-out` (§4's translation routes), the
+consent POST (§19.5), and `/apps/connect`.
 
 **The explorer's two reads** *(2026-09-21, decision 36)*, alongside the unchanged
 `GET /api/hub/audit` the agent page's Activity pane pages (bodies included): a **window**
@@ -1642,12 +1768,32 @@ rather than an executable one, so no page-generated JavaScript runs and the exis
 needs no `script-src` relaxation. `Cache-Control: no-store`, like every other
 session-derived response.
 
+*(2026-09-23, decision 38:)* the shell now answers every browser page, and each URL keeps
+the gate and the document-level answer its server-rendered page had, run before any HTML:
+`/settings/*` the recent-authentication gate; `/approvals/<id>` the `404` for an id outside
+the owner's listing; `/oauth/consent` the provider's signature check, a refused query still
+the plain-text `400`; `/device` and `/approvals` the ordinary session; and `/login` **no gate
+at all**. The bootstrap is `{csrf, username, origin, vapidPublicKey}` — the VAPID public
+key joining the origin as configuration the approvals page needs and no API reports — and
+`/login`, which has no session, carries none; its one island is `#pmcp-login` (`/login`
+above). Every island is serialized with `<`, U+2028 and U+2029 escaped (`<`, ` `,
+` `): the bootstrap's values happened to be safe because each is hex, charset-bound or
+configuration, but `/login`'s carries text a link sets, and a `</script>` in it must not end
+the element. **The headers are the pages' own, by construction**: the shell is emitted by
+the one HTML renderer every page used — `Content-Type: text/html; charset=utf-8`,
+`Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'` (the
+hub's only anti-framing header) and `Cache-Control: no-store` — at all six URLs, `/login`
+included. The shell's head is the one head for every page, so `/login` and `/oauth/consent`
+now say `theme-color #ffffff` where they said `#fafafa`, and the three chromeless pages link
+the manifest they did not — invisible in a screenshot, accepted.
+
 **PWA**: the web surface ships a web-app manifest and a minimal service worker, so
 the dashboard installs to phone and desktop home screens. The service worker exists for
 installability and push, not offline rendering — it has no fetch handler at all and does not
 intercept navigation. *(On the SPA routes its registration moved from the shell's body into
 the client entry, which is the only place it could go once the layout that carried it was
-deleted.)*
+deleted. 2026-09-23, decision 38: that is every route now, `/login` included, which never
+registered it before.)*
 
 **Approval push**: `/approvals` offers a per-browser "Enable
 notifications" control; subscriptions land in `push_subscription` (§5), and every new

@@ -115,6 +115,52 @@
   asserts that the input is the **same node**, still focused, its value intact, and that no
   skeleton was ever attached — the one thing no fixture and no pure test can see, since the
   actor is the network.
+- **every page is the SPA** *(2026-09-23, decision 38; per page family, rows before code)*.
+  **Rows move; they are not deleted.** A `web-pages.test.ts` row that pins a server check —
+  a gate, a CSRF or origin barrier, the relative-only landing, the consent binding, the device
+  claim, an audit row, a notice's landing pane — is **ported** onto the route that replaces
+  the handler it pinned (the per-row map is
+  `docs/superpowers/plans/2026-09-23-everything-spa-routes.md`); a row that pins only what a
+  page draws moves to the web side — a pure view rule (the confirm dialog's owning pane, the
+  token filter, the password-field mapping, the password notice copy, the execution
+  sentences' placement) as a `server/test/unit/` row over a `web/src/…/derive.ts` module in
+  `audit-derive.test.ts`'s manner, and the drawing itself as a gallery state. Worker rows for
+  what is new: each shell's gate **before** the document and its document-level answer (the
+  `404` for a foreign approval, the consent screen's `400`, none on `/login`), the three
+  headers at all six URLs, `/login`'s `#pmcp-login` island with **no** `#pmcp-bootstrap`, and a
+  hostile `?next=` whose bytes appear nowhere raw in the document; the recent-authentication
+  prefix over `/api/hub/settings/*` — a stale and a bearer-sourced session are the same `401`
+  at every read and write, beside a fresh twin; every `{ next, reload }` answer's `next`
+  equal to the `Location` the form's 303 named, and `reload` true exactly when the answer
+  carried `Set-Cookie`; the consent read's `oauthQuery` byte-equal to the query it was asked
+  with, an edited query `400` at the document and at the read, and its key set exactly what
+  the screen shows; the device read claiming the code for the reader and answering the
+  confirm card's five facts and nothing else, the decision refused without `X-Pmcp-Csrf`
+  with the code left pending; and the push subscription route, which had no route-level row
+  at all. Two walks retire and one replaces them: the CSRF-field walk over server HTML
+  (case 4) and the credential-form walk (case 24) have no server forms left to walk, and in
+  their place a walk over the form targets the **bundle** renders asserts each is one of the
+  kept form routes (`/login`'s four, the consent POST, `/apps/connect`) and answers a
+  form-encoded post with neither `415` nor `404` — the walk that would have caught a Sign out
+  posted straight at better-auth. Rows 16 and 17 (the approvals forms' parity) retire into 18
+  and 18b, the op allowlist and its schema check, which already cover `approval_decide`.
+  **The gallery replaces the server preview**: every `server/dev/fixtures.ts` fixture becomes
+  a React gallery state under the **same** page and state names
+  (`/__preview/<page>/<state>` ↔ `/preview/<page>/<fixture>`), and the preview, its fixtures
+  and `wrangler.preview.jsonc` retire with the last page. **The gate is the baselines**:
+  `web/scripts/server-baselines.mts` — a dev-only, hand-run browser walk like
+  `visual-compare.mts` — shot every page × fixture of the server preview at 1280×900 and
+  390×844 into `design/baseline/<page>__<fixture>__<w>x<h>.png` **once, before any page
+  moved**, sharing `shots.mts`' context and viewports so a baseline and its candidate are
+  captured alike, exiting non-zero on a page that fails to load, renders no text, or yields a
+  PNG not exactly the viewport's width, and stopping the dev server it started. A baseline
+  shot after a page moved would prove nothing, so it is committed, not re-shot per change;
+  `visual:compare` diffs each migrated family's gallery against it, a right difference named
+  in `web/visual-accepted.json` with its reason, and pass 2 reuses the same files. The smoke's
+  three HTML scrapes move with their pages: `/settings`' rail and control strings become the
+  statuses plus `GET /api/hub/settings`, the bearer-only change-password post expects `401`
+  at its JSON route, `/login`'s `callbackURL` is read from `#pmcp-login`, and the consent
+  walk takes `csrf` from `#pmcp-bootstrap` and `oauth_query` from the consent read.
 - **upstream oauth**: fake AS in-test — expired access token triggers refresh before
   forwarding; failed refresh surfaces needs-reconnect and calls fail `-32000`; a
   callback carrying a valid code but a missing, consumed, expired, or other-session

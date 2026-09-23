@@ -99,3 +99,21 @@ routes and `/api/hub/ops/<op>` already carry the cookie session, the same-origin
 decision 38 (withdrawing decision 21's remaining "stay server-rendered" half; what is given
 up), §13's "Two renderings, one design language" becoming one, §16 / testing/03 for the moved
 rows and the retired preview, §17 for the files that go.
+
+## 5 · Rulings on the spec agent's route design (orchestrator, 2026-09-23)
+
+The design in `2026-09-23-everything-spa-routes.md` is accepted as written, with these rulings on
+the points it left open:
+
+1. **Its contradiction 1 was real and is fixed** (`b266f42`, deploy `b3700882`): the SPA's Sign
+   out posted better-auth's `/api/auth/sign-out`, which answered 415 JSON live; it now posts
+   `/login/sign-out`, pinned by web-pages row 24a.
+2. **§6 — templates stay until family 5**, as the design reads it: the preview is the only way to
+   re-shoot a baseline mid-project. Each family's handler simply stops rendering its template.
+3. **§8.2 — the consent POST resolves the agent before it calls the provider.** Decided, not an
+   owner question: it only adds a read ahead of the first write, changes nothing for a valid
+   request, and makes "400 on any refusal, writing nothing" true — today an agent that does not
+   resolve leaves a provider consent with no binding. It lands in family 4 as its own test +
+   fix commits, separate from the byte-for-byte port.
+4. **§8.1 (freshness at better-auth's own mount) is out of pass 1's scope** and goes to the
+   owner as a separate question; §8.3–8.5 stay as recorded.

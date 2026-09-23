@@ -84,7 +84,8 @@ cannot drift). The segment claims its subtree like every other mount:
 | `/api/auth/oauth2/*` | (plugin) | `authorize`, `token`, `register`, `revoke`, `introspect`, `consent`, `continue`, `public-client(-prelogin)` and the client-management endpoints — all under the **existing** `api` segment, mounted by the plugin, no route work. |
 | `/api/auth/jwks` | (plugin) | The JWKS the door verifies against (§19.1). Public by construction — it is public keys. |
 | `/api/auth/token` | (plugin) | **Named here because it is easy to miss, and this table would otherwise read as complete.** `jwt()` mounts it as a side effect, and it converts a live *cookie session* into a hub-signed JWT. It is no part of §19's flow and nothing here ever calls it. Two independent things keep it harmless: §19.7's allowlist means no bearer can reach it, and §19.6 step 3 means the door refuses any hub-signed JWT that is not an access token for the addressed namespace — so even a cookie-holding browser that mints one gains nothing at `/<user>/mcp`. |
-| `/oauth/consent` | GET, POST | §19.5's screen, under the **existing** `oauth` segment. |
+| `/oauth/consent` | GET, POST | §19.5's screen, under the **existing** `oauth` segment. *(2026-09-23, decision 38: GET answers the SPA shell behind the owner session and the provider's signature check; POST is unchanged, a form post the client renders.)* |
+| `/api/hub/oauth/consent` | GET | *(2026-09-23, decision 38)* The screen's read: the owner's cookie session, the same signed query appended verbatim, and exactly what the screen shows or echoes (§19.5 step 3). Under the **existing** `api` segment. |
 | `/oauth/connections` | GET | *(re-homed 2026-09-02, decision 30)* A `301` to `/settings/clients` — the **Connected clients** pane of Settings (§13), where the list and its Revoke now live; the POST moved with the pane. Until then the list was reachable only by typing the URL: nothing linked to it. |
 
 Pinned properties of the two documents:
@@ -260,7 +261,12 @@ navigates to; the list it produces is what gets the Settings slot, not the scree
    opaque signed blob and nothing else. This is spelled out because the sentence invites
    the other reading, and a login page that immediately precedes an authorization grant is
    the highest-value phishing target the hub has: a generic post-login redirect parameter
-   there is how it gets lost.
+   there is how it gets lost. *(2026-09-23, decision 38: the page is the client now, and the
+   constant is still built on the server — `GET /login` computes it from its own raw query,
+   exactly as the rendered page did, and hands it to the client in the shell's `#pmcp-login`
+   island; the client posts it back as the sign-in form's `callbackURL`, and the sign-in
+   route judges it again with the relative-only rule before its 303. The client never reads a
+   destination out of the query itself.)*
 2. With a session and no covering consent → 302 to `/oauth/consent?<signed query>`. The
    query is the whole authorization request re-serialized plus `exp`, an issued-at, and
    an HMAC `sig` over the canonicalized parameters. **The page must echo it back
@@ -292,6 +298,17 @@ navigates to; the list it produces is what gets the Settings slot, not the scree
      at the moment the owner is already looking at the request, so no separate
      provisioning step exists.
 
+   *(2026-09-23, decision 38: the boundary moves its markup, not its checks. The shell at
+   `/oauth/consent` runs `requireOwnerSession` and the provider's signature check before any
+   HTML — a refused query is still the plain `400` — and the screen's strings come from
+   `GET /api/hub/oauth/consent?<signed query>`: the owner's cookie session, the client's own
+   URL query appended **verbatim** (never parsed, rebuilt or re-encoded), and the unchanged
+   read over that one request's raw query, which hands it to `public-client-prelogin` again.
+   Its answer is exactly the list above plus the query itself (`oauthQuery`) — nothing the
+   screen does not show or echo — and the client names are text in a JSON string, rendered as
+   a text node, never markup and never a link. The form posts that `oauthQuery` back: the
+   bytes the provider verified on this read, not a string the client assembled.)*
+
    **Empty state, pinned**: a namespace with zero agents is the first-run path,
    not an edge case — the owner this section exists for may never have created one. With
    no agents, the picker renders an empty state naming where to create one — the Agents
@@ -313,7 +330,10 @@ navigates to; the list it produces is what gets the Settings slot, not the scree
    otherwise every failed call would strand an `oauth_binding` for an authorization
    that never completed, and the §19.8 row "an edited `oauth_query` is refused and
    writes no binding" could not hold. Deny posts `accept: false` and the client
-   receives `access_denied`.
+   receives `access_denied`. *(2026-09-23, decision 38: this POST is unchanged and stays a
+   form post — its answer is a 303 to the client's third-party `redirect_uri`, which a
+   `fetch` cannot follow into the address bar. The client renders the form; the CSRF token
+   it carries is the shell bootstrap's.)*
 
 CSRF posture, stated once: the hub's own CSRF token gates the POST; the provider's
 signed `oauth_query` is what makes the *request being consented to* unforgeable; and
@@ -464,6 +484,7 @@ namespace, exactly what the Connected clients pane (`/settings/clients`, formerl
 | Binding revoked mid-session | The next call refuses with the same challenge; in-flight calls are not interrupted. The provider's consent row is gone too, so a refresh cannot resurrect it. |
 | Agent deleted | The FK cascade removes the binding: identical to revoked, with no cleanup step to forget. |
 | Consent POST without a valid CSRF token, or with an edited `oauth_query` | Refused by §13's `mutation` gate and by the provider's signature check respectively — nothing is written and no code is issued. |
+| *(2026-09-23)* The consent screen opened with an edited or expired query, or its read asked without an owner session | The shell answers the plain `400` before any HTML and the read answers `400`; with no session the shell is the `302` to `/login` carrying the query and the read a `401`. Nothing is read beyond the provider's own check, and nothing is written. |
 
 ### 19.9 Explicitly out of scope
 

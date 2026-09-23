@@ -12,6 +12,9 @@
   machines): the solo-owner project-killer. A fast-check model of the approval
   machine is a second implementation of the same rules under the same churn, for
   a state space ~14 explicit rows already exhaust. Three server-rendered forms do
-  not justify a browser dependency. Coverage tooling: V8 coverage is unsupported
+  not justify a browser dependency. *(2026-09-23, decision 38: there are no
+  server-rendered forms left, and the conclusion stands for the suite — Playwright drives only
+  the hand-run dev scripts under `web/scripts/`, the screenshot gate among them, never a
+  suite row.)* Coverage tooling: V8 coverage is unsupported
   here anyway, and a percentage target breeds tests that assert nothing.
 

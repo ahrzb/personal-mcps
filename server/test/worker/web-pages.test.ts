@@ -26,6 +26,11 @@
 // whose `{ next, reload }` answer carries the Location the 303 named. What a row pinned
 // about DRAWING (the rail, the pills, the dialogs, the copy) is the client's, and each such
 // row is retired where it stood with a comment naming its web-side home.
+// Family 3, `/device`: the shell behind the ordinary session; the confirm card's facts are
+// `GET /api/hub/device`, which makes the same claiming verify call the render made, and the
+// verdict is `POST /api/hub/device/decide` (28, 29 and 31 ported). The binding the render
+// had — the first signed-in reader claims the code, only the claimant sees its client and
+// only the claimant can decide — is pinned on the read and the decide themselves.
 //
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
@@ -97,6 +102,7 @@ import {
   AUDIT_EXPLORER_PAGE,
   AUDIT_EXPLORER_ROWS,
   AUDIT_EXPORT_MAX_VALUES,
+  DEVICE_CODE_TTL_MS,
   HUB_HARD_MAX_TIMEOUT_MS,
   HUB_MIN_TIMEOUT_MS,
   RETENTION_DAYS,
@@ -107,8 +113,8 @@ import { paths } from "../../src/pages/model";
 // a React form posting to a route the worker does not translate is invisible to any test that
 // reads server HTML (24a). `settingsApi` is the same table's JSON half — every `/api/hub`
 // target the settings pages call, walked by case 24.
-import { settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
-import type { SettingsRead } from "../../src/api";
+import { deviceApi, settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
+import type { DeviceRead, SettingsRead } from "../../src/api";
 import type { ConnectionRow } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
@@ -679,34 +685,6 @@ function typedInto(
 }
 
 /**
- * One rendered form the instant a particular submit BUTTON is clicked: the action the page
- * named, and every control that submission carries — the hidden ones `submissionOf` walks
- * plus the clicked button's own name/value. A submit button is a form control like any
- * other, and on /device's decision form it is the only place the decision is written
- * (device.tsx draws Approve and Deny as two buttons on one form), so a submission walked out
- * of the <input>s alone would post no decision at all and the case would prove nothing.
- * Throws rather than returning null: a page that renders no such button is a page whose
- * form the walk can no longer describe.
- */
-function clickedSubmission(
-  html: string,
-  value: string,
-): { action: string; fields: Record<string, string> } {
-  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-    for (const button of form[2].matchAll(/<button\b([^>]*)>/g)) {
-      const name = attributeOf(button[1], "name");
-      if (name === null || attributeOf(button[1], "value") !== value) continue;
-      return {
-        action: decodeEntities(attributeOf(form[1], "action") ?? ""),
-        fields: { ...submissionOf(form[2]), [name]: value },
-      };
-    }
-  }
-  throw new Error(`the page rendered no posting form with a submit button valued "${value}"`);
-}
-
-/**
  * Age one browser session past better-auth's freshness window — the passage of time, and
  * the one state no seam can express (requireOwnerSession takes no clock, and a production
  * affordance for "make this session old" is precisely what must not exist). The column is
@@ -954,38 +932,20 @@ describe("§13 · CSRF on every mutating POST", () => {
     });
   });
 
-  it("4. §13 · every mutating form the server still renders carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one — and the write that replaced the last ops-backed form, posted without its `X-Pmcp-Csrf`, is refused with its op never reaching a handler (the walk says the field is DRAWN; the refusal says the token is READ)", async () => {
-    // Three exclusions, all structural rather than convenient. /login is not walked at
-    // all: there is no session yet to derive a token from. A form that posts to
-    // better-auth's own mount is outside this module's gate by design — §4 gives that
-    // surface its own origin defense, which is also why /login's forms carry no token.
-    // And Sign out is the SHELL's form rather than any page's: layout.tsx renders it into
-    // every signed-in page and LayoutProps carries no csrfToken to put in it, so what
-    // stands in for the token there is the origin rule better-auth itself applied while
-    // that form still posted to better-auth (pages/model's `paths.auth` says so).
-    // Everything else that reaches a hub route is walked.
-    let hubForms = 0;
-    for (const [path, html] of Object.entries(await sessionPages())) {
-      for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-        if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-        const action = decodeEntities(attributeOf(form[1], "action") ?? "");
-        if (action.startsWith(`${paths.auth.base}/`)) continue;
-        if (action === paths.auth.signOut) continue;
-        hubForms += 1;
-        expect(/name="csrf"\s+value="[^"]+"/.test(form[2]), `${action} on ${path} carries no CSRF field`).toBe(true);
-      }
-    }
-    // The walk is proven to be looking at something: the pages really do render hub-owned
-    // mutating forms, and every one of them was checked.
-    expect(hubForms).toBeGreaterThan(0);
-
-    // And the carrier is load-bearing, not decorative — ported with decision 38's family 2,
-    // which took the last ops-backed FORM with it: `/settings/tokens/token_revoke` is
-    // `POST /api/hub/settings/tokens/token_revoke` now, behind the same `{recent: true}`
-    // prefix, which this fresh session satisfies — so the only thing left to refuse the
-    // post is the missing header, and it does. The form carrier itself is still read on the
-    // three form targets that survive: /apps/connect (5b), the consent POST (§19.5's CSRF
-    // row) and /device/decide.
+  // Row 4's first half — "every mutating form the pages render carries a CSRF field",
+  // walked out of `sessionPages()`'s server HTML — retired with decision 38's family 3: its
+  // last page, /device, answers the shell now, and the list it walked is empty. Where the
+  // guarantee went: the three form targets that survive each have a row that posts WITHOUT
+  // the field and is refused and WITH the page's own token and is admitted — the consent
+  // POST (§19.5's CSRF row, the token read off the rendered consent form, so "drawn" is
+  // proven with "read"), /apps/connect (5b) — and /login's forms carry none by design (no
+  // session yet; the origin rule stands in). Every JSON write carries the header instead,
+  // which the write-gate describe pins.
+  it("4. §13 · the write that replaced the last ops-backed form, posted without its `X-Pmcp-Csrf`, is refused with its op never reaching a handler — the token is READ, not decorative · the same write carrying the session's token reaches the op once (the twin)", async () => {
+    // Ported with decision 38's family 2, which took the last ops-backed FORM with it:
+    // `/settings/tokens/token_revoke` is `POST /api/hub/settings/tokens/token_revoke` now,
+    // behind the same `{recent: true}` prefix, which this fresh session satisfies — so the
+    // only thing left to refuse the post is the missing header, and it does.
     await withCountedOps(["token_revoke"], async (invocations) => {
       const refused = await settingsPost(settingsApi.tokenRevoke, { id: "no-such-token" }, world.session.cookie, null);
       expect(refused.status, "POST /api/hub/settings/tokens/token_revoke with no X-Pmcp-Csrf").toBe(403);
@@ -2169,7 +2129,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
   // the React shell's Sign out posted at better-auth's 415 for a month (routes §7.1). Replaced
   // with decision 38's family 2 by the walk that would have caught it: the targets are read
   // out of the SPA's own path table, the one the client posts through, never out of HTML.
-  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx", async () => {
+  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx; and `deviceApi` is the device read and verdict routes §3 designs, each answering its designed JSON", async () => {
     // A NAMESPACE of this case's own: Sign out and Revoke all others both succeed, and each
     // ends sessions of whichever owner it rides.
     const ns = await seedNamespace(env.DB, {
@@ -2220,6 +2180,20 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
       expect(answered.headers.get("Content-Type") ?? "", `POST ${path}`).toContain("application/json");
       expect(answered.headers.get("Location"), `POST ${path} answered a redirect`).toBeNull();
     }
+
+    // `deviceApi` (family 3), spelled once the same way, and each call answering its
+    // designed JSON over a live code: the read 200 with the card, the verdict `{ next }`.
+    expect({ ...deviceApi }).toEqual({ read: "/device", decide: "/device/decide" });
+    const codes = await requestDeviceCodes();
+    const read = await hub("GET", `/api/hub${deviceApi.read}?user_code=${encodeURIComponent(codes.userCode)}`, undefined, {
+      cookie: reader.cookie,
+    });
+    expect(read.status, `GET ${deviceApi.read} → ${await read.clone().text()}`).toBe(200);
+    const decided = await hub("POST", `/api/hub${deviceApi.decide}`, { userCode: codes.userCode, decision: "deny" }, {
+      cookie: reader.cookie,
+      csrf: await csrfFor(reader.cookie),
+    });
+    expect((await redirectedOf(decided)).raw).toBe(`${paths.device}?decided=denied`);
   });
 
   it("24a. §13 · the SPA's Sign out — the one form the React shell renders, which 24's walk of server HTML cannot see — posts where this worker translates it: a control-less form body answers 303 to /login and ends the session, never better-auth's 415 JSON (it did, from the SPA's first ship until 2026-09-23)", async () => {
@@ -2438,7 +2412,7 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals and /approvals/<id> (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals, /approvals/<id>, /settings and /device (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
       // Each page family joins this list as it becomes the shell (decision 38), until all
@@ -2449,6 +2423,8 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
         await get(paths.appNew),
         await get(paths.approvals),
         await get(paths.approval(world.approvalId)),
+        await get(paths.settings),
+        await get(`${paths.device}?user_code=${encodeURIComponent("BDWJ-KTQP")}`),
       ];
       for (const carrier of carriers) {
         expect(carrier.status).toBe(200);
@@ -2513,26 +2489,54 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   );
 });
 
+/** `GET /api/hub/device` as the SPA asks it (routes §3) — the one call that CLAIMS a
+ *  pending code for the reader, as rendering `/device?user_code=` did. `userCode` null
+ *  leaves the query off entirely; `cookie` null is the signed-out fetch. */
+function deviceRead(userCode: string | null, cookie: string | null = world.session.cookie): Promise<Response> {
+  const asked = userCode === null ? "" : `?user_code=${encodeURIComponent(userCode)}`;
+  return hub("GET", `/api/hub${deviceApi.read}${asked}`, undefined, { cookie });
+}
+
+/** `POST /api/hub/device/decide` as the SPA posts it, with the session's own token unless
+ *  the case withholds it (`csrf` null). */
+async function deviceDecide(body: unknown, cookie: string = world.session.cookie, csrf?: string | null): Promise<Response> {
+  const token = csrf === undefined ? await csrfFor(cookie) : csrf;
+  return hub("POST", `/api/hub${deviceApi.decide}`, body, { cookie, ...(token === null ? {} : { csrf: token }) });
+}
+
+/** One device code's row as better-auth keeps it — the claim (`userId`) and the verdict
+ *  (`status`), which is where "the code stays pending" and "nobody claimed it" are
+ *  observable without asking the flow that would change them. */
+async function deviceCodeRowOf(userCode: string): Promise<{ status: string; userId: string | null }> {
+  const row = await (env.DB as D1Like)
+    .prepare(`SELECT "status", "userId" FROM "deviceCode" WHERE "userCode" = ?`)
+    .bind(userCode)
+    .first<{ status: string; userId: string | null }>();
+  if (row === null) throw new Error(`no deviceCode row for ${userCode}`);
+  return row;
+}
+
 describe("§13 · the device decision, submitted the way the owner submits it", () => {
-  // This form fronts no op, so no parity walk could ever describe it (§9 rule 4a) — the
-  // debt the retired form walks owed it — and cases 28/29 walk it end to end instead. Both legs run the WHOLE flow — the CLI's code request, the
-  // owner's page render (which is what CLAIMS the code), the form post, and the CLI's
-  // redemption — because the decision is only observable at the far end of it.
+  // This verdict fronts no op, so no parity walk could ever describe it (§9 rule 4a), and
+  // cases 28/29 walk it end to end instead. Both legs run the WHOLE flow — the CLI's code
+  // request, the read (which is what CLAIMS the code, as the page render did), the
+  // decision, and the CLI's redemption — because the decision is only observable at the
+  // far end of it. Ported with decision 38's family 3 from /device's form to the two JSON
+  // calls the SPA makes; the confirm card itself — its facts as text, the blast-radius
+  // alert — is the client's.
 
-  it("28. §13 · /device's Approve button, posted form-encoded to the action the page rendered, decides the code: the redirect says approved and the CLI's redemption mints a session that /api/whoami answers as the owner", async () => {
+  it("28. §13 · Approve decides the code through the SPA's two calls — the read claims it for the owner and names its client, POST /api/hub/device/decide approve answers `next` exactly /device?decided=approved without a reload — and the CLI's redemption mints a session that /api/whoami answers as the owner", async () => {
     const codes = await requestDeviceCodes();
-    const rendered = await page(`${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`);
-    const submission = clickedSubmission(rendered, "approve");
-    // The target the page named, not one this case spelled (§9 rule 4b).
-    expect(submission.action).toBe(paths.deviceDecide);
-    // The hidden controls a browser would carry: the page's own CSRF token and the code
-    // being decided. Without them this POST is a cross-site post, and case 1's gate answers.
-    expect(Object.keys(submission.fields)).toContain("csrf");
-    expect(submission.fields.user_code).toBe(codes.userCode);
+    const read = await deviceRead(codes.userCode);
+    expect(read.status, await read.clone().text()).toBe(200);
+    const { request } = (await read.json()) as DeviceRead;
+    expect(request.userCode).toBe(codes.userCode);
+    // Claimed by THIS read: better-auth names the client to the claimant alone.
+    expect(request.client).toBe(DEVICE_CLIENT_ID);
 
-    const answered = await formPost(submission.action, submission.fields, world.session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
-    expect(answered.headers.get("Location")).toBe(`${paths.device}?decided=approved`);
+    const { raw, reload } = await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "approve" }));
+    expect(raw).toBe(`${paths.device}?decided=approved`);
+    expect(reload).toBe(false);
 
     // The far end of the flow: the CLI redeems the code it was issued and gets a real
     // session — the thing §13 warns the owner they are handing over.
@@ -2548,19 +2552,147 @@ describe("§13 · the device decision, submitted the way the owner submits it", 
     expect(await whoami.json()).toMatchObject({ principal: `user:${world.ns.owner.username}` });
   });
 
-  it("29. §13 · the Deny button on the same rendered form ends the flow the other way — the redirect says denied and the CLI's redemption is refused access_denied with no token (the twin of 28: one form, one gate, two outcomes)", async () => {
+  it("29. §13 · Deny ends the flow the other way — `next` exactly /device?decided=denied — and the CLI's redemption is refused access_denied with no token (the twin of 28: one read, one gate, two outcomes)", async () => {
     const codes = await requestDeviceCodes();
-    const rendered = await page(`${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`);
-    const submission = clickedSubmission(rendered, "deny");
-    expect(submission.action).toBe(paths.deviceDecide);
+    expect((await deviceRead(codes.userCode)).status).toBe(200);
 
-    const answered = await formPost(submission.action, submission.fields, world.session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
-    expect(answered.headers.get("Location")).toBe(`${paths.device}?decided=denied`);
+    const { raw } = await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "deny" }));
+    expect(raw).toBe(`${paths.device}?decided=denied`);
 
     const redeemed = await redeemDeviceCode(codes.deviceCode);
     expect(redeemed.access_token, "a denied code still minted a session").toBeUndefined();
     expect(redeemed.error).toBe("access_denied");
+  });
+
+  it("§13 · /device answers the shell behind the ORDINARY owner session — 200, `no-store`, the bootstrap island, the tab title the page drew — and with no cookie it is the 302 to /login carrying the whole deep link, user_code included, as next=, so the CLI's printed URL survives a sign-in", async () => {
+    const deepLink = `${paths.device}?user_code=${encodeURIComponent("BDWJ-KTQP")}`;
+    const anonymous = await call(new Request(`${ORIGIN}${deepLink}`));
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get("Location")).toBe(`/login?next=${encodeURIComponent(deepLink)}`);
+
+    // Ordinary, not recent: a day-old session still opens it, as it always did.
+    const stale = await seedOwnerSession(world.ns.owner);
+    await ageSession(stale.token);
+    for (const cookie of [world.session.cookie, stale.cookie]) {
+      const answered = await get(deepLink, cookie);
+      expect(answered.status).toBe(200);
+      expect(answered.headers.get("Cache-Control")).toBe("no-store");
+      const html = await answered.text();
+      expect(bootstrapCsrfOf(html)).toBe(await csrfFor(cookie));
+      expect(html).toContain("<title>Approve device</title>");
+    }
+  });
+
+  it("§13 · the read answers the confirm card's five facts and nothing else — `{ request }` holding exactly userCode, ip, client, requestedAt, expiresAt; ip the stated ceiling \"unknown\"; expiresAt the window's bound, DEVICE_CODE_TTL_MS after requestedAt — never the device code, the scope or the status better-auth's own verify answer carries", async () => {
+    const codes = await requestDeviceCodes();
+    const read = await deviceRead(codes.userCode);
+    expect(read.status).toBe(200);
+    const text = await read.clone().text();
+    const body = await jsonOf(read);
+    expect(Object.keys(body)).toEqual(["request"]);
+    const request = body.request as Record<string, unknown>;
+    expect(Object.keys(request).sort()).toEqual(["client", "expiresAt", "ip", "requestedAt", "userCode"]);
+    expect(request.ip).toBe("unknown");
+    expect(Date.parse(String(request.expiresAt)) - Date.parse(String(request.requestedAt))).toBe(DEVICE_CODE_TTL_MS);
+    // What the verify call returned and the card never showed.
+    expect(text, "the read carries the device code").not.toContain(codes.deviceCode);
+    expect(text, "the read carries a scope").not.toContain("scope");
+    expect(text, "the read carries a status").not.toContain("pending");
+  });
+
+  it("§13 · without a session the read is the reader's 401 and claims nothing — the code stays unclaimed — · the owner's own read afterwards claims it and names its client (the twin)", async () => {
+    const codes = await requestDeviceCodes();
+    const anonymous = await deviceRead(codes.userCode, null);
+    expect(anonymous.status).toBe(401);
+    expect(await reasonOf(anonymous)).toBe("Sign in again.");
+    expect((await deviceCodeRowOf(codes.userCode)).userId, "a signed-out read claimed the code").toBeNull();
+
+    const owned = await deviceRead(codes.userCode);
+    expect(owned.status).toBe(200);
+    expect(((await owned.json()) as DeviceRead).request.client).toBe(DEVICE_CLIENT_ID);
+    expect((await deviceCodeRowOf(codes.userCode)).userId).toBe(world.ns.owner.userId);
+  });
+
+  it(`§13 · a code better-auth does not know, and one past its expiry, are the same 404 carrying "That code is not valid. Check it and try again." · a live code is 200 (the twin) — and a read with no user_code, or an empty one, is 400: there is nothing to verify`, async () => {
+    const unknown = await deviceRead("ZZZZ-ZZZZ");
+    expect(unknown.status).toBe(404);
+    const refusal = await unknown.text();
+    expect(JSON.parse(refusal)).toEqual({ reason: "That code is not valid. Check it and try again." });
+
+    const expiring = await requestDeviceCodes();
+    await (env.DB as D1Like)
+      .prepare(`UPDATE "deviceCode" SET "expiresAt" = ? WHERE "userCode" = ?`)
+      .bind(new Date(Date.now() - 60_000).toISOString(), expiring.userCode)
+      .run();
+    const expired = await deviceRead(expiring.userCode);
+    expect(expired.status).toBe(404);
+    expect(await expired.text()).toBe(refusal);
+
+    const live = await requestDeviceCodes();
+    expect((await deviceRead(live.userCode)).status).toBe(200);
+
+    for (const asked of [null, ""]) {
+      const missing = await deviceRead(asked);
+      expect(missing.status, `user_code ${JSON.stringify(asked)}`).toBe(400);
+      expect(await reasonOf(missing)).not.toBe("");
+    }
+  });
+
+  it("§13 · the read binds a code to its FIRST signed-in reader: a second owner reading a code the first already claimed is not the claimant — client \"unknown\" — and their Approve lands on /device?error=That%20code%20could%20not%20be%20decided. with the code still pending · the claimant's own Approve decides it (the twin)", async () => {
+    // routes §3's "Binding, reviewed", made falsifiable: the verify claims a pending
+    // unclaimed code for the reader and names the client only to the claimant, and
+    // better-auth's approve refuses anyone else. (That the card still OFFERS Approve to a
+    // non-claimant is routes §8.3's recorded ceiling, kept exactly.)
+    const codes = await requestDeviceCodes();
+    expect((await deviceRead(codes.userCode)).status).toBe(200);
+
+    const intruder = await seedOwnerSession((await seedNamespace(env.DB, {})).owner);
+    const theirs = await deviceRead(codes.userCode, intruder.cookie);
+    expect(theirs.status).toBe(200);
+    expect(((await theirs.json()) as DeviceRead).request.client).toBe("unknown");
+    const refused = await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "approve" }, intruder.cookie));
+    expect(refused.raw).toBe(`${paths.device}?error=${encodeURIComponent("That code could not be decided.")}`);
+    expect(refused.reload).toBe(false);
+    expect(await deviceCodeRowOf(codes.userCode)).toEqual({ status: "pending", userId: world.ns.owner.userId });
+
+    const decided = await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "approve" }));
+    expect(decided.raw).toBe(`${paths.device}?decided=approved`);
+  });
+
+  it("§13 · the decision without `X-Pmcp-Csrf` is 403 and decides nothing — the code stays pending and the CLI's redemption still waits · the same body carrying the session's token decides it (the twin)", async () => {
+    // better-auth's own approve gate is origin-only; §13 pins a CSRF check on the verdict,
+    // and the write gate's header is that check.
+    const codes = await requestDeviceCodes();
+    expect((await deviceRead(codes.userCode)).status).toBe(200);
+
+    const refused = await deviceDecide({ userCode: codes.userCode, decision: "approve" }, world.session.cookie, null);
+    expect(refused.status).toBe(403);
+    expect((await deviceCodeRowOf(codes.userCode)).status).toBe("pending");
+    expect((await redeemDeviceCode(codes.deviceCode)).error).toBe("authorization_pending");
+
+    const accepted = await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "approve" }));
+    expect(accepted.raw).toBe(`${paths.device}?decided=approved`);
+    expect((await deviceCodeRowOf(codes.userCode)).status).toBe("approved");
+  });
+
+  it("§13 · a decision body that is not `{ userCode: string, decision: \"approve\" | \"deny\" }` is 400 and decides nothing — an unknown verdict is never read as deny or approve — and the old form target POST /device/decide is gone: 404 with no Location, even carrying the session's own CSRF field", async () => {
+    const codes = await requestDeviceCodes();
+    expect((await deviceRead(codes.userCode)).status).toBe(200);
+
+    for (const body of [
+      { userCode: codes.userCode, decision: "maybe" },
+      { userCode: codes.userCode },
+      { decision: "approve" },
+      { userCode: 7, decision: "approve" },
+    ]) {
+      const refused = await deviceDecide(body);
+      expect(refused.status, JSON.stringify(body)).toBe(400);
+    }
+    // Spelled literally on purpose: this is the path that must no longer route.
+    const gone = await post("/device/decide", { user_code: codes.userCode, decision: "approve" }, { csrf: await csrfFor(world.session.cookie) });
+    expect(gone.status).toBe(404);
+    expect(gone.headers.get("Location")).toBeNull();
+    expect((await deviceCodeRowOf(codes.userCode)).status).toBe("pending");
   });
 });
 
@@ -2592,17 +2724,14 @@ describe("§15 · the two auth events the ledger records", () => {
     hygienic(recorded.rows[0], [SEEDED_OWNER_PASSWORD, (cookie ?? "").split("=")[1] ?? ""]);
   });
 
-  it("31. §15 · approving a device through /device's own form writes exactly one auth.device_approved row, attributed to the browser session that approved it — and the row holds neither the codes nor the session it minted", async () => {
+  it("31. §15 · approving a device through the SPA's own calls — the read, then POST /api/hub/device/decide — writes exactly one auth.device_approved row, attributed to the browser session that approved it — and the row holds neither the codes nor the session it minted", async () => {
+    // Ported with decision 38's family 3: the row is written at better-auth's mount
+    // (identity.authRoutes), which the JSON verdict reaches exactly as the form did.
     const owner = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(owner.owner);
     const codes = await requestDeviceCodes();
-    const rendered = await page(
-      `${paths.device}?user_code=${encodeURIComponent(codes.userCode)}`,
-      session.cookie,
-    );
-    const submission = clickedSubmission(rendered, "approve");
-    const answered = await formPost(submission.action, submission.fields, session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
+    expect((await deviceRead(codes.userCode, session.cookie)).status).toBe(200);
+    await redirectedOf(await deviceDecide({ userCode: codes.userCode, decision: "approve" }, session.cookie));
     const minted = await redeemDeviceCode(codes.deviceCode);
     expect(typeof minted.access_token).toBe("string");
 
@@ -5067,36 +5196,6 @@ function submitButtonHtml(html: string, value: string): string {
 const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
   (path) => path.startsWith(`${paths.settings}/`),
 );
-
-/**
- * Every SERVER-RENDERED, session-backed page — the walk's input for case 4.
- *
- * `/apps`, `/apps/new` and the app page's eight URLs left this list with the SPA cutover
- * (2026-09-18), and `/audit` with decision 36: they answer a shell document that renders no
- * form at all, so walking them would only ever prove the shell carries none. The coverage
- * that went with them — the one
- * retained `/apps/connect` form's CSRF field, now drawn client-side where no server-HTML
- * walk can see it — is owed to the behavioural case beside case 4, which posts that target
- * with no field and reads the refusal.
- *
- * `/approvals` and `/approvals/<id>` left with decision 38's first family, and nothing is
- * owed for them: the two targets their forms posted (`/approvals/:op`, `/approvals/push`)
- * are deleted, and the JSON routes that replaced them are `X-Pmcp-Csrf`-gated — pinned by
- * the write-gate describe and by the push rows' own 403. The seven `/settings` panes left
- * with family 2 on the same terms: none of their eleven targets survives, and every JSON
- * write that replaced one is refused without the header (the prefix describe's gate walk).
- * The list shrinks with each family and the walk retires with the last.
- */
-async function sessionPages(): Promise<Record<string, string>> {
-  const { userCode } = await requestDeviceCodes();
-  const rendered: Record<string, string> = {};
-  for (const path of [
-    `${paths.device}?user_code=${encodeURIComponent(userCode)}`,
-  ]) {
-    rendered[path] = await page(path);
-  }
-  return rendered;
-}
 
 /**
  * The export, parsed — one AuditRow per line, exactly as audit.exportJsonl frames it.

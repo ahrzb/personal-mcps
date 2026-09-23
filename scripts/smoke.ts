@@ -178,12 +178,12 @@ async function main(): Promise<number> {
     });
 
     await step("CLI device flow (§14) approved with the web session", async () => {
-      // The /device PAGE is a later dispatch; the flow underneath it is better-auth's own
-      // endpoints, and that is what the CLI speaks. The claim and the approval are the
-      // browser's half — §4's mount guard admits a bearer only at the anonymous `/device/code`
-      // and `/device/token` legs, never at the claim or the approval (a bearer that could
-      // approve would mint a second owner session), so these two are driven over the COOKIE
-      // the sign-in set, exactly as the /device page does through callAuthResponse. The
+      // The flow underneath the /device page is better-auth's own endpoints, and that is what
+      // the CLI speaks. The claim and the approval are the browser's half — §4's mount guard
+      // admits a bearer only at the anonymous `/device/code` and `/device/token` legs, never
+      // at the claim or the approval (a bearer that could approve would mint a second owner
+      // session), so these two are driven over the COOKIE the sign-in set, exactly as the
+      // page's `/api/hub/device` read and verdict do through identity's door. The
       // approval POST carries Origin so it clears better-auth's cookie-request origin check.
       const requested = await postJson(`${ORIGIN}/api/auth/device/code`, { client_id: DEVICE_CLIENT_ID });
       const userCode = asString(requested.user_code, "user_code");

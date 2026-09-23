@@ -230,6 +230,11 @@ The client build comes first because `wrangler.jsonc` configures an `assets.dire
 (`web/dist`) and wrangler refuses a deploy whose asset directory is missing. `pnpm ship`
 already chains the two in that order.
 
+`pnpm ship` runs `wrangler d1 migrations apply --remote` a second time if the first fails.
+Cloudflare intermittently answers that step `7403 — the given account is not valid or is not
+authorized`, and a retry clears it; `apply` only applies pending migrations, so running it twice
+is safe. A real credential failure fails both attempts, and the deploy never runs.
+
 `--dry-run` is worth knowing about: it is what actually validates
 `compatibility_flags` (the vitest Workers pool tolerates their absence, a real deploy
 does not), which is why the repo runs it in CI.

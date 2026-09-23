@@ -15,7 +15,26 @@
 import { Link, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Kv, KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { TokenReveal } from "@/chrome/Reveal";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { ApiError } from "@/lib/http";
 import { formatLastSeen, formatStamp } from "@/lib/format";
 import { paths } from "@/lib/paths";
@@ -44,14 +63,16 @@ export function TokenPane(props: AppPaneProps): ReactNode {
 
   if (kind === "proxy") {
     return (
-      <div className="listing listing--wide">
-        <div className="lh">
-          <span className="listing-title">Token</span>
-        </div>
-        <div className="scroll">
-          <p className="note gh-state">Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.</p>
-        </div>
-      </div>
+      <Listing wide>
+        <ListingHead>
+          <ListingTitle render={<span />}>Token</ListingTitle>
+        </ListingHead>
+        <ListingScroll>
+          <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+            Proxied apps hold no tokens — the hub dials the upstream; nothing dials in.
+          </p>
+        </ListingScroll>
+      </Listing>
     );
   }
 
@@ -63,15 +84,15 @@ export function TokenPane(props: AppPaneProps): ReactNode {
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row title-row--split">
-            <span className="listing-title">Token</span>
-            <span className="note">what the app presents to dial in</span>
-            <span className="title-row-end">
-              <button
-                type="button"
-                className="btn btn--outline btn--sm"
+      <Listing>
+        <ListingHead>
+          <TitleRow split>
+            <ListingTitle render={<span />}>Token</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">what the app presents to dial in</span>
+            <TitleRowEnd>
+              <Button
+                variant="outline"
+                size="sm"
                 disabled={issue.isPending}
                 onClick={() => {
                   issue.mutate(
@@ -86,70 +107,74 @@ export function TokenPane(props: AppPaneProps): ReactNode {
                 }}
               >
                 Issue new token
-              </button>
-            </span>
-          </div>
-          <div className="sum">
+              </Button>
+            </TitleRowEnd>
+          </TitleRow>
+          <Sum>
             {tokens.length} live · app tokens have no expiry — rotate by issuing, then revoking the old one. Revoking
             the key a live socket used closes it.
-          </div>
-        </div>
+          </Sum>
+        </ListingHead>
         {refusal === null ? null : (
-          <div className="alert alert--danger" role="alert">
-            <div className="alert-text">{refusal.message}</div>
-          </div>
+          <Alert variant="danger" role="alert">
+            <AlertDescription>{refusal.message}</AlertDescription>
+          </Alert>
         )}
-        <div className="scroll">
+        <ListingScroll>
           {tokens.length === 0 ? (
-            <p className="note gh-state">No live token — the app cannot connect until one is issued.</p>
+            <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
+              No live token — the app cannot connect until one is issued.
+            </p>
           ) : (
             tokens.map((row) => (
-              <div className="cr" key={row.id}>
+              <ListRow key={row.id}>
                 <div>
-                  <Link className="row-link mono" to={base} search={{ sel: `token:${row.id}` }}>
+                  <Link className="font-mono after:absolute after:inset-0" to={base} search={{ sel: `token:${row.id}` }}>
                     {row.prefix}
                   </Link>
                   {row.id === holdingSocket ? (
                     <>
                       {" "}
-                      <span className="badge badge--success">holds the live socket</span>
+                      <Badge variant="success">holds the live socket</Badge>
                     </>
                   ) : null}
                   {row.id === minted?.id ? (
                     <>
                       {" "}
-                      <span className="badge badge--success badge--dashed">new</span>
+                      <Badge variant="success" className="border-dashed">
+                        new
+                      </Badge>
                     </>
                   ) : null}
-                  <div className="cr-detail">
+                  <ListRowDetail>
                     issued {formatLastSeen(row.createdAt, now)} ·{" "}
                     {row.lastUsedAt === null ? "never used" : `used ${formatLastSeen(row.lastUsedAt, now)}`}
-                  </div>
+                  </ListRowDetail>
                 </div>
-                <div className="cr-control">
+                <ListRowControl>
                   <Link
-                    className="btn btn--danger-outline btn--sm"
+                    className={buttonVariants({ variant: "danger-outline", size: "sm" })}
                     to={base}
                     search={{ confirm: "revoke-token", id: row.id }}
                   >
                     Revoke
                   </Link>
-                </div>
-              </div>
+                </ListRowControl>
+              </ListRow>
             ))
           )}
-        </div>
-      </div>
-      <div className="details">
+        </ListingScroll>
+      </Listing>
+      <Details>
         {selected === null ? (
-          <div className="dh">
-            <div className="listing-title">Token</div>
-            <p className="note">Select a token for its details.</p>
-          </div>
+          <DetailsHead>
+            <div className="text-lg font-semibold">Token</div>
+            <p className="max-w-[72ch] text-xs text-muted-foreground">Select a token for its details.</p>
+          </DetailsHead>
         ) : (
           <Selected row={selected} slug={slug} now={now} holdingSocket={holdingSocket} minted={minted} />
         )}
-      </div>
+      </Details>
     </>
   );
 }
@@ -175,43 +200,35 @@ function Selected({
   const reveal = minted !== null && minted.id === row.id ? minted.token : null;
   return (
     <>
-      <div className="dh">
-        <div className="title-row">
-          <span className="listing-title mono">{row.prefix}</span>
-          <span className="badge badge--muted">app token</span>
-        </div>
-        <p className="note">Only valid for opening the reverse WebSocket as {slug}.</p>
-      </div>
-      <div className="db">
+      <DetailsHead>
+        <TitleRow>
+          <span className="font-mono text-lg font-semibold">{row.prefix}</span>
+          <Badge variant="muted">app token</Badge>
+        </TitleRow>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">Only valid for opening the reverse WebSocket as {slug}.</p>
+      </DetailsHead>
+      <DetailsBody>
         {reveal === null ? null : (
-          <section className="card card--pad">
-            <div className="eyebrow">Shown once — copy it now</div>
+          <Card size="sm" render={<section />}>
+            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+              Shown once — copy it now
+            </div>
             <TokenReveal token={reveal}>
-              <p className="note">The previous token keeps working until you revoke it.</p>
+              <p className="max-w-[72ch] text-xs text-muted-foreground">
+                The previous token keeps working until you revoke it.
+              </p>
             </TokenReveal>
-          </section>
+          </Card>
         )}
-        <section className="card card--pad">
-          <div className="kv">
-            <div className="kv-row">
-              <div className="kv-key">Issued</div>
-              <div>{formatStamp(row.createdAt)}</div>
-            </div>
-            <div className="kv-row">
-              <div className="kv-key">Expires</div>
-              <div>never — revoke on compromise</div>
-            </div>
-            <div className="kv-row">
-              <div className="kv-key">Last used</div>
-              <div>{row.lastUsedAt === null ? "never" : formatLastSeen(row.lastUsedAt, now)}</div>
-            </div>
-            <div className="kv-row">
-              <div className="kv-key">Connection</div>
-              <div>{row.id === holdingSocket ? "holds the live socket now" : "none"}</div>
-            </div>
-          </div>
-        </section>
-      </div>
+        <Card size="sm" render={<section />}>
+          <KvList>
+            <Kv k="Issued">{formatStamp(row.createdAt)}</Kv>
+            <Kv k="Expires">never — revoke on compromise</Kv>
+            <Kv k="Last used">{row.lastUsedAt === null ? "never" : formatLastSeen(row.lastUsedAt, now)}</Kv>
+            <Kv k="Connection">{row.id === holdingSocket ? "holds the live socket now" : "none"}</Kv>
+          </KvList>
+        </Card>
+      </DetailsBody>
     </>
   );
 }

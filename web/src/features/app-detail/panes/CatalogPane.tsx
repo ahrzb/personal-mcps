@@ -21,8 +21,31 @@
 
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { Kv, KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  GroupHead,
+  GroupHeadNote,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
 import { Copyable } from "@/chrome/Reveal";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Empty, EmptyDescription } from "@/components/ui/empty";
+import { FieldError } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { useAppEnv } from "@/lib/api-context";
 import { paths } from "@/lib/paths";
 import type { CatalogDerivation, ListedItem, RoleFamily, SchemaLeaf } from "@/lib/types";
@@ -81,24 +104,24 @@ export function CatalogPane(props: AppPaneProps): ReactNode {
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">Catalog</span>
-            <span className="note">{subtitle}</span>
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>Catalog</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">{subtitle}</span>
             {/* Bare, as every other pane's is: `Refreshing` renders nothing when it is not
                 refreshing, and a wrapper span would be an empty flex item that the narrow
-                `[data-level] .title-row-end { flex-basis: 100% }` rule pushes onto a line of
-                its own, adding a row gap the listing never had. */}
+                `TitleRowEnd` rule (a line of its own) would push down, adding a row gap the
+                listing never had. */}
             <Refreshing active={refreshing} />
-          </div>
-          <div className="sum">{summary}</div>
+          </TitleRow>
+          <Sum>{summary}</Sum>
           {/* A filter on the URL, not in state: `?q=` is what makes a filtered view
               shareable, and it is also what the Roles editor's save depends on being
               visible — a hidden row is not an unticked one. Every keystroke REPLACES, and
               drops `?sel=`, exactly as submitting the GET form did. */}
-          <div className="lh-filter">
-            <input
+          <div className="flex">
+            <Input
               type="search"
               value={q}
               placeholder="filter tools, prompts, resources…"
@@ -109,22 +132,22 @@ export function CatalogPane(props: AppPaneProps): ReactNode {
               }}
             />
           </div>
-        </div>
-        <div className="scroll">
+        </ListingHead>
+        <ListingScroll>
           {pending ? (
             <Skeleton rows={6} />
           ) : state !== null ? (
-            <div className="empty empty--inline">
-              <div className="empty-text">{state.text}</div>
+            <Empty variant="inline">
+              <EmptyDescription>{state.text}</EmptyDescription>
               {state.reconnect ? (
                 <form method="post" action={paths.appConnect(slug)}>
                   <input type="hidden" name="csrf" value={bootstrap.csrf} />
-                  <button type="submit" className="btn btn--outline btn--sm">
+                  <Button type="submit" variant="outline" size="sm" className="mt-4">
                     {app.connection !== undefined && app.connection !== "not_connected" ? "Reconnect" : "Connect"}
-                  </button>
+                  </Button>
                 </form>
               ) : null}
-            </div>
+            </Empty>
           ) : (
             FAMILY_GROUPS.map((group) => (
               <FamilyGroup
@@ -140,13 +163,13 @@ export function CatalogPane(props: AppPaneProps): ReactNode {
               />
             ))
           )}
-        </div>
-      </div>
+        </ListingScroll>
+      </Listing>
       {/* `bootstrap.origin`, never `location.origin`: this endpoint is a value the owner
           COPIES into a bot's configuration, so it must be the origin the hub puts on the
           wire everywhere else — a dashboard reached on some other host must not hand out
           an endpoint naming that host. */}
-      <Details
+      <CatalogDetails
         props={props}
         search={search}
         doors={doors}
@@ -185,11 +208,11 @@ function FamilyGroup({
   if (view.state !== "listed") {
     return (
       <>
-        <div className="gh">
+        <GroupHead>
           <span>{title} · 0</span>
-          <span className="gh-note">none advertised</span>
-        </div>
-        <p className="note gh-state">
+          <GroupHeadNote render={<span />}>none advertised</GroupHeadNote>
+        </GroupHead>
+        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
           {view.state === "pending"
             ? `Reading ${family}…`
             : kind === "tunnel"
@@ -223,19 +246,19 @@ function FamilyGroup({
   });
   return (
     <>
-      <div className="gh">
+      <GroupHead>
         <span>
           {title} · {items.length}
         </span>
-      </div>
+      </GroupHead>
       {rows.length === 0 ? (
-        <p className="note gh-state">no match</p>
+        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">no match</p>
       ) : (
         rows.map((row) => (
-          <div className="cr" key={row.name}>
+          <ListRow key={row.name}>
             <div>
               <Link
-                className="row-link mono"
+                className="font-mono after:absolute after:inset-0"
                 to={base}
                 search={q === "" ? { sel: `${one}:${row.name}` } : { q, sel: `${one}:${row.name}` }}
               >
@@ -246,15 +269,15 @@ function FamilyGroup({
                 // it is the hub's ONE audited renderer of untrusted app prose — which is
                 // what makes this safe here and nowhere else. Never build markup from a
                 // raw `description`.
-                <div className="cr-detail md" dangerouslySetInnerHTML={{ __html: row.inline }} />
+                <ListRowDetail className="md" dangerouslySetInnerHTML={{ __html: row.inline }} />
               ) : (
-                <div className="cr-detail md">{row.mime}</div>
+                <ListRowDetail className="md">{row.mime}</ListRowDetail>
               )}
             </div>
-            <div className="cr-control">
+            <ListRowControl>
               <Badges reached={doors.reach(row.name, family)} empty="no agent" />
-            </div>
-          </div>
+            </ListRowControl>
+          </ListRow>
         ))
       )}
     </>
@@ -263,13 +286,13 @@ function FamilyGroup({
 
 /** One agent that reaches a row: mono for allow, amber for `· ask` (§3/§4). */
 function Badges({ reached, empty }: { reached: Reach[]; empty: string }): ReactNode {
-  if (reached.length === 0) return <span className="muted">{empty}</span>;
+  if (reached.length === 0) return <span className="text-sm text-muted-foreground">{empty}</span>;
   return (
     <>
       {reached.map((entry) => (
-        <span key={entry.agent} className={entry.mode === "approval" ? "badge badge--warning" : "badge badge--mono"}>
+        <Badge key={entry.agent} variant={entry.mode === "approval" ? "warning" : "mono"}>
           {entry.mode === "approval" ? `${entry.agent} · ask` : entry.agent}
-        </span>
+        </Badge>
       ))}
     </>
   );
@@ -283,7 +306,7 @@ function Badges({ reached, empty }: { reached: Reach[]; empty: string }): ReactN
  * empty one — which is the same decision the loader made and is why a stale link degrades
  * instead of breaking.
  */
-function Details({
+function CatalogDetails({
   props,
   search,
   doors,
@@ -305,25 +328,25 @@ function Details({
 
   if (group === undefined || view === undefined || index < 0) {
     return (
-      <div className="details">
-        <div className="dh">
-          <div className="listing-title">Catalog</div>
-          <p className="note">Select a tool, prompt or resource for its details.</p>
-        </div>
-        <div className="db">
-          <section className="card card--pad">
-            <div className="eyebrow">Where this comes from</div>
-            <div className="kv">
+      <Details>
+        <DetailsHead>
+          <div className="text-lg font-semibold">Catalog</div>
+          <p className="max-w-[72ch] text-xs text-muted-foreground">Select a tool, prompt or resource for its details.</p>
+        </DetailsHead>
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>Where this comes from</div>
+            <KvList>
               <Kv k="Schemas">
                 {kind === "tunnel"
                   ? "the app's last tools/list — the hub stores them, it does not author them"
                   : "the upstream's live listing, under a 10 s deadline"}
               </Kv>
               <Kv k="Reach">computed with the gate's own matcher over each agent's grant</Kv>
-            </div>
-          </section>
-        </div>
-      </div>
+            </KvList>
+          </Card>
+        </DetailsBody>
+      </Details>
     );
   }
 
@@ -347,56 +370,63 @@ function Details({
   const asked = reached.filter((entry) => entry.mode === "approval").map((entry) => entry.agent);
 
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="title-row">
-          <span className="listing-title mono">{name}</span>
-          <span className="badge badge--muted">{group.one}</span>
-        </div>
+    <Details>
+      <DetailsHead>
+        <TitleRow>
+          <span className="font-mono text-lg font-semibold">{name}</span>
+          <Badge variant="muted">{group.one}</Badge>
+        </TitleRow>
         {derived.description.block === "" ? null : (
           // The details card is the BLOCK form: paragraphs and lists, where a row gets one
           // line. Both come from `pages/markdown`, the hub's one audited renderer.
-          <div className="note md" dangerouslySetInnerHTML={{ __html: derived.description.block }} />
+          <div
+            className="md max-w-[72ch] text-xs text-muted-foreground"
+            dangerouslySetInnerHTML={{ __html: derived.description.block }}
+          />
         )}
-      </div>
-      <div className="db">
+      </DetailsHead>
+      <DetailsBody>
         {isResource ? (
-          <section className="card card--pad">
-            <div className="eyebrow">Resource</div>
-            <div className="kv">
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>Resource</div>
+            <KvList>
               <Kv k="URI">
-                <span className="mono">{name}</span>
+                <span className="font-mono">{name}</span>
               </Kv>
               <Kv k="Type">{itemDescription(item, "resources") === "" ? "—" : itemDescription(item, "resources")}</Kv>
               <Kv k="Served on">
                 the scoped endpoint only — <Copyable value={endpoint} />
               </Kv>
               <Kv k="Matched">by URI, never by name</Kv>
-            </div>
-          </section>
+            </KvList>
+          </Card>
         ) : null}
         {args === null ? null : <LeafCard title="Arguments" rows={args} />}
         {declared === null ? null : <DeclaredCard rows={declared} />}
         {results === null ? null : <LeafCard title="Result · outputSchema" rows={results} />}
-        <section className="card card--pad">
-          <div className="eyebrow">What only the hub knows</div>
-          <div className="kv">
+        <Card size="sm" render={<section />}>
+          <div className={EYEBROW}>What only the hub knows</div>
+          <KvList>
             <Kv k="Scoped MCP identity">
               <div>
-                <span className="mono">{identity.scoped.service}</span>
+                <span className="font-mono">{identity.scoped.service}</span>
                 {" / "}
-                <span className="mono">{identity.scoped.member}</span>
+                <span className="font-mono">{identity.scoped.member}</span>
               </div>
               <Copyable value={identity.scoped.endpoint} />
             </Kv>
             {identity.typescript === null ? null : (
               <Kv k="TypeScript identity">
                 <div>
-                  {identity.typescript.path === null ? "unavailable" : <span className="mono">{identity.typescript.path}</span>}
+                  {identity.typescript.path === null ? (
+                    "unavailable"
+                  ) : (
+                    <span className="font-mono">{identity.typescript.path}</span>
+                  )}
                   {identity.typescript.source === null ? null : ` · ${identity.typescript.source}`}
                 </div>
                 {identity.typescript.diagnostic === null ? null : (
-                  <div className="field-error">{identity.typescript.diagnostic}</div>
+                  <FieldError>{identity.typescript.diagnostic}</FieldError>
                 )}
               </Kv>
             )}
@@ -415,15 +445,15 @@ function Details({
               </Kv>
             )}
             {isResource ? null : <Kv k="Redaction">{redactionText(redactedArgs, redactedResults)}</Kv>}
-          </div>
-        </section>
-        <p className="note">
+          </KvList>
+        </Card>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">
           The same block the audit row and the agent page show for this {group.one}. Editing reach happens on{" "}
           <Link to={paths.appPane(slug, "access")}>Agents</Link>, masking on{" "}
           <Link to={paths.appPane(slug, "recording")}>Recording</Link>.
         </p>
-      </div>
-    </div>
+      </DetailsBody>
+    </Details>
   );
 }
 
@@ -437,32 +467,36 @@ function redactionText(args: string[], results: string[]): string {
     .join(" · ");
 }
 
-const Kv = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
-  <div className="kv-row">
-    <div className="kv-key">{k}</div>
-    <div>{children}</div>
-  </div>
-);
+/** A details card's small caps heading. */
+const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
+
+/**
+ * One schema row of the Arguments / Result card: path, type, and whatever the third column has
+ * to say, on one baseline, over a hairline (none under the last). The path yields and breaks
+ * mid-token rather than widen the card; on a phone the third column drops under the first two.
+ */
+const ARG_ROW =
+  "grid grid-cols-[minmax(0,1fr)_70px_minmax(0,1fr)] items-baseline gap-x-2.5 border-b border-row-border py-1 text-xs last:border-b-0 [&>:first-child]:min-w-0 [&>:first-child]:wrap-anywhere max-md:grid-cols-[minmax(0,1fr)_auto] max-md:[&>:nth-child(3)]:col-span-full";
 
 /** A tool's schema as dotted leaves — the Arguments and Result cards. `writeOnly` is §7's
  *  marker: masked regardless of configuration, so the row says so rather than offering a
  *  control the owner cannot use from here. */
 function LeafCard({ title, rows }: { title: string; rows: SchemaLeaf[] }): ReactNode {
   return (
-    <section className="card card--pad">
-      <div className="eyebrow">{title}</div>
+    <Card size="sm" render={<section />}>
+      <div className={EYEBROW}>{title}</div>
       {rows.length === 0 ? (
-        <p className="note">none</p>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">none</p>
       ) : (
         rows.map((row) => (
-          <div className="arg" key={row.path}>
-            <div className="mono">{row.path}</div>
-            <div className="muted">{row.type}</div>
-            <div>{row.writeOnly ? <span className="badge badge--warning">writeOnly · masked</span> : null}</div>
+          <div className={ARG_ROW} key={row.path}>
+            <div className="font-mono">{row.path}</div>
+            <div className="text-sm text-muted-foreground">{row.type}</div>
+            <div>{row.writeOnly ? <Badge variant="warning">writeOnly · masked</Badge> : null}</div>
           </div>
         ))
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -474,23 +508,26 @@ function LeafCard({ title, rows }: { title: string; rows: SchemaLeaf[] }): React
  */
 function DeclaredCard({ rows }: { rows: CatalogDerivation["promptArguments"] }): ReactNode {
   return (
-    <section className="card card--pad">
-      <div className="eyebrow">Arguments</div>
+    <Card size="sm" render={<section />}>
+      <div className={EYEBROW}>Arguments</div>
       {rows.length === 0 ? (
-        <p className="note">none</p>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">none</p>
       ) : (
         rows.map((row) => (
-          <div className="arg" key={row.name}>
-            <div className="mono">{row.name}</div>
+          <div className={ARG_ROW} key={row.name}>
+            <div className="font-mono">{row.name}</div>
             {row.description.inline === "" ? (
-              <div className="muted md">—</div>
+              <div className="md text-sm text-muted-foreground">—</div>
             ) : (
-              <div className="muted md" dangerouslySetInnerHTML={{ __html: row.description.inline }} />
+              <div
+                className="md text-sm text-muted-foreground"
+                dangerouslySetInnerHTML={{ __html: row.description.inline }}
+              />
             )}
-            <div className="muted">{row.required ? "required" : "optional"}</div>
+            <div className="text-sm text-muted-foreground">{row.required ? "required" : "optional"}</div>
           </div>
         ))
       )}
-    </section>
+    </Card>
   );
 }

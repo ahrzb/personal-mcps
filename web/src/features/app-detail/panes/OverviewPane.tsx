@@ -13,6 +13,16 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { Kv, KvList } from "@/chrome/Kv";
+import { Listing, ListingHead, ListingScroll, ListingTitle } from "@/chrome/Listing";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge, BadgeDot } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field, FieldDescription, FieldError, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAppEditor } from "@/lib/queries";
 import { ApiError } from "@/lib/http";
 import { formatLastSeen, formatStamp } from "@/lib/format";
@@ -70,65 +80,62 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
   };
 
   return (
-    <div className="listing listing--wide">
-      <div className="lh">
-        <span className="listing-title">Overview</span>
-      </div>
-      <div className="scroll">
-        <div className="kv kv--pad">
+    <Listing wide>
+      <ListingHead>
+        <ListingTitle render={<span />}>Overview</ListingTitle>
+      </ListingHead>
+      <ListingScroll>
+        <KvList variant="block" className="max-w-pane p-4">
           {factRows(app, kind, now).map((row) => (
-            <div className="kv-row" key={row.key}>
-              <div className="kv-key">{row.key}</div>
-              <div className={row.mono ? "mono" : undefined}>{row.value}</div>
-            </div>
+            <Kv key={row.key} k={row.key}>
+              {row.mono ? <span className="font-mono">{row.value}</span> : row.value}
+            </Kv>
           ))}
-        </div>
+        </KvList>
 
-        <div className="alias-block">
-          <section className="card card--pad">
-            <div className="eyebrow">TypeScript aliases</div>
-            <p className="note">
+        {/* The same padding and measure as the pairs above: they are one listing's content,
+            and the two must line up. */}
+        <div className="flex max-w-pane flex-col gap-4 p-4">
+          <Card render={<section />}>
+            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+              TypeScript aliases
+            </div>
+            <p className="max-w-[72ch] text-xs text-muted-foreground">
               Generated programs address this app through hub-local TypeScript names. The upstream keeps its
               canonical names — an alias never renames it — and a blank field keeps whatever name is already
               established.
             </p>
             {refusal === null ? null : (
-              <div className="alert alert--danger" role="alert">
-                <div className="alert-text">{refusal.reason}</div>
-              </div>
+              <Alert variant="danger" role="alert">
+                <AlertDescription>{refusal.reason}</AlertDescription>
+              </Alert>
             )}
             {/* Not a `<form method="post">`: the write is a PUT whose refusal is rendered in
                 place with the draft intact, and a form submit would navigate away from the
                 one thing a refusal has to keep. */}
-            <div className="form">
-              <label className="field">
-                <span className="label">Service name</span>
-                <input
-                  className="input--mono"
-                  type="text"
-                  value={service}
-                  onChange={(event) => edit({ service: event.target.value })}
-                />
-                <span className="field-hint">Names this app's namespace in generated programs.</span>
+            <FieldGroup>
+              <Field render={<label />}>
+                <Label render={<span />}>Service name</Label>
+                <Input type="text" value={service} onChange={(event) => edit({ service: event.target.value })} />
+                <FieldDescription render={<span />}>Names this app's namespace in generated programs.</FieldDescription>
                 <FieldErrors refusal={refusal} field="typescript_aliases.service" />
-              </label>
-              <div className="field">
-                <span className="label">Tool aliases</span>
-                <table className="table alias-table">
-                  <thead>
-                    <tr>
-                      <th>Canonical tool name</th>
-                      <th>TypeScript alias</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              </Field>
+              <Field>
+                <Label render={<span />}>Tool aliases</Label>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Canonical tool name</TableHead>
+                      <TableHead>TypeScript alias</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {rows.map((row, index) => (
                       // Index, because a row's canonical name is editable and therefore not
                       // an identity: keying on it would remount the input being typed into.
-                      <tr key={index}>
-                        <td>
-                          <input
-                            className="input--mono"
+                      <TableRow key={index}>
+                        <TableCell>
+                          <Input
                             type="text"
                             value={row.canonicalName}
                             placeholder="canonical tool name"
@@ -137,10 +144,10 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
                               edit({ rows: replaced(rows, index, { ...row, canonicalName: event.target.value }) })
                             }
                           />
-                        </td>
-                        <td>
-                          <input
-                            className="input--mono"
+                        </TableCell>
+                        {/* Stacked under the first on a phone, where the cells lose their padding. */}
+                        <TableCell className="max-md:mt-2">
+                          <Input
                             type="text"
                             value={row.alias}
                             placeholder="alias"
@@ -149,21 +156,20 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
                               edit({ rows: replaced(rows, index, { ...row, alias: event.target.value }) })
                             }
                           />
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
-                <span className="field-hint">
+                  </TableBody>
+                </Table>
+                <FieldDescription render={<span />}>
                   One row per canonical tool. A name the hub has not listed yet is fine — it is reserved for when it
                   appears.
-                </span>
+                </FieldDescription>
                 <FieldErrors refusal={refusal} field="typescript_aliases.tools" />
-              </div>
-              <div className="actions actions--start">
-                <button
-                  type="button"
-                  className="btn btn--primary"
+              </Field>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  className="max-md:flex-1"
                   disabled={save.isPending}
                   onClick={() => {
                     save.mutate(
@@ -179,23 +185,23 @@ export function OverviewPane(props: AppPaneProps): ReactNode {
                   }}
                 >
                   Save aliases
-                </button>
+                </Button>
               </div>
-            </div>
-          </section>
+            </FieldGroup>
+          </Card>
 
-          <section className="card card--pad">
-            <div className="eyebrow">Reserved names</div>
+          <Card render={<section />}>
+            <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Reserved names</div>
             <ReservedTable app={app} />
             <Diagnostics lines={diagnostics} />
-            <p className="note">
+            <p className="max-w-[72ch] text-xs text-muted-foreground">
               A retired name stays reserved, so a later member can never claim a path code was written against — and
               deleting then recreating an app keeps its old names, so a recreated app needs a new service alias.
             </p>
-          </section>
+          </Card>
         </div>
-      </div>
-    </div>
+      </ListingScroll>
+    </Listing>
   );
 }
 
@@ -248,45 +254,49 @@ function ReservedTable({ app }: { app: AppRow }): ReactNode {
   );
   if (rows.length === 0) {
     return (
-      <p className="note">
+      <p className="max-w-[72ch] text-xs text-muted-foreground">
         Nothing reserved yet — the hub reserves a name for every canonical member when it first reads this app's
         catalog.
       </p>
     );
   }
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>Member</th>
-          <th>TypeScript name</th>
-          <th>Source</th>
-          <th>State</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Member</TableHead>
+          <TableHead>TypeScript name</TableHead>
+          <TableHead>Source</TableHead>
+          <TableHead>State</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {rows.map((row) => (
-          <tr key={`${row.family}/${row.canonicalName}`}>
-            <td>
-              <span className="badge badge--muted badge--xs">{row.family}</span>{" "}
-              <span className="cell-mono">{row.canonicalName}</span>
-            </td>
-            <td className="cell-mono">{row.typescriptName}</td>
-            <td className="cell-muted">{row.source}</td>
-            <td>
+          <TableRow key={`${row.family}/${row.canonicalName}`}>
+            <TableCell>
+              <Badge variant="muted" size="xs">
+                {row.family}
+              </Badge>{" "}
+              <span className="font-mono text-xs wrap-anywhere">{row.canonicalName}</span>
+            </TableCell>
+            <TableCell className="font-mono text-xs wrap-anywhere">{row.typescriptName}</TableCell>
+            <TableCell className="text-muted-foreground">{row.source}</TableCell>
+            <TableCell>
               {row.active ? (
-                <span className="badge badge--success badge--xs">
-                  <span className="dot" />
+                <Badge variant="success" size="xs">
+                  <BadgeDot />
                   active
-                </span>
+                </Badge>
               ) : (
-                <span className="badge badge--muted badge--xs">retired</span>
+                <Badge variant="muted" size="xs">
+                  retired
+                </Badge>
               )}
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         ))}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 }
 
@@ -301,9 +311,9 @@ function Diagnostics({ lines }: { lines: AliasDiagnostic[] }): ReactNode {
   if (lines.length === 0) return null;
   return (
     <div>
-      <div className="eyebrow">Diagnostics</div>
+      <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Diagnostics</div>
       {lines.map((line) => (
-        <p className="note" key={`${line.family}/${line.canonicalName}/${line.message}`}>
+        <p className="max-w-[72ch] text-xs text-muted-foreground" key={`${line.family}/${line.canonicalName}/${line.message}`}>
           {line.message}
         </p>
       ))}
@@ -328,9 +338,9 @@ function FieldErrors({ refusal, field }: { refusal: Refusal | null; field: strin
   return (
     <>
       {violations.map((each) => (
-        <span className="field-error" key={each.reason}>
+        <FieldError render={<span />} key={each.reason}>
           {each.reason}
-        </span>
+        </FieldError>
       ))}
     </>
   );

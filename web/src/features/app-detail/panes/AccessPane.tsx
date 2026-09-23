@@ -29,7 +29,29 @@ import { paths } from "@/lib/paths";
 import { auditQuery, useGrantEditor } from "@/lib/queries";
 import type { AuditRow, ListedAgent, RoleDeclaration, RoleFamily, Violation } from "@/lib/types";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
+import { KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  SaveBar,
+  SaveBarEnd,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
 import { QueryState, Refreshing, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DialogFooter } from "@/components/ui/dialog";
 import { usePreviewTransient } from "@/preview/transient";
 import { GrantGroup, reachLine } from "@/features/agents/GrantRows";
 import type { RowLink } from "@/features/agents/GrantRows";
@@ -90,38 +112,42 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
 
   if (roles === null) {
     return (
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">Agents</span>
-            <span className="note">who can call this app, and how</span>
-          </div>
-        </div>
-        <div className="scroll">
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>Agents</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">who can call this app, and how</span>
+          </TitleRow>
+        </ListingHead>
+        <ListingScroll>
           <Skeleton rows={4} />
-        </div>
-      </div>
+        </ListingScroll>
+      </Listing>
     );
   }
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">Agents</span>
-            <span className="note">who can call this app, and how</span>
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>Agents</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">who can call this app, and how</span>
             <Refreshing active={refreshing} />
-          </div>
-          <div className="sum">
+          </TitleRow>
+          <Sum>
             {`${plural(held.agents.length, "agent")} ${held.agents.length === 1 ? "holds" : "hold"} a grant · open one to edit its grant on ${slug}`}
-          </div>
+          </Sum>
           {/* The ledger's five states, in ONE place rather than once per row: a per-row
               failure would draw the same alert as many times as there are agents, and the
               rows do not depend on it — they simply print no call count until it lands. */}
-          <QueryState query={calls} skeleton={<span className="muted">counting calls…</span>} children={() => null} />
-        </div>
-        <div className="scroll">
+          <QueryState
+            query={calls}
+            skeleton={<span className="text-sm text-muted-foreground">counting calls…</span>}
+            children={() => null}
+          />
+        </ListingHead>
+        <ListingScroll>
           {held.agents.map((agent) => (
             <AgentRow
               key={agent.slug}
@@ -132,12 +158,12 @@ export function AccessPane({ slug, views, refreshing, roles, agents, now }: AppP
               calls={calls.isSuccess ? (counts[agent.slug] ?? 0) : null}
             />
           ))}
-          <p className="note gh-state">
+          <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">
             Granting a new agent starts from the agent's own page — <a href={paths.agents}>Agents</a> → the agent →
             Grant another app.
           </p>
-        </div>
-      </div>
+        </ListingScroll>
+      </Listing>
       {picked === null ? (
         <UnselectedDetails slug={slug} views={views} effective={roles.effective} grants={held.grants} />
       ) : (
@@ -197,42 +223,42 @@ function AgentRow({
   if (reach.resources.total > 0) parts.push(`${reach.resources.reached} of ${reach.resources.total} resources`);
   if (calls !== null) parts.push(`${calls} calls`, `${CALL_WINDOW_DAYS} d`);
   return (
-    <div className="cr">
+    <ListRow>
       <div>
-        <Link className="row-link mono" to="." search={{ sel: `agent:${agent.slug}` }}>
+        <Link className="font-mono after:absolute after:inset-0" to="." search={{ sel: `agent:${agent.slug}` }}>
           {agent.slug}
         </Link>{" "}
-        <span className="note">{agent.description}</span>
-        <div className="cr-detail">
+        <span className="max-w-[72ch] text-xs text-muted-foreground">{agent.description}</span>
+        <ListRowDetail>
           <div>
-            <span className="muted">allowed</span>{" "}
+            <span className="text-sm text-muted-foreground">allowed</span>{" "}
             {allowed.length === 0 ? (
-              <span className="muted">—</span>
+              <span className="text-sm text-muted-foreground">—</span>
             ) : (
               allowed.map((entry) => (
-                <span className="badge badge--mono" key={entry.entry}>
+                <Badge variant="mono" size="wrap" key={entry.entry}>
                   {entry.entry}
-                </span>
+                </Badge>
               ))
             )}
           </div>
           <div>
-            <span className="muted">ask first</span>{" "}
+            <span className="text-sm text-muted-foreground">ask first</span>{" "}
             {askFirst.length === 0 ? (
-              <span className="muted">—</span>
+              <span className="text-sm text-muted-foreground">—</span>
             ) : (
               askFirst.map((entry) => (
-                <span className="badge badge--warning" key={entry.entry}>
+                <Badge variant="warning" size="wrap" key={entry.entry}>
                   {entry.entry}
-                </span>
+                </Badge>
               ))
             )}
           </div>
           <div>{parts.join(" · ")}</div>
-        </div>
+        </ListRowDetail>
       </div>
-      <div className="cr-control"></div>
-    </div>
+      <ListRowControl />
+    </ListRow>
   );
 }
 
@@ -257,21 +283,26 @@ function UnselectedDetails({
   const door = reachabilityFor(effective, grants);
   const subjects = subjectsOf(views.tools);
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="listing-title">Agents</div>
-        <p className="note">Select an agent to edit what it may call on {slug}.</p>
-      </div>
-      <div className="db">
-        <section className="card card--pad">
-          <div className="eyebrow">Per tool</div>
-          <div className="kv">
+    <Details>
+      <DetailsHead>
+        <div className="text-lg font-semibold">Agents</div>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">Select an agent to edit what it may call on {slug}.</p>
+      </DetailsHead>
+      <DetailsBody>
+        <Card size="sm" render={<section />}>
+          <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">Per tool</div>
+          <KvList>
             {subjects.slice(0, PER_TOOL_ROWS).map((subject) => {
               const reached = door.reach(subject, "tools");
+              // A details pair, but keyed by the tool's own name at its natural width and in
+              // the body colour, rather than `Kv`'s fixed muted key column.
               return (
-                <div className="kv-row" key={subject}>
-                  <span className="k">{subject}</span>
-                  <span className="v">
+                <div
+                  className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5"
+                  key={subject}
+                >
+                  <span>{subject}</span>
+                  <span className="min-w-0 wrap-anywhere">
                     {reached.length === 0
                       ? "no agent"
                       : reached.map((each) => `${each.agent}${each.mode === "approval" ? " (ask)" : ""}`).join(", ")}
@@ -279,13 +310,13 @@ function UnselectedDetails({
                 </div>
               );
             })}
-          </div>
+          </KvList>
           {subjects.length <= PER_TOOL_ROWS ? null : (
-            <p className="note">… {subjects.length - PER_TOOL_ROWS} more in the Catalog</p>
+            <p className="max-w-[72ch] text-xs text-muted-foreground">… {subjects.length - PER_TOOL_ROWS} more in the Catalog</p>
           )}
-        </section>
-      </div>
-    </div>
+        </Card>
+      </DetailsBody>
+    </Details>
   );
 }
 
@@ -330,39 +361,48 @@ function GrantEditorPane({
   const link: RowLink = (sel) => ({ to: paths.agentApp(agent.slug, slug), search: { sel } });
 
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="title-row">
-          <span className="listing-title mono">{agent.slug}</span>
-          <span className="badge badge--muted">agent</span>
-          {agent.description === "" ? null : <span className="note">{agent.description}</span>}
+    <Details>
+      <DetailsHead>
+        <TitleRow>
+          <span className="font-mono text-lg font-semibold">{agent.slug}</span>
+          <Badge variant="muted">agent</Badge>
+          {agent.description === "" ? null : (
+            <span className="max-w-[72ch] text-xs text-muted-foreground">{agent.description}</span>
+          )}
           {stored.length === 0 ? (
-            <span className="badge badge--warning badge--dashed">new grant · nothing saved yet</span>
+            <Badge variant="warning" className="border-dashed">
+              new grant · nothing saved yet
+            </Badge>
           ) : null}
-          <Link className="title-row-end" to={paths.agentApp(agent.slug, slug)}>
+          {/* `TitleRowEnd`'s placement, on the link itself rather than on a wrapper. */}
+          <Link
+            className="ml-auto [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full"
+            to={paths.agentApp(agent.slug, slug)}
+          >
             open agent page
           </Link>
-        </div>
-        <p className="note">
+        </TitleRow>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">
           {agent.slug}'s grant on {slug}. Solid: set on the row · hollow: implied by a role · a row cannot lower
           what a role grants.
         </p>
-        <div className="sum">{reachLine(agent.slug, editor.reach)}</div>
-      </div>
+        <Sum>{reachLine(agent.slug, editor.reach)}</Sum>
+      </DetailsHead>
       {refusal === null ? null : (
-        <div className="alert alert--danger" role="alert">
-          <div className="alert-text">
+        <Alert variant="danger" role="alert">
+          <AlertDescription>
             {refusal.reason}
             {(refusal.violations ?? []).map((each) => (
               <div key={`${each.field}:${each.reason}`}>
-                <span className="mono">{each.field}</span> {each.reason}
+                <span className="font-mono">{each.field}</span> {each.reason}
               </div>
             ))}
-          </div>
-        </div>
+          </AlertDescription>
+        </Alert>
       )}
-      <div className="listing-form">
-        <div className="scroll">
+      {/* The editor's rows and its save bar, laid out as the details column's own children. */}
+      <div className="contents">
+        <ListingScroll>
           {editor.groups.map((group) => (
             <GrantGroup
               key={`${group.title}\u0000${group.count}`}
@@ -371,22 +411,21 @@ function GrantEditorPane({
               onChoose={(entry, choice) => setDraft((current) => ({ ...current, [entry]: choice }))}
             />
           ))}
-        </div>
-        <div className="save">
+        </ListingScroll>
+        <SaveBar>
           <Link
-            className="btn btn--danger-outline btn--sm"
+            className={buttonVariants({ variant: "danger-outline", size: "sm" })}
             to="."
             search={{ confirm: "remove-agent", agent: agent.slug }}
           >
             Remove {agent.slug}
           </Link>
-          <span className="save-end">
-            <Link className="btn btn--ghost btn--sm" to="." search={{}}>
+          <SaveBarEnd render={<span />}>
+            <Link className={buttonVariants({ variant: "ghost", size: "sm" })} to="." search={{}}>
               Discard
             </Link>
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
+            <Button
+              size="sm"
               disabled={save.isPending}
               onClick={() => {
                 setRefusal(null);
@@ -400,11 +439,11 @@ function GrantEditorPane({
               }}
             >
               Save
-            </button>
-          </span>
-        </div>
+            </Button>
+          </SaveBarEnd>
+        </SaveBar>
       </div>
-    </div>
+    </Details>
   );
 }
 
@@ -426,19 +465,18 @@ function RemoveDialog({
       text={`${agent} loses every entry on ${slug}. History stays; a waiting request expires.`}
       onClose={onClose}
     >
-      <div className="actions">
-        <button type="button" className="btn btn--ghost" onClick={onClose}>
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          type="button"
-          className="btn btn--danger"
+        </Button>
+        <Button
+          variant="danger"
           disabled={save.isPending}
           onClick={() => save.mutate({ agent, clear: true }, { onSuccess: onClose })}
         >
           Remove
-        </button>
-      </div>
+        </Button>
+      </DialogFooter>
     </ConfirmDialog>
   );
 }

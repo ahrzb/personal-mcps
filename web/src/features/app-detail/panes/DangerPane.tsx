@@ -13,6 +13,10 @@
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { DetailsBody, Listing, ListingHead, ListingScroll, ListingTitle } from "@/chrome/Listing";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { ApiError } from "@/lib/http";
 import { paths } from "@/lib/paths";
 import { useOp } from "@/lib/queries";
@@ -27,55 +31,68 @@ export function DangerPane(props: AppPaneProps): ReactNode {
   const refusal = unarchive.error instanceof ApiError ? unarchive.error : null;
 
   return (
-    <div className="listing listing--wide">
-      <div className="lh">
-        <span className="listing-title">Danger zone</span>
-      </div>
-      <div className="scroll">
+    <Listing wide>
+      <ListingHead>
+        <ListingTitle render={<span />}>Danger zone</ListingTitle>
+      </ListingHead>
+      <ListingScroll>
         {refusal === null ? null : (
-          <div className="alert alert--danger" role="alert">
-            <div className="alert-text">{refusal.message}</div>
-          </div>
+          <Alert variant="danger" role="alert">
+            <AlertDescription>{refusal.message}</AlertDescription>
+          </Alert>
         )}
-        <div className="db">
-          <section className="card card--pad">
-            <h2 className="card-title">{app.archived ? "Unarchive" : `Archive ${slug}`}</h2>
-            <p className="card-desc">
+        <DetailsBody>
+          <Card size="sm" render={<section />}>
+            <CardTitle render={<h2 />}>{app.archived ? "Unarchive" : `Archive ${slug}`}</CardTitle>
+            <CardDescription render={<p />}>
               {app.archived
                 ? "It accepts connections again, with everything it kept while archived."
                 : "It refuses connections and leaves the list — tokens, grants and history are kept."}
-            </p>
-            <div className="actions actions--start">
+            </CardDescription>
+            <div className={ACTIONS}>
               {app.archived ? (
-                <button
-                  type="button"
-                  className="btn btn--outline btn--sm"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="max-md:flex-1"
                   disabled={unarchive.isPending}
                   onClick={() => unarchive.mutate({ slug })}
                 >
                   Unarchive
-                </button>
+                </Button>
               ) : (
-                <Link className="btn btn--outline btn--sm" to={base} search={{ confirm: "archive" }}>
+                <Link
+                  className={buttonVariants({ variant: "outline", size: "sm", className: "max-md:flex-1" })}
+                  to={base}
+                  search={{ confirm: "archive" }}
+                >
                   Archive {slug}
                 </Link>
               )}
             </div>
-          </section>
-          <section className="card card--pad card--danger">
-            <h2 className="card-title">Delete {slug}</h2>
-            <p className="card-desc">
+          </Card>
+          <Card size="sm" render={<section />} className="border-danger-border">
+            <CardTitle render={<h2 />}>Delete {slug}</CardTitle>
+            <CardDescription render={<p />}>
               Revokes its {plural(tokens.length, "token")}, closes the live connection and removes every grant (
               {plural(granted.agents.length, "agent")}). This cannot be undone.
-            </p>
-            <div className="actions actions--start">
-              <Link className="btn btn--danger-outline btn--sm" to={base} search={{ confirm: "delete" }}>
+            </CardDescription>
+            <div className={ACTIONS}>
+              <Link
+                className={buttonVariants({ variant: "danger-outline", size: "sm", className: "max-md:flex-1" })}
+                to={base}
+                search={{ confirm: "delete" }}
+              >
                 Delete {slug}
               </Link>
             </div>
-          </section>
-        </div>
-      </div>
-    </div>
+          </Card>
+        </DetailsBody>
+      </ListingScroll>
+    </Listing>
   );
 }
+
+/** A card's row of actions, at its start; each action takes an equal share of a phone's width
+ *  (its `max-md:flex-1`, per action rather than per child, as legacy `.actions .btn` was). */
+const ACTIONS = "flex flex-wrap items-center gap-3";

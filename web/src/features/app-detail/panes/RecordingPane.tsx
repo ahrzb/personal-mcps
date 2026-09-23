@@ -25,7 +25,33 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ApiError } from "@/lib/http";
 import { useAppEditor } from "@/lib/queries";
 import type { Violation } from "@/lib/types";
+import { KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  GroupHead,
+  GroupHeadNote,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  SaveBar,
+  SaveBarEnd,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow } from "@/chrome/Page";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Checkbox, Tick } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { usePreviewTransient } from "@/preview/transient";
 import type { AppPaneProps, FamilyView } from "@/features/app-detail/derive";
 import { derivedOf, itemsOf, plural, searchValue, searchValues } from "@/features/app-detail/derive";
@@ -95,17 +121,17 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
 
   if (views.tools.state === "pending") {
     return (
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row title-row--split">
-            <span className="listing-title">Recording</span>
-            <span className="note">what the audit trail keeps, and what it masks</span>
-          </div>
-        </div>
-        <div className="scroll">
+      <Listing>
+        <ListingHead>
+          <TitleRow split>
+            <ListingTitle render={<span />}>Recording</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">what the audit trail keeps, and what it masks</span>
+          </TitleRow>
+        </ListingHead>
+        <ListingScroll>
           <Skeleton rows={5} />
-        </div>
-      </div>
+        </ListingScroll>
+      </Listing>
     );
   }
 
@@ -171,27 +197,25 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row title-row--split">
-            <span className="listing-title">Recording</span>
-            <span className="note">what the audit trail keeps, and what it masks</span>
+      <Listing>
+        <ListingHead>
+          <TitleRow split>
+            <ListingTitle render={<span />}>Recording</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">what the audit trail keeps, and what it masks</span>
             <Refreshing active={refreshing} />
-            {/* A real checkbox styled as the switch; the label is visible text, so the state
-                is readable without the colour. */}
-            <label className="sw-label title-row-end">
+            {/* The label is visible text, so the state is readable without the colour. It
+                takes `TitleRowEnd`'s placement itself rather than sitting in a wrapper. */}
+            <Label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-xs font-normal whitespace-nowrap text-muted-foreground [[data-level]_&]:max-lg:ml-0 [[data-level]_&]:max-lg:basis-full">
               <span>Record call bodies</span>
-              <input
-                className="sw"
-                type="checkbox"
+              <Switch
                 checked={draft.logBodies}
-                onChange={(event) => setDraft((current) => ({ ...current, logBodies: event.target.checked }))}
+                onCheckedChange={(checked) => setDraft((current) => ({ ...current, logBodies: checked }))}
               />
-            </label>
-          </div>
-          <div className="sum">{summary}</div>
+            </Label>
+          </TitleRow>
+          <Sum>{summary}</Sum>
           <form
-            className="lh-filter"
+            className="flex"
             onSubmit={(event) => {
               event.preventDefault();
               const typed = new FormData(event.currentTarget).get("q");
@@ -199,28 +223,29 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
               void navigate({ to: ".", search: next === "" ? {} : { q: next } });
             }}
           >
-            <input key={q} type="search" name="q" defaultValue={q} placeholder="filter paths…" aria-label="Filter" />
+            <Input key={q} type="search" name="q" defaultValue={q} placeholder="filter paths…" aria-label="Filter" />
           </form>
-        </div>
+        </ListingHead>
         {warning === null ? null : (
-          <div className="alert alert--warning" role="status">
-            <div className="alert-text">{warning}</div>
-          </div>
+          <Alert variant="warning" role="status">
+            <AlertDescription>{warning}</AlertDescription>
+          </Alert>
         )}
         {refusal === null ? null : (
-          <div className="alert alert--danger" role="alert">
-            <div className="alert-text">
+          <Alert variant="danger" role="alert">
+            <AlertDescription>
               {refusal.reason}
               {(refusal.violations ?? []).map((each) => (
                 <div key={`${each.field}:${each.reason}`}>
-                  <span className="mono">{each.field}</span> {each.reason}
+                  <span className="font-mono">{each.field}</span> {each.reason}
                 </div>
               ))}
-            </div>
-          </div>
+            </AlertDescription>
+          </Alert>
         )}
-        <div className="listing-form">
-          <div className="scroll">
+        {/* The rows and the save bar, laid out as the listing's own children. */}
+        <div className="contents">
+          <ListingScroll>
             {DIRECTIONS.map((dir) => (
               <Section
                 key={dir}
@@ -231,35 +256,30 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
                 onPath={(pairs, on) => setMarks(dir, pairs, on)}
               />
             ))}
-          </div>
-          <div className="save">
+          </ListingScroll>
+          <SaveBar>
             <a href={`/audit?app=${encodeURIComponent(slug)}`}>Recorded calls to {slug} →</a>
-            <span className="save-end">
-              <Link className="btn btn--ghost btn--sm" to="." search={{}}>
+            <SaveBarEnd render={<span />}>
+              <Link className={buttonVariants({ variant: "ghost", size: "sm" })} to="." search={{}}>
                 Discard
               </Link>
-              <button
-                type="button"
-                className="btn btn--primary btn--sm"
-                disabled={editor.isPending}
-                onClick={save}
-              >
+              <Button size="sm" disabled={editor.isPending} onClick={save}>
                 Save
-              </button>
-            </span>
-          </div>
+              </Button>
+            </SaveBarEnd>
+          </SaveBar>
         </div>
-      </div>
-      <div className="details">
-        <div className="dh">
-          <div className="listing-title">Masked before recording</div>
-          <p className="note">
+      </Listing>
+      <Details>
+        <DetailsHead>
+          <div className="text-lg font-semibold">Masked before recording</div>
+          <p className="max-w-[72ch] text-xs text-muted-foreground">
             {app.logBodies
               ? "These fields are replaced with ‹redacted› before a call is written to the trail. Everything else in the body is kept as sent."
               : "Body logging is off, so no bodies reach the trail; the masks below apply once it is turned on."}
           </p>
-        </div>
-        <div className="db">
+        </DetailsHead>
+        <DetailsBody>
           {DIRECTIONS.map((dir) => (
             <MaskedCard
               key={dir}
@@ -268,34 +288,34 @@ export function RecordingPane({ slug, app, kind, views, refreshing }: AppPanePro
               index={index[dir]}
             />
           ))}
-          <section className="card card--pad">
-            <div className="eyebrow">What a recorded call keeps</div>
-            <div className="kv">
-              <Kv k="Arguments">
-                <span className="mono">params.arguments</span>, post-redaction
-              </Kv>
-              <Kv k="Results">
-                <span className="mono">structuredContent</span> post-redaction; text, image and resource blocks
+          <Card size="sm" render={<section />}>
+            <div className={EYEBROW}>What a recorded call keeps</div>
+            <KvList>
+              <Pair k="Arguments">
+                <span className="font-mono">params.arguments</span>, post-redaction
+              </Pair>
+              <Pair k="Results">
+                <span className="font-mono">structuredContent</span> post-redaction; text, image and resource blocks
                 become size stubs, never bytes
-              </Kv>
-              <Kv k="Cap">
-                16 KiB per body — an over-cap body is one <span className="mono">oversize</span> stub
-              </Kv>
-              <Kv k="Kept for">
+              </Pair>
+              <Pair k="Cap">
+                16 KiB per body — an over-cap body is one <span className="font-mono">oversize</span> stub
+              </Pair>
+              <Pair k="Kept for">
                 7 days, then pruned with the rest of the audit table ·{" "}
                 <a href={`/audit/export.jsonl?app=${encodeURIComponent(slug)}`}>Export JSONL</a> to keep longer
-              </Kv>
-              <Kv k="Never">
-                refused calls, token material, <span className="mono">writeOnly</span> and config-masked fields
-              </Kv>
-            </div>
-          </section>
-          <p className="note">
+              </Pair>
+              <Pair k="Never">
+                refused calls, token material, <span className="font-mono">writeOnly</span> and config-masked fields
+              </Pair>
+            </KvList>
+          </Card>
+          <p className="max-w-[72ch] text-xs text-muted-foreground">
             A tick writes one literal (tool, path) entry per tool; nothing here is a pattern and nothing is typed.
             Masking applies to the approval record too.
           </p>
-        </div>
-      </div>
+        </DetailsBody>
+      </Details>
     </>
   );
 }
@@ -453,19 +473,19 @@ function Section({
 }): ReactNode {
   return (
     <>
-      <div className="gh sticky">
+      <GroupHead sticky>
         <span>
           {section.title} · {section.count} path{section.count === 1 ? "" : "s"}
         </span>
-        <span className="gh-note">{section.note}</span>
-      </div>
+        <GroupHeadNote render={<span />}>{section.note}</GroupHeadNote>
+      </GroupHead>
       {section.state === null ? (
         section.rows.map((row) => (
           <div key={row.path}>
-            <div className="cr">
+            <ListRow>
               <div>
-                <span className="mono">{row.path}</span> <span className="ty">{row.type}</span>
-                <div className="cr-detail">
+                <span className="font-mono">{row.path}</span> <span className={TYPE}>{row.type}</span>
+                <ListRowDetail>
                   {row.detail}
                   {row.expandable ? (
                     <>
@@ -475,71 +495,67 @@ function Section({
                       </Link>
                     </>
                   ) : null}
-                </div>
+                </ListRowDetail>
               </div>
-              <div className="cr-control">
+              <ListRowControl>
                 {row.control.kind === "locked" ? (
                   // A CONTROL, disabled — the path has one, it is ticked, and it is not the
                   // owner's to clear. Disabled, so it contributes nothing to `wholePath`.
-                  <input
-                    className="cb lock"
-                    type="checkbox"
+                  <Checkbox
+                    variant="tick"
+                    lock
                     checked
                     disabled
                     aria-label={`mask ${row.path}`}
                     title="declared writeOnly by the app — always masked"
                   />
                 ) : row.control.kind === "mixed" ? (
-                  <span className="cb mixed" title="masked on some of its tools — set it per tool below">
-                    <Dash />
-                  </span>
+                  <Tick state="mixed" title="masked on some of its tools — set it per tool below" />
                 ) : (
-                  <input
-                    className="cb"
-                    type="checkbox"
+                  <Checkbox
+                    variant="tick"
                     checked={row.control.checked}
                     disabled={row.control.disabled}
                     aria-label={`mask ${row.path}`}
                     title={row.control.disabled ? "set it per tool below" : "mask on every tool that takes it"}
-                    onChange={(event) =>
+                    onCheckedChange={(checked) =>
                       onPath(
                         row.drawn.map((tool) => `${tool}.${row.path}`),
-                        event.target.checked,
+                        checked,
                       )
                     }
                   />
                 )}
-              </div>
-            </div>
+              </ListRowControl>
+            </ListRow>
             {row.tools.map((tool) => (
-              <div className="cr cr--sub" key={`${row.path}\u0000${tool.tool}`}>
+              <ListRow sub key={`${row.path}\u0000${tool.tool}`}>
                 <div>
-                  <span className="mono">{tool.tool}</span>
-                  {tool.writeOnly ? <div className="cr-detail">declared by the app — always masked</div> : null}
+                  <span className="font-mono">{tool.tool}</span>
+                  {tool.writeOnly ? <ListRowDetail>declared by the app — always masked</ListRowDetail> : null}
                 </div>
-                <div className="cr-control">
+                <ListRowControl>
                   {tool.writeOnly ? (
-                    <span className="cb lock">
-                      <Check />
-                    </span>
+                    <Tick state="lock" />
                   ) : (
-                    <input
-                      className="cb"
-                      type="checkbox"
+                    <Checkbox
+                      variant="tick"
                       checked={tool.checked}
                       aria-label={`mask ${row.path} on ${tool.tool}`}
-                      onChange={(event) => onTool(`${tool.tool}.${row.path}`, event.target.checked)}
+                      onCheckedChange={(checked) => onTool(`${tool.tool}.${row.path}`, checked)}
                     />
                   )}
-                </div>
-              </div>
+                </ListRowControl>
+              </ListRow>
             ))}
           </div>
         ))
       ) : (
-        <p className="note gh-state">{section.state}</p>
+        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{section.state}</p>
       )}
-      {section.noSchema === null ? null : <p className="note gh-state">{section.noSchema}</p>}
+      {section.noSchema === null ? null : (
+        <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{section.noSchema}</p>
+      )}
     </>
   );
 }
@@ -579,23 +595,25 @@ function MaskedCard({
         .join(" · "),
     }));
   return (
-    <section className="card card--pad">
-      <div className="eyebrow">
+    <Card size="sm" render={<section />}>
+      <div className={EYEBROW}>
         {dir === "args" ? "Arguments" : "Results"} · {rows.length} masked
       </div>
       {rows.length === 0 ? (
-        <p className="note">nothing masked — {dir === "args" ? "arguments" : "results"} are recorded whole</p>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">
+          nothing masked — {dir === "args" ? "arguments" : "results"} are recorded whole
+        </p>
       ) : (
         // A path is long and who masks it is longer: the two stack rather than sitting either
         // side of a narrow key column.
         rows.map((row) => (
           <div key={row.path}>
-            <span className="mono">{row.path}</span>
-            <div className="cr-detail">{row.detail}</div>
+            <span className="font-mono">{row.path}</span>
+            <ListRowDetail>{row.detail}</ListRowDetail>
           </div>
         ))
       )}
-    </section>
+    </Card>
   );
 }
 
@@ -656,47 +674,20 @@ function names(tools: string[]): string {
 
 /* ------------------------------------------------------------------- the bits --- */
 
-const Kv = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
-  <div className="kv-row">
-    <span className="k">{k}</span>
-    <span className="v">{children}</span>
+/** A details card's small caps heading. */
+const EYEBROW = "text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase";
+
+/** The small type label beside a path: what it is, not what it does. */
+const TYPE = "text-2xs text-ring";
+
+/**
+ * One line of a details card's pairs: `KvList`'s row shape (stacking below 1024px on this
+ * page), but the key at its natural width in the body colour rather than `Kv`'s fixed, muted
+ * key column. That is what this pane has always drawn.
+ */
+const Pair = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
+  <div className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5">
+    <span>{k}</span>
+    <span className="min-w-0 wrap-anywhere">{children}</span>
   </div>
 );
-
-/** The tick glyph the locked ticks draw. */
-function Check(): ReactNode {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
-
-/** The dash a MIXED path wears: masked on some of its tools, and clearable on none of them
- *  from here — the rows below it are where it changes. */
-function Dash(): ReactNode {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      aria-hidden="true"
-    >
-      <path d="M5 12h14" />
-    </svg>
-  );
-}

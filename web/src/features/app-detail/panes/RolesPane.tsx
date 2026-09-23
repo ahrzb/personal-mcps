@@ -23,7 +23,33 @@ import { ApiError } from "@/lib/http";
 import { BUILTIN_ROLE } from "@/lib/paths";
 import { useAppEditor } from "@/lib/queries";
 import type { FamilyPatterns, ListedAgent, RoleFamily, RolesResponse, Violation } from "@/lib/types";
+import { KvList } from "@/chrome/Kv";
+import {
+  Details,
+  DetailsBody,
+  DetailsHead,
+  GroupHead,
+  GroupHeadNote,
+  Listing,
+  ListingHead,
+  ListingScroll,
+  ListingTitle,
+  ListRow,
+  ListRowControl,
+  ListRowDetail,
+  SaveBar,
+  SaveBarCount,
+  SaveBarEnd,
+  Sum,
+} from "@/chrome/Listing";
+import { TitleRow, TitleRowEnd } from "@/chrome/Page";
 import { Refreshing, Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Checkbox, Tick } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { usePreviewTransient } from "@/preview/transient";
 import type { AppPaneProps, FamilyView } from "@/features/app-detail/derive";
 import { itemProse } from "@/features/agents/grant-editor";
@@ -92,17 +118,17 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
 
   if (roles === null) {
     return (
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">Roles</span>
-            <span className="note">named sets of what this app exposes</span>
-          </div>
-        </div>
-        <div className="scroll">
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>Roles</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">named sets of what this app exposes</span>
+          </TitleRow>
+        </ListingHead>
+        <ListingScroll>
           <Skeleton rows={4} />
-        </div>
-      </div>
+        </ListingScroll>
+      </Listing>
     );
   }
 
@@ -116,41 +142,41 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
 
   return (
     <>
-      <div className="listing">
-        <div className="lh">
-          <div className="title-row">
-            <span className="listing-title">Roles</span>
-            <span className="note">named sets of what this app exposes</span>
+      <Listing>
+        <ListingHead>
+          <TitleRow>
+            <ListingTitle render={<span />}>Roles</ListingTitle>
+            <span className="max-w-[72ch] text-xs text-muted-foreground">named sets of what this app exposes</span>
             <Refreshing active={refreshing} />
-          </div>
-          <div className="sum">{summary}</div>
-        </div>
-        <div className="scroll">
+          </TitleRow>
+          <Sum>{summary}</Sum>
+        </ListingHead>
+        <ListingScroll>
           {names.map((role) => (
-            <div className="cr" key={role}>
+            <ListRow key={role}>
               <div>
-                <Link className="row-link mono" to="." search={{ sel: `role:${role}` }}>
+                <Link className="font-mono after:absolute after:inset-0" to="." search={{ sel: `role:${role}` }}>
                   {role}
                 </Link>{" "}
                 <SourceBadge source={sourceOf(role, roles)} />
-                <div className="cr-detail">
+                <ListRowDetail>
                   {role === BUILTIN_ROLE
                     ? `every tool, prompt and resource, present and future · matches ${matchCount(ALL_FAMILIES, views)}`
                     : `${patternText(roles.effective[role])} · matches ${matchCount(normalizeRole(roles.effective[role] ?? {}), views)}`}
-                </div>
+                </ListRowDetail>
               </div>
-              <div className="cr-control">
+              <ListRowControl>
                 <Badges badges={holdersOf(role, slug, holders)} empty="held by no agent" />
-              </div>
-            </div>
+              </ListRowControl>
+            </ListRow>
           ))}
-        </div>
-        <div className="save">
-          <Link className="btn btn--outline btn--sm" to="." search={{ new: "1" }}>
+        </ListingScroll>
+        <SaveBar>
+          <Link className={buttonVariants({ variant: "outline", size: "sm" })} to="." search={{ new: "1" }}>
             New role
           </Link>
-        </div>
-      </div>
+        </SaveBar>
+      </Listing>
       {/* Keyed on the selection so a different role is a different editor: the draft is
           seeded from the role it belongs to and must never carry over to the next one. The
           FILTER is deliberately not in the key — narrowing the rows keeps the draft, which
@@ -169,30 +195,34 @@ export function RolesPane({ slug, app, kind, views, refreshing, roles, agents }:
           q={searchValue(search, "q").trim()}
         />
       ) : (
-        <div className="details">
-          <div className="dh">
-            <div className="listing-title">Roles</div>
-            <p className="note">Select a role to see what it can do, or add one of your own.</p>
-          </div>
-          <div className="db">
-            <section className="card card--pad">
-              <div className="eyebrow">Two sources, one rule</div>
-              <div className="kv">
-                <Kv k="The app's">
+        <Details>
+          <DetailsHead>
+            <div className="text-lg font-semibold">Roles</div>
+            <p className="max-w-[72ch] text-xs text-muted-foreground">
+              Select a role to see what it can do, or add one of your own.
+            </p>
+          </DetailsHead>
+          <DetailsBody>
+            <Card size="sm" render={<section />}>
+              <div className="text-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase">
+                Two sources, one rule
+              </div>
+              <KvList>
+                <Pair k="The app's">
                   {kind === "tunnel"
                     ? "declared at connect; read-only here — the app owns them"
                     : "none: a proxied app declares no roles"}
-                </Kv>
-                <Kv k="Yours">
+                </Pair>
+                <Pair k="Yours">
                   defined here by ticking items or adding patterns; usable in grants like any role
-                </Kv>
-                <Kv k="Collision">
+                </Pair>
+                <Pair k="Collision">
                   if the app later declares a name you defined, its declaration replaces yours — the row says so
-                </Kv>
-              </div>
-            </section>
-          </div>
-        </div>
+                </Pair>
+              </KvList>
+            </Card>
+          </DetailsBody>
+        </Details>
       )}
     </>
   );
@@ -309,12 +339,15 @@ function RoleEditor({
   const otherViolations = (refusal?.violations ?? []).filter((each) => !NAME_FIELDS.has(each.field));
 
   return (
-    <div className="details">
-      <div className="dh">
-        <div className="title-row">
+    <Details>
+      <DetailsHead>
+        <TitleRow>
           {isNew ? (
-            <input
-              className="input role-name"
+            // As wide as a role name ever is, so the source badge beside it keeps its place on
+            // the header's first line; mono, as the saved name it becomes is printed.
+            <Input
+              size="sm"
+              className="w-[200px] max-w-full font-mono"
               type="text"
               value={edit.role}
               placeholder="role name"
@@ -323,27 +356,27 @@ function RoleEditor({
               onChange={(event) => setEdit((current) => ({ ...current, role: event.target.value }))}
             />
           ) : (
-            <span className="listing-title mono">{name}</span>
+            <span className="font-mono text-lg font-semibold">{name}</span>
           )}
-          <span className={source === "yours" ? "badge badge--success" : "badge badge--muted"}>
+          <Badge variant={source === "yours" ? "success" : "muted"}>
             {source === "built-in" ? "built-in" : source === "yours" ? "yours" : "declared by the app"}
-          </span>
-          <span className="title-row-end">
+          </Badge>
+          <TitleRowEnd>
             <Badges
               badges={isNew ? [] : holdersOf(name, slug, holders)}
               empty={isNew ? "" : "held by no agent"}
             />
-          </span>
-        </div>
-        <p className="note">{explain(name, source, kind, appName, isNew)}</p>
+          </TitleRowEnd>
+        </TitleRow>
+        <p className="max-w-[72ch] text-xs text-muted-foreground">{explain(name, source, kind, appName, isNew)}</p>
         {nameViolations.length === 0 ? null : (
-          <p className="note" role="alert">
+          <p className="max-w-[72ch] text-xs text-muted-foreground" role="alert">
             {nameViolations.map((each) => each.reason).join(" · ")}
           </p>
         )}
         {editable ? (
           <form
-            className="lh-filter"
+            className="flex"
             onSubmit={(event) => {
               event.preventDefault();
               const typed = new FormData(event.currentTarget).get("q");
@@ -360,7 +393,7 @@ function RoleEditor({
             {/* Uncontrolled and re-keyed on the URL: the filter's value IS `?q=`, so the
                 input is re-seeded when a navigation changes it and typed into freely between
                 navigations. */}
-            <input
+            <Input
               key={q}
               type="search"
               name="q"
@@ -370,28 +403,28 @@ function RoleEditor({
             />
           </form>
         ) : null}
-      </div>
+      </DetailsHead>
       <Refusal reason={refusal?.reason ?? null} violations={otherViolations} />
       {/* A read-only role — the app's own declaration, and the built-in `all` — draws no Save
           at all: its rows are statements, and a Save would have nothing it is allowed to
-          write. */}
-      <div className="listing-form">
-        <div className="scroll">
-          {catalogNote === null ? null : <p className="note gh-state">{catalogNote}</p>}
+          write. The rows and the save bar are laid out as the details column's own children. */}
+      <div className="contents">
+        <ListingScroll>
+          {catalogNote === null ? null : <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{catalogNote}</p>}
           {listing.groups.map((group) => (
             <div key={group.title}>
-              <div className="gh sticky">
+              <GroupHead sticky>
                 <span>
                   {group.title}
                   {group.count === null ? null : ` · ${group.count}`}
                 </span>
-              </div>
+              </GroupHead>
               {group.state === null ? (
                 group.rows.map((row) => (
-                  <div className="cr" key={row.entry}>
+                  <ListRow key={row.entry}>
                     <div>
-                      <span className="mono">{row.name}</span>
-                      <div className="cr-detail">
+                      <span className="font-mono">{row.name}</span>
+                      <ListRowDetail>
                         {/* The hub's own renderer already escaped and whitelisted this
                             (`pages/markdown.ts`), which is why injecting it here is safe and
                             why the client must never render an app's raw prose itself. A
@@ -404,23 +437,20 @@ function RoleEditor({
                         {row.via.length === 0 ? null : (
                           <>
                             {" "}
-                            · via <span className="mono">{row.via.join(", ")}</span>
+                            · via <span className="font-mono">{row.via.join(", ")}</span>
                           </>
                         )}
-                      </div>
+                      </ListRowDetail>
                     </div>
-                    <div className="cr-control">
+                    <ListRowControl>
                       {row.locked ? (
-                        <span className="cb lock" title={row.lockTitle}>
-                          <Check />
-                        </span>
+                        <Tick state="lock" title={row.lockTitle} />
                       ) : row.tickable ? (
-                        <input
-                          className="cb"
-                          type="checkbox"
+                        <Checkbox
+                          variant="tick"
                           checked={row.checked}
                           aria-label={row.name}
-                          onChange={() =>
+                          onCheckedChange={() =>
                             setEdit((current) => ({
                               ...current,
                               ticked: current.ticked.includes(row.entry)
@@ -430,104 +460,93 @@ function RoleEditor({
                           }
                         />
                       ) : (
-                        <span className="cb" title={row.lockTitle} aria-hidden="true"></span>
+                        <Tick title={row.lockTitle} aria-hidden="true" />
                       )}
-                    </div>
-                  </div>
+                    </ListRowControl>
+                  </ListRow>
                 ))
               ) : (
-                <p className="note gh-state">{group.state}</p>
+                <p className="max-w-[72ch] p-4 text-xs text-muted-foreground">{group.state}</p>
               )}
             </div>
           ))}
           {patterns.length === 0 && offer === null ? null : (
             <>
-              <div className="gh sticky">
+              <GroupHead sticky>
                 <span>Patterns · {patterns.length}</span>
-                <span className="gh-note">anchored · * aliases .*</span>
-              </div>
+                <GroupHeadNote render={<span />}>anchored · * aliases .*</GroupHeadNote>
+              </GroupHead>
               {patterns.map((row) => (
-                <div className="cr" key={row.entry}>
+                <ListRow key={row.entry}>
                   <div>
-                    <span className="mono">{row.pattern}</span> <span className="ty">{row.family}</span>
-                    <div className="cr-detail">{row.detail}</div>
+                    <span className="font-mono">{row.pattern}</span> <span className={TYPE}>{row.family}</span>
+                    <ListRowDetail>{row.detail}</ListRowDetail>
                   </div>
-                  <div className="cr-control">
+                  <ListRowControl>
                     {row.editable ? (
-                      <button
-                        type="button"
-                        className="cb on"
+                      <Tick
+                        state="on"
                         title="remove this pattern"
-                        disabled={editor.isPending}
-                        onClick={() => save({ drop: row.entry })}
-                      >
-                        <Check />
-                      </button>
+                        render={
+                          <button type="button" disabled={editor.isPending} onClick={() => save({ drop: row.entry })} />
+                        }
+                      />
                     ) : (
-                      <span className="cb lock" title="in this role">
-                        <Check />
-                      </span>
+                      <Tick state="lock" title="in this role" />
                     )}
-                  </div>
-                </div>
+                  </ListRowControl>
+                </ListRow>
               ))}
               {offer === null ? null : (
-                <div className="cr">
+                <ListRow>
                   <div>
-                    <span className="mono">{offer.pattern}</span> <span className="ty">{offer.family}</span>
-                    <div className="cr-detail">{offer.detail}</div>
+                    <span className="font-mono">{offer.pattern}</span> <span className={TYPE}>{offer.family}</span>
+                    <ListRowDetail>{offer.detail}</ListRowDetail>
                   </div>
-                  <div className="cr-control">
-                    <button
-                      type="button"
-                      className="btn btn--outline btn--sm"
+                  <ListRowControl>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       disabled={editor.isPending}
                       onClick={() => save({ add: offer.pattern })}
                     >
                       Add as pattern
-                    </button>
-                  </div>
-                </div>
+                    </Button>
+                  </ListRowControl>
+                </ListRow>
               )}
             </>
           )}
-        </div>
+        </ListingScroll>
         {editable ? (
-          <div className="save">
+          <SaveBar>
             {isNew ? (
               <span></span>
             ) : (
-              <span className="save-end">
-                <button
-                  type="button"
-                  className="btn btn--danger-outline btn--sm"
+              <SaveBarEnd render={<span />}>
+                <Button
+                  variant="danger-outline"
+                  size="sm"
                   disabled={editor.isPending}
                   onClick={() => save({ delete: true })}
                 >
                   Delete role
-                </button>
-                <span className="muted">
-                  grants naming it keep the name and match nothing until it exists again
-                </span>
-              </span>
+                </Button>
+                <SaveBarCount>grants naming it keep the name and match nothing until it exists again</SaveBarCount>
+              </SaveBarEnd>
             )}
-            <span className="save-end">
-              <Link className="btn btn--ghost btn--sm" to="." search={{}}>
+            <SaveBarEnd render={<span />}>
+              <Link className={buttonVariants({ variant: "ghost", size: "sm" })} to="." search={{}}>
                 Discard
               </Link>
-              <button
-                type="button"
-                className="btn btn--primary btn--sm"
-                disabled={editor.isPending}
-                onClick={() => save()}
-              >
+              <Button size="sm" disabled={editor.isPending} onClick={() => save()}>
                 Save
-              </button>
-            </span>
-          </div>
+              </Button>
+            </SaveBarEnd>
+          </SaveBar>
         ) : null}
       </div>
-    </div>
+    </Details>
   );
 }
 
@@ -776,10 +795,18 @@ function holdersOf(role: string, slug: string, agents: ListedAgent[]): { agent: 
 
 /* ------------------------------------------------------------------- the bits --- */
 
-const Kv = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
-  <div className="kv-row">
-    <span className="k">{k}</span>
-    <span className="v">{children}</span>
+/** The small type label beside a pattern: which family it matches in. */
+const TYPE = "text-2xs text-ring";
+
+/**
+ * One line of a details card's pairs: `KvList`'s row shape (stacking below 1024px on this
+ * page), but the key at its natural width in the body colour rather than `Kv`'s fixed, muted
+ * key column. That is what this pane has always drawn.
+ */
+const Pair = ({ k, children }: { k: string; children?: ReactNode }): ReactNode => (
+  <div className="flex items-baseline gap-3 text-xs [[data-level]_&]:max-lg:flex-col [[data-level]_&]:max-lg:items-start [[data-level]_&]:max-lg:gap-0.5">
+    <span>{k}</span>
+    <span className="min-w-0 wrap-anywhere">{children}</span>
   </div>
 );
 
@@ -792,22 +819,22 @@ function SourceBadge({ source }: { source: RoleSource }): ReactNode {
         ? "the app declares this name — its declaration replaced yours"
         : undefined;
   return (
-    <span className={source === "yours" ? "badge badge--success badge--xs" : "badge badge--xs"} title={title}>
+    <Badge variant={source === "yours" ? "success" : "default"} size="xs" title={title}>
       {source}
-    </span>
+    </Badge>
   );
 }
 
 /** One agent that reaches a row: mono for allow, amber for `· ask`. */
 function Badges({ badges, empty }: { badges: { agent: string; ask: boolean }[]; empty: string }): ReactNode {
-  if (badges.length === 0) return <span className="muted">{empty}</span>;
+  if (badges.length === 0) return <span className="text-sm text-muted-foreground">{empty}</span>;
   return (
     <>
       {badges.map((badge) => (
-        <span key={badge.agent} className={badge.ask ? "badge badge--warning" : "badge badge--mono"}>
+        <Badge key={badge.agent} variant={badge.ask ? "warning" : "mono"}>
           {badge.agent}
           {badge.ask ? " · ask" : ""}
-        </span>
+        </Badge>
       ))}
     </>
   );
@@ -817,34 +844,15 @@ function Badges({ badges, empty }: { badges: { agent: string; ask: boolean }[]; 
 function Refusal({ reason, violations }: { reason: string | null; violations: Violation[] }): ReactNode {
   if (reason === null) return null;
   return (
-    <div className="alert alert--danger" role="alert">
-      <div className="alert-text">
+    <Alert variant="danger" role="alert">
+      <AlertDescription>
         {reason}
         {violations.map((each) => (
           <div key={`${each.field}:${each.reason}`}>
-            <span className="mono">{each.field}</span> {each.reason}
+            <span className="font-mono">{each.field}</span> {each.reason}
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-/** The tick glyph both the checkbox's checked state and the locked ticks draw. */
-function Check(): ReactNode {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
+      </AlertDescription>
+    </Alert>
   );
 }

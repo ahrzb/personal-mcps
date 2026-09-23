@@ -25,10 +25,19 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { ConfirmDialog, useDropSearchKeys } from "@/chrome/Confirm";
+import { Kv, KvList } from "@/chrome/Kv";
+import { Tiles } from "@/chrome/Listing";
+import { Crumb, CrumbSep, Page, PageHead, PageSubtitle, PageTitle, Pane, TitleRow, Workspace } from "@/chrome/Page";
 import { LevelHeader, PaneRail, paneGroups } from "@/chrome/Panes";
 import type { PaneEntry, PaneMarker } from "@/chrome/Panes";
 import { Shell, useDocumentTitle } from "@/chrome/Shell";
 import { Skeleton } from "@/chrome/States";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { useAppEnv } from "@/lib/api-context";
 import { formatLastSeen } from "@/lib/format";
 import { ApiError } from "@/lib/http";
@@ -76,16 +85,16 @@ const RAIL_NAV_LABEL = "App panes";
 
 /** No pill row on this page, deliberately: `/settings` is the only paned page that renders
  *  one, and neither app-detail nor agent-detail ever did. Here the phone's pane navigation
- *  is the RAIL at narrow level 1 (`styles.css`'s `[data-level="1"] .rail`) — which is why
+ *  is the RAIL at narrow level 1 (`chrome/Panes`' rail at `[data-level="1"]`) — which is why
  *  the bare `/apps/<slug>` URL has to keep existing. */
 
 /** A status word's palette: green for the two live states, amber for the two that are
  *  waiting on the owner, muted for the rest. */
-const STATUS_CLASS: Record<string, string> = {
-  online: "badge badge--success",
-  connected: "badge badge--success",
-  "needs reconnect": "badge badge--warning",
-  archived: "badge badge--warning",
+const STATUS_TONE: Record<string, "success" | "warning"> = {
+  online: "success",
+  connected: "success",
+  "needs reconnect": "warning",
+  archived: "warning",
 };
 
 /** Which pane each `?confirm=` belongs to (`model.ts:APP_CONFIRM_PANE`). A dialog rides the
@@ -158,10 +167,10 @@ export function AppDetailPage(): ReactNode {
   if (row === null || app.data === undefined) {
     return (
       <Shell active="apps">
-        <main className="page--workspace">
+        <Page shape="workspace">
           {notice === null ? null : <NoticeBanner notice={notice} />}
           <Skeleton rows={8} />
-        </main>
+        </Page>
       </Shell>
     );
   }
@@ -233,46 +242,48 @@ export function AppDetailPage(): ReactNode {
 
   return (
     <Shell active="apps">
-      {/* `data-level` is read by the narrow stylesheet ALONE: it shows one of the rail, the
-          listing and the details by it, and the wide one never looks. */}
-      <main className="page--workspace" data-level={String(level)}>
+      {/* `level` is read by the narrow layout ALONE: it shows one of the rail, the listing
+          and the details by it, and the wide one never looks. */}
+      <Page shape="workspace" level={level}>
         <LevelHeader header={header} />
 
-        <div className="page-head">
+        <PageHead>
           <div>
             {/* ONE row: where the page sits, what it is, and what it is called. */}
-            <div className="title-row">
-              <Link className="crumb" to={paths.apps}>
-                Apps
-              </Link>
-              <span className="crumb-sep" aria-hidden="true">
-                ›
-              </span>
-              <h1 className="page-title">{row.name}</h1>
-              <div className="badge-row">
-                <span className="badge badge--title badge--mono">{slug}</span>
-                <span className="badge badge--title badge--mono">{kind}</span>
+            <TitleRow>
+              <Crumb render={<Link to={paths.apps} />}>Apps</Crumb>
+              <CrumbSep />
+              <PageTitle>{row.name}</PageTitle>
+              <div className="flex flex-wrap items-center gap-1">
+                <Badge variant="mono" size="title">
+                  {slug}
+                </Badge>
+                <Badge variant="mono" size="title">
+                  {kind}
+                </Badge>
                 {status === null ? null : (
-                  <span className={`${STATUS_CLASS[status] ?? "badge badge--muted"} badge--title`}>{status}</span>
+                  <Badge variant={STATUS_TONE[status] ?? "muted"} size="title">
+                    {status}
+                  </Badge>
                 )}
               </div>
-            </div>
-            {row.description === "" ? null : <p className="page-subtitle">{row.description}</p>}
+            </TitleRow>
+            {row.description === "" ? null : <PageSubtitle>{row.description}</PageSubtitle>}
           </div>
           {/* ONE line, the parts separated by the hub's own middot — five tiles side by side
               would read as five independent facts rather than one partition. */}
-          <div className="tiles">{tiles}</div>
-        </div>
+          <Tiles>{tiles}</Tiles>
+        </PageHead>
 
         {/* §13's archived banner, on every pane rather than on the danger zone alone: an
             archived app's page stays reachable and everything on it is still listed, so the
             one thing a reader needs on any of them is why nothing connects. */}
         {row.archived ? (
-          <div className="alert alert--warning" role="status">
-            <div className="alert-text">
+          <Alert variant="warning" role="status">
+            <AlertDescription>
               Archived apps refuse connections; everything is kept — tokens, grants and audit history.
-            </div>
-          </div>
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         {/* The flash sits where the server-rendered page drew it: after the archived banner
@@ -285,15 +296,15 @@ export function AppDetailPage(): ReactNode {
             which prints those same three facts as its own first rows (§2). */}
         {kind === "proxy" ? <UpstreamCard row={row} slug={slug} rows={pane !== "overview"} csrf={bootstrap.csrf} /> : null}
 
-        {/* `--framed`: the rail and the panes are ONE box here as they are on the agent
-            page, so the paned pages read as one family. */}
-        <div className="paned paned--framed">
+        {/* The rail and the panes are ONE framed box here as they are on the agent page, so
+            the paned pages read as one family. */}
+        <Workspace>
           <PaneRail label={RAIL_NAV_LABEL} groups={paneGroups(entries)} />
-          <div className="pane pane--split">
+          <Pane split>
             <PaneBody pane={pane} props={paneProps} />
-          </div>
-        </div>
-      </main>
+          </Pane>
+        </Workspace>
+      </Page>
       <AppConfirm
         pane={pane}
         slug={slug}
@@ -527,42 +538,40 @@ function UpstreamCard({
   const disconnect = useOp<{ slug: string }>("app_disconnect", { app: slug });
   if (!rows && !oauth) return null;
   return (
-    <div className="card card--pad">
+    <Card>
       {rows ? (
-        <div className="kv">
-          <div className="kv-row">
-            <div className="kv-key">Endpoint</div>
-            <div className="mono">{row.endpoint ?? ""}</div>
-          </div>
-          <div className="kv-row">
-            <div className="kv-key">Auth</div>
-            <div className="mono">{row.auth ?? ""}</div>
-          </div>
-          <div className="kv-row">
-            <div className="kv-key">Forward identity</div>
-            <div>{row.forwardIdentity === true ? "On" : "Off"}</div>
-          </div>
-        </div>
+        <KvList variant="block">
+          <Kv k="Endpoint">
+            <span className="font-mono">{row.endpoint ?? ""}</span>
+          </Kv>
+          <Kv k="Auth">
+            <span className="font-mono">{row.auth ?? ""}</span>
+          </Kv>
+          <Kv k="Forward identity">{row.forwardIdentity === true ? "On" : "Off"}</Kv>
+        </KvList>
       ) : null}
       {oauth ? (
-        <div className="actions">
+        // On a phone the bare Disconnect takes the row's free width; the Connect form keeps
+        // its own, as it always has.
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <form method="post" action={paths.appConnect(slug)}>
             <input type="hidden" name="csrf" value={csrf} />
-            <button type="submit" className="btn btn--outline btn--sm">
+            <Button type="submit" variant="outline" size="sm">
               {row.connection !== undefined && row.connection !== "not_connected" ? "Reconnect" : "Connect"}
-            </button>
+            </Button>
           </form>
-          <button
-            type="button"
-            className="btn btn--ghost btn--sm"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-md:flex-1"
             disabled={disconnect.isPending}
             onClick={() => disconnect.mutate({ slug })}
           >
             Disconnect
-          </button>
+          </Button>
         </div>
       ) : null}
-    </div>
+    </Card>
   );
 }
 
@@ -676,14 +685,14 @@ function Actions({
   onConfirm: () => void;
 }): ReactNode {
   return (
-    <div className="actions">
-      <button type="button" className="btn btn--ghost" onClick={onCancel}>
+    <DialogFooter>
+      <Button variant="ghost" onClick={onCancel}>
         Cancel
-      </button>
-      <button type="button" className="btn btn--danger" disabled={pending} onClick={onConfirm}>
+      </Button>
+      <Button variant="danger" disabled={pending} onClick={onConfirm}>
         {word}
-      </button>
-    </div>
+      </Button>
+    </DialogFooter>
   );
 }
 
@@ -698,18 +707,20 @@ function Actions({
  */
 function NotFound({ notice }: { notice: Notice | null }): ReactNode {
   return (
-    <main className="page">
+    // No page shape: the retired `.page` class this carried matched no rule, so a bare `<main>`
+    // is exactly its look today. Giving it one is a look change (pass 2 inventory §1.3).
+    <main>
       {notice === null ? null : <NoticeBanner notice={notice} />}
-      <div className="empty">
-        <div className="empty-title">No such app</div>
-        <div className="empty-text">
+      <Empty>
+        <EmptyTitle>No such app</EmptyTitle>
+        <EmptyDescription>
           Nothing in your namespace is called that. It may have been deleted, or the link may name someone else's
           app.
-        </div>
-        <Link className="btn btn--outline" to={paths.apps}>
+        </EmptyDescription>
+        <Link className={buttonVariants({ variant: "outline", className: "mt-4" })} to={paths.apps}>
           Back to Apps
         </Link>
-      </div>
+      </Empty>
     </main>
   );
 }

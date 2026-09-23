@@ -20,6 +20,12 @@
 // document 404, 8b ports it to `GET /api/hub/approvals/<id>`), Approve/Reject is
 // `approval_decide` through the ops allowlist (G52 and 19 ported), and the push opt-in is
 // `POST /api/hub/approvals/push`; 16 and 17 retired, saying where their guarantees went.
+// Family 2, `/settings`: the seven panes are the shell behind the unchanged recent-auth
+// prefix; every row that read a pane's markup for a server fact reads `GET /api/hub/settings`
+// instead, and every row that posted a pane's form posts its `/api/hub/settings/*` JSON twin,
+// whose `{ next, reload }` answer carries the Location the 303 named. What a row pinned
+// about DRAWING (the rail, the pills, the dialogs, the copy) is the client's, and each such
+// row is retired where it stood with a comment naming its web-side home.
 //
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
@@ -41,11 +47,12 @@
 // hygiene. The ledger is read through audit.query, never off the table.
 //
 // Direction B is derived on BOTH sides, which is why this file exports no row table and
-// declares none: one side is walked out of the rendered HTML, the other read off
+// declares none: one side is what a surface ADMITS, measured, the other read off
 // admin.ops[name].schema. A transcribed form→field list would be a third copy of the
-// truth, and maintaining it is precisely the drift Direction B exists to catch. Its
-// `/apps` half is now the ops allowlist walk, derived the same way — what the router
-// admits, measured, never a list copied out of api.ts.
+// truth, and maintaining it is precisely the drift Direction B exists to catch. No server
+// form fronts an op any more (decision 38 moved the last of them), so it is the ops
+// allowlist walk (18), the op's own schema refusal behind it (18b) and the settings
+// writes' extra-key refusal — what the router admits, never a list copied out of api.ts.
 // (`pageRoutes`-as-data was considered and rejected for the same reason — exporting the
 // route table solely for a test violates the suite's no-test-only-exports rule; Direction
 // B plus review is the guard.)
@@ -95,12 +102,14 @@ import {
   RETENTION_DAYS,
 } from "../../src/limits";
 import { generatedAlias } from "../../src/hub-types";
-import { paths, SETTINGS_CONFIRM_PANE } from "../../src/pages/model";
+import { paths } from "../../src/pages/model";
 // The SPA's own path table, compared against the worker's: the two are separate modules, and
 // a React form posting to a route the worker does not translate is invisible to any test that
-// reads server HTML (24a).
-import { paths as webPaths } from "../../../web/src/lib/paths";
-import type { ConnectionRow, SettingsConfirm } from "../../src/pages/model";
+// reads server HTML (24a). `settingsApi` is the same table's JSON half — every `/api/hub`
+// target the settings pages call, walked by case 24.
+import { settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
+import type { SettingsRead } from "../../src/api";
+import type { ConnectionRow } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
 import type { App, RoleDeclaration } from "../../src/registry";
@@ -501,6 +510,51 @@ async function reasonOf(response: Response): Promise<string> {
   return typeof reason === "string" ? reason : "";
 }
 
+/** A session's own CSRF token, read where a browser reads it: a shell's bootstrap island.
+ *  Off `/apps` because that shell has no recency gate, so a day-old session still gets its
+ *  token there — which is what lets a stale-session row prove the GATE refused it. */
+async function csrfFor(cookie: string): Promise<string> {
+  return bootstrapCsrfOf(await page(paths.apps, cookie));
+}
+
+/** `GET /api/hub/settings` under one cookie — the one read every settings pane draws from
+ *  (§13's shell rule), and the truth side of every row that used to read a pane's markup. */
+async function settingsOf(cookie: string): Promise<SettingsRead> {
+  const answered = await hub("GET", "/api/hub/settings", undefined, { cookie });
+  expect(answered.status, "GET /api/hub/settings").toBe(200);
+  return (await answered.json()) as SettingsRead;
+}
+
+/** One `/api/hub/settings/*` write as the SPA makes it — `path` relative to `/api/hub`, the
+ *  way `settingsApi` spells it — with the session's own token unless the case withholds it. */
+async function settingsPost(
+  path: string,
+  body: unknown,
+  cookie: string,
+  csrf?: string | null,
+): Promise<Response> {
+  const token = csrf === undefined ? await csrfFor(cookie) : csrf;
+  return hub("POST", `/api/hub${path}`, body, { cookie, ...(token === null ? {} : { csrf: token }) });
+}
+
+/**
+ * A `{ next, reload }` answer (routes §0.3), checked the way every one of them must hold:
+ * 200, exactly those two keys, and `reload` true exactly when the answer forwards a
+ * `Set-Cookie` — the session, and with it the CSRF token the document holds, was replaced.
+ * `next` comes back parsed, because every caller asks which pane it names and which flash.
+ */
+async function redirectedOf(response: Response): Promise<{ next: URL; reload: boolean; raw: string }> {
+  const text = await response.clone().text();
+  expect(response.status, text).toBe(200);
+  const body = await jsonOf(response);
+  expect(Object.keys(body).sort(), text).toEqual(["next", "reload"]);
+  expect(typeof body.next, text).toBe("string");
+  expect(body.reload, `reload says ${String(body.reload)} beside ${response.headers.getSetCookie().length} Set-Cookie`).toBe(
+    response.headers.getSetCookie().length > 0,
+  );
+  return { next: new URL(String(body.next), ORIGIN), reload: body.reload === true, raw: String(body.next) };
+}
+
 /** One mutating POST, as the browser's form makes it. `csrf` absent means the field is
  *  simply not submitted — the shape of a cross-site post. */
 function post(
@@ -709,18 +763,65 @@ function fakePassword(length: number): string {
 }
 
 /**
- * The Password pane and the submission a browser would send from its form untouched — the
- * page's real CSRF token and the default-on checkbox riding exactly as drawn. Every
- * change-password row starts here, because a submission assembled any other way is not
- * the one the page rendered.
+ * The Password pane's submission as the SPA sends it (routes §2): the three controls, and
+ * the **Sign out my other sessions** box TICKED unless the case says otherwise — §13's
+ * default-on, which the client's form starts from too. Every change-password row builds its
+ * body here, so two rows differ only in what they pass.
  */
-async function passwordForm(
-  cookie: string,
-): Promise<{ pane: string; form: Record<string, string> }> {
-  const pane = await page(paths.settings, cookie);
-  const forms = formsPostingTo(pane, paths.auth.changePassword);
-  expect(forms.length, "the Password pane rendered no change-password form").toBeGreaterThan(0);
-  return { pane, form: forms[0] };
+function passwordChange(fields: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword?: string;
+  revokeOtherSessions?: boolean;
+}): Record<string, unknown> {
+  return {
+    currentPassword: fields.currentPassword,
+    newPassword: fields.newPassword,
+    confirmPassword: fields.confirmPassword ?? fields.newPassword,
+    revokeOtherSessions: fields.revokeOtherSessions ?? true,
+  };
+}
+
+/**
+ * Every `/api/hub/settings/*` write routes §2 designs, each with the body a browser would
+ * send when the case is about the GATE rather than the write — a password that is not the
+ * owner's, so the four routes that take one refuse on the merits, and the ids the world
+ * names. Keyed off `settingsApi`, the SPA's own table, so a write the client stops calling
+ * leaves this list with it. `pane` is the pane that draws the control, and so the one the
+ * answer's `next` must land on (§13's "mutations belong to a pane"); `op` is the ops key
+ * the route fronts, null where it is better-auth's (§8's pinned exception).
+ */
+function settingsWrites(ids: {
+  passkey?: string;
+  session?: string;
+  token?: string;
+  connection?: string;
+} = {}): { path: string; pane: string; op: string | null; body: Record<string, unknown> }[] {
+  return [
+    { path: settingsApi.totpEnable, pane: paths.settingsTwoFactor, op: null, body: { password: WRONG_PASSWORD } },
+    { path: settingsApi.totpVerify, pane: paths.settingsTwoFactor, op: null, body: { code: "000000" } },
+    { path: settingsApi.totpDisable, pane: paths.settingsTwoFactor, op: null, body: { password: WRONG_PASSWORD } },
+    { path: settingsApi.backupCodesGenerate, pane: paths.settingsTwoFactor, op: null, body: { password: WRONG_PASSWORD } },
+    { path: settingsApi.passkeyDelete, pane: paths.settingsPasskeys, op: null, body: { id: ids.passkey ?? "no-such-passkey" } },
+    { path: settingsApi.sessionRevoke, pane: paths.settingsSessions, op: null, body: { id: ids.session ?? "no-such-session" } },
+    {
+      path: settingsApi.changePassword,
+      pane: paths.settings,
+      op: null,
+      body: passwordChange({ currentPassword: WRONG_PASSWORD, newPassword: fakePassword(20), revokeOtherSessions: false }),
+    },
+    { path: settingsApi.tokenRevoke, pane: paths.settingsTokens, op: "token_revoke", body: { id: ids.token ?? "no-such-token" } },
+    { path: settingsApi.connectionRevoke, pane: paths.settingsClients, op: "connection_revoke", body: { id: ids.connection ?? "no-such-connection" } },
+    {
+      path: settingsApi.executionUpdate,
+      pane: paths.settingsExecution,
+      op: "hub_settings_update",
+      body: { default_timeout_ms: "30000", max_timeout_ms: "30000" },
+    },
+    // LAST, and not by accident: it ends every other session of the owner posting it, so a
+    // walk that ran it earlier would kill the sessions its remaining legs ride.
+    { path: settingsApi.revokeOtherSessions, pane: paths.settingsSessions, op: null, body: {} },
+  ];
 }
 
 /**
@@ -747,85 +848,6 @@ async function threeSessions(ns: SeededNamespace): Promise<{
     before: await sessionIdOf(actor.cookie),
     otherId: await sessionIdOf(bystander.cookie),
   };
-}
-
-/** The same submission with the checkbox key deleted — what a browser sends for an
- *  UNTICKED box, and the one difference between the flag's two journeys. */
-function unticked(fields: Record<string, string>): Record<string, string> {
-  const copy = { ...fields };
-  delete copy.revokeOtherSessions;
-  return copy;
-}
-
-/**
- * The two credential targets that END SESSIONS when they succeed — Sign out, and §13's
- * Revoke all others, which deletes every OTHER session of the owner posting it. Any walk
- * over the credential family has to run them last or it kills the sessions its remaining
- * legs are riding, which is a red row about the wrong thing.
- */
-const ENDS_SESSIONS = (target: string): boolean =>
-  target === paths.auth.signOut || target === paths.auth.revokeOtherSessions;
-
-/** Every page that renders a credential form — /login's three cards, the signed-in shell's
- *  Sign out, all seven settings panes, and the destructive confirm dialogs, which is where
- *  three of the credential forms exist at all (§13 puts them behind `?confirm=`). */
-async function credentialPages(cookie: string): Promise<string[]> {
-  const rendered = [
-    await anonymousPage(paths.login),
-    await anonymousPage(`${paths.login}?step=totp`),
-    await anonymousPage(`${paths.login}?step=backup-code`),
-    await page(paths.apps, cookie),
-  ];
-  for (const pane of PANES) rendered.push(await page(pane, cookie));
-  rendered.push(await page(paths.settingsConfirm("two-factor", "disable-two-factor"), cookie));
-  rendered.push(await page(paths.settingsConfirm("sessions", "revoke-other-sessions"), cookie));
-  return rendered;
-}
-
-/**
- * The `?confirm=` link a pane rendered for one row, or null when it rendered none. Both
- * sides are built from `paths` and `SETTINGS_CONFIRM_PANE`, so the page and the walk
- * cannot spell the URL differently and a dialog kind cannot be looked for on a pane that
- * does not own it (§13's "mutations belong to a pane").
- */
-function confirmLinkFor(
-  html: string,
-  kind: SettingsConfirm["kind"],
-  id?: string,
-): string | null {
-  const link = paths.settingsConfirm(SETTINGS_CONFIRM_PANE[kind], kind, id);
-  return html.includes(link.replace(/&/g, "&amp;")) ? link : null;
-}
-
-/** The Sessions pane's own spelling of the above — the seam the Revoke journey walks. */
-function revokeLinkFor(html: string, sessionId: string): string | null {
-  return confirmLinkFor(html, "revoke-session", sessionId);
-}
-
-/** Every `?confirm=` link one rendered pane carries, as the URLs a browser would follow. */
-function confirmLinksOn(html: string): string[] {
-  const found = new Set<string>();
-  for (const anchor of html.matchAll(/<a\b[^>]*href="([^"]*confirm=[^"]*)"/g)) {
-    found.add(decodeEntities(anchor[1]));
-  }
-  return [...found];
-}
-
-/**
- * The DISTINCT session ids the Sessions pane offered a Revoke for, read off the links it
- * actually drew. Derived through `confirmLinksOn` and the query the page emitted rather
- * than a hand-spelled `confirm=revoke-session&amp;id=…` regex, for the reason
- * `confirmLinkFor` exists: a change to `paths.settingsConfirm`'s query shape must fail
- * loudly here, not silently empty the set. Distinct ids because the sessions card renders
- * twice into one document (§13's two-column pane).
- */
-function revocableIds(html: string): Set<string> {
-  return new Set(
-    confirmLinksOn(html)
-      .map((href) => new URL(href, ORIGIN))
-      .filter((url) => url.searchParams.get("confirm") === "revoke-session")
-      .map((url) => url.searchParams.get("id") ?? ""),
-  );
 }
 
 /** The session id behind a cookie — identity's own answer, the same one /settings badges. */
@@ -932,7 +954,7 @@ describe("§13 · CSRF on every mutating POST", () => {
     });
   });
 
-  it("4. §13 · every mutating form the pages render carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one — and one of those targets, posted without the field, is refused with its op never reaching a handler (the walk says the field is DRAWN; the refusal says it is READ)", async () => {
+  it("4. §13 · every mutating form the server still renders carries a CSRF field — walked out of the rendered HTML, never listed, so a new form cannot forget one — and the write that replaced the last ops-backed form, posted without its `X-Pmcp-Csrf`, is refused with its op never reaching a handler (the walk says the field is DRAWN; the refusal says the token is READ)", async () => {
     // Three exclusions, all structural rather than convenient. /login is not walked at
     // all: there is no session yet to derive a token from. A form that posts to
     // better-auth's own mount is outside this module's gate by design — §4 gives that
@@ -957,20 +979,21 @@ describe("§13 · CSRF on every mutating POST", () => {
     // mutating forms, and every one of them was checked.
     expect(hubForms).toBeGreaterThan(0);
 
-    // And the carrier is load-bearing, not decorative. One surviving server-rendered
-    // mutation, taken end to end: `/settings/tokens/token_revoke` sits behind §13's
-    // strictest prefix (`{recent: true}`), which this fresh session satisfies — so the
-    // only thing left to refuse the post is the missing field, and it does. Since the
-    // cutover this is the last mutating FORM in the suite that reaches an op at all, and
-    // therefore the only remaining proof that the form carrier is still checked.
+    // And the carrier is load-bearing, not decorative — ported with decision 38's family 2,
+    // which took the last ops-backed FORM with it: `/settings/tokens/token_revoke` is
+    // `POST /api/hub/settings/tokens/token_revoke` now, behind the same `{recent: true}`
+    // prefix, which this fresh session satisfies — so the only thing left to refuse the
+    // post is the missing header, and it does. The form carrier itself is still read on the
+    // three form targets that survive: /apps/connect (5b), the consent POST (§19.5's CSRF
+    // row) and /device/decide.
     await withCountedOps(["token_revoke"], async (invocations) => {
-      const refused = await formPost(
-        `${paths.settingsTokens}/token_revoke`,
-        { id: "no-such-token" },
-        world.session.cookie,
-      );
-      expect(refused.status, "POST /settings/tokens/token_revoke with no CSRF field").toBe(403);
+      const refused = await settingsPost(settingsApi.tokenRevoke, { id: "no-such-token" }, world.session.cookie, null);
+      expect(refused.status, "POST /api/hub/settings/tokens/token_revoke with no X-Pmcp-Csrf").toBe(403);
       expect(times(invocations, "token_revoke")).toBe(0);
+      // The twin, so "403" is not what this route always answers.
+      const accepted = await settingsPost(settingsApi.tokenRevoke, { id: "no-such-token" }, world.session.cookie);
+      expect(accepted.status, await accepted.clone().text()).toBe(200);
+      expect(times(invocations, "token_revoke")).toBe(1);
     });
   });
 
@@ -1413,15 +1436,20 @@ async function grantsHeldBy(ownerId: string, agent: string, app: string): Promis
 }
 
 describe("§4/§13 · cookie sessions are the only page credential", () => {
-  it("6. §4 · a bearer-sourced (device-flow) session is refused on /settings · a browser session renders it (the twin — the guard is about provenance, not about being logged out)", async () => {
+  it("6. §4 · a bearer-sourced (device-flow) session is refused on /settings and at GET /api/hub/settings · a browser session opens both (the twin — the guard is about provenance, not about being logged out)", async () => {
     const cookieName = world.session.cookie.split("=")[0];
-    const replayed = await get(paths.settings, `${cookieName}=${world.deviceToken}`);
+    const deviceCookie = `${cookieName}=${world.deviceToken}`;
+    const replayed = await get(paths.settings, deviceCookie);
     expect(replayed.status).toBe(302);
     expect(replayed.headers.get("Location")).toMatch(/^\/login(\?|$)/);
-    // The twin: the same page, the same guard, a browser session.
+    // The same provenance rule on the JSON side (decision 38): the read the pane draws from.
+    const read = await hub("GET", "/api/hub/settings", undefined, { cookie: deviceCookie });
+    expect(read.status).toBe(401);
+    // The twin: the same page and the same read, a browser session.
     const rendered = await get(paths.settings);
     expect(rendered.status).toBe(200);
-    expect(await rendered.text()).toContain(paths.auth.signOut);
+    expect(await rendered.text()).toContain('id="pmcp-bootstrap"');
+    expect((await hub("GET", "/api/hub/settings")).status).toBe(200);
   });
 
   it("7. §7 · an Authorization: Bearer header with no cookie opens no page — bearer tokens are never consulted on page routes", async () => {
@@ -2137,29 +2165,60 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
     }
   });
 
-  it("24. §13 · every credential form the pages render posts to a route this worker serves as a form — walked out of the rendered HTML, so a target that would answer 415 or 404 cannot be rendered", async () => {
-    // A NAMESPACE of this case's own, not merely a session: `sign-out` and
-    // `revoke-other-sessions` are both walked targets, and the second succeeds — it would
-    // end every other session of whichever owner it rides, the fixture's included.
-    const walker = await seedOwnerSession((await seedNamespace(env.DB, {})).owner);
-    const targets = new Map<string, Record<string, string>>();
-    for (const html of await credentialPages(walker.cookie)) {
-      for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-        if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-        const action = decodeEntities(attributeOf(form[1], "action") ?? "");
-        const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-        if (!BETTER_AUTH_ACTIONS.has(op)) continue;
-        targets.set(action, submissionOf(form[2]));
-      }
+  // 24 walked the credential forms the SERVER drew, which is exactly why it stayed green while
+  // the React shell's Sign out posted at better-auth's 415 for a month (routes §7.1). Replaced
+  // with decision 38's family 2 by the walk that would have caught it: the targets are read
+  // out of the SPA's own path table, the one the client posts through, never out of HTML.
+  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx", async () => {
+    // A NAMESPACE of this case's own: Sign out and Revoke all others both succeed, and each
+    // ends sessions of whichever owner it rides.
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
+      agents: [{ slug: "agent" }],
+    });
+    const walker = await seedOwnerSession(ns.owner);
+    const csrf = await csrfFor(walker.cookie);
+
+    // THE FORM HALF. §0.4's kept form routes are the only targets a client form may post;
+    // today the bundle renders two of them, and each family that moves a page adds its own.
+    const KEPT_FORM_ROUTES = new Set([paths.auth.signOut, new URL(paths.appConnect(""), ORIGIN).pathname]);
+    const connect = webPaths.appConnect("news");
+    for (const target of [connect, webPaths.signOut]) {
+      expect(KEPT_FORM_ROUTES.has(new URL(target, ORIGIN).pathname), `${target} is no kept form route`).toBe(true);
+      // Sign out LAST: it ends the session the Connect post rides.
+      const answered = await formPost(target, target === connect ? { csrf } : {}, walker.cookie);
+      expect(answered.status, `POST ${target} form-encoded → ${await answered.clone().text()}`).toBe(303);
     }
-    expect(targets.size, "no credential form was rendered to walk").toBeGreaterThan(0);
-    // The session-ending targets last, for the reason above.
-    const walk = [...targets].sort(([a], [b]) => Number(ENDS_SESSIONS(a)) - Number(ENDS_SESSIONS(b)));
-    for (const [action, fields] of walk) {
-      const answered = await formPost(action, fields, walker.cookie);
-      expect(answered.status, `POST ${action}`).not.toBe(415);
-      expect(answered.status, `POST ${action}`).not.toBe(404);
-      expect(answered.status, `POST ${action}`).toBeLessThan(500);
+
+    // THE JSON HALF, spelled once against routes §2, as the pane strings are in the shell
+    // describe: every other row reads these through `settingsApi`, so a renamed member
+    // would otherwise leave the whole suite green.
+    expect({ ...settingsApi }).toEqual({
+      read: "/settings",
+      totpEnable: "/settings/two-factor/enable",
+      totpVerify: "/settings/two-factor/verify-totp",
+      totpDisable: "/settings/two-factor/disable",
+      backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
+      passkeyDelete: "/settings/passkey/delete-passkey",
+      sessionRevoke: "/settings/revoke-session",
+      revokeOtherSessions: "/settings/revoke-other-sessions",
+      changePassword: "/settings/change-password",
+      tokenRevoke: "/settings/tokens/token_revoke",
+      connectionRevoke: "/settings/clients/connection_revoke",
+      executionUpdate: "/settings/execution/hub_settings_update",
+    });
+    const reader = await seedOwnerSession(ns.owner);
+    expect((await hub("GET", `/api/hub${settingsApi.read}`, undefined, { cookie: reader.cookie })).status).toBe(200);
+    const writes = settingsWrites();
+    expect(writes.map((write) => write.path).sort()).toEqual(
+      Object.values(settingsApi).filter((path) => path !== settingsApi.read).sort(),
+    );
+    for (const { path, body } of writes) {
+      const answered = await settingsPost(path, body, reader.cookie);
+      const text = await answered.clone().text();
+      expect([200, 422], `POST ${path} → ${answered.status} ${text}`).toContain(answered.status);
+      expect(answered.headers.get("Content-Type") ?? "", `POST ${path}`).toContain("application/json");
+      expect(answered.headers.get("Location"), `POST ${path} answered a redirect`).toBeNull();
     }
   });
 
@@ -2178,45 +2237,30 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
   // 25, 25a and 26 moved to the panes that own their journeys: the Sessions pane's Revoke,
   // the Passkeys pane's Remove, and the /settings POST-prefix walk, all below.
 
-  it("27. §4/§13 · /settings's Enable two-factor and Regenerate backup codes render the password control the credential seam reads — each form, filled and submitted exactly as the page drew it, is ACCEPTED by better-auth instead of refused for a field no browser could send", async () => {
+  it("27. §4/§13 · /settings's Enable two-factor and Regenerate backup codes send the password field the credential seam reads — each JSON body, as the SPA builds it, is ACCEPTED by better-auth and answered with its reveal instead of refused for a field no browser could send", async () => {
     const owner = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(owner.owner);
 
-    // Not enrolled, so the two-factor card draws its enable form and nothing else.
-    const enable = formsPostingTo(await page(paths.settingsTwoFactor, session.cookie), paths.auth.totpEnable);
-    expect(enable.length, "/settings/two-factor rendered no Enable two-factor form").toBeGreaterThan(0);
-    for (const form of enable) {
-      const answered = await formPost(
-        paths.auth.totpEnable,
-        typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
-        session.cookie,
-      );
-      // 200, not a redirect: better-auth accepted the password this form carried and its
-      // answer IS the page (the enrolment card in place — a secret cannot ride a URL, §15).
-      // The refusal leg is the POST-prefix walk's, where a wrong password comes back 303
-      // with `failed=`.
-      expect(answered.status).toBe(200);
-      expect(await answered.text(), "the 200 rendered no enrolment").toContain("data:image/svg+xml");
-    }
+    // Not enrolled, so Enable is the one control the pane offers.
+    const enabled = await settingsPost(settingsApi.totpEnable, { password: SEEDED_OWNER_PASSWORD }, session.cookie);
+    // 200 with the enrolment, not `{ next }`: better-auth accepted the password this body
+    // carried and its answer IS the reveal (a secret cannot ride a URL, §15). The refusal
+    // leg is the prefix walk's, where a wrong password comes back with `failed=` in `next`.
+    expect(enabled.status, await enabled.clone().text()).toBe(200);
+    const enrolment = await jsonOf(enabled);
+    expect(Object.keys(enrolment).sort()).toEqual(["backupCodes", "enrollment"]);
 
     // The enable above created the two-factor row; this makes it live, which is the only
-    // state in which the page draws its backup-code control at all.
+    // state in which the pane offers Regenerate at all.
     await enrollTwoFactor(owner.owner.userId);
-    const regenerate = formsPostingTo(
-      await page(paths.settingsTwoFactor, session.cookie),
-      paths.auth.backupCodesGenerate,
+    const regenerated = await settingsPost(
+      settingsApi.backupCodesGenerate,
+      { password: SEEDED_OWNER_PASSWORD },
+      session.cookie,
     );
-    expect(regenerate.length, "/settings/two-factor rendered no Regenerate backup codes form").toBeGreaterThan(0);
-    for (const form of regenerate) {
-      const answered = await formPost(
-        paths.auth.backupCodesGenerate,
-        typedInto(form, { password: SEEDED_OWNER_PASSWORD }),
-        session.cookie,
-      );
-      // Accepted, and the fresh set is revealed in place for the same reason.
-      expect(answered.status).toBe(200);
-      expect(await answered.text(), "the 200 revealed no codes").toContain("data-code");
-    }
+    // Accepted, and the fresh set is revealed in the body for the same reason.
+    expect(regenerated.status, await regenerated.clone().text()).toBe(200);
+    expect(Object.keys(await jsonOf(regenerated))).toEqual(["backupCodes"]);
   });
 });
 
@@ -2470,9 +2514,8 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
 });
 
 describe("§13 · the device decision, submitted the way the owner submits it", () => {
-  // The debt `BROWSER_ONLY_TARGETS` owes for excluding "decide" from the parity walks (§9
-  // rule 4a): this form fronts no op, so cases 16/17 cannot describe it and cases 28/29
-  // walk it end to end instead. Both legs run the WHOLE flow — the CLI's code request, the
+  // This form fronts no op, so no parity walk could ever describe it (§9 rule 4a) — the
+  // debt the retired form walks owed it — and cases 28/29 walk it end to end instead. Both legs run the WHOLE flow — the CLI's code request, the
   // owner's page render (which is what CLAIMS the code), the form post, and the CLI's
   // redemption — because the decision is only observable at the far end of it.
 
@@ -2892,18 +2935,12 @@ describe("§19.5 · the consent screen", () => {
     expect(binding).not.toBeNull();
     expect(await consentRowExists(world.ns.owner.userId, clientId)).toBe(true);
 
-    // Re-pointed with the pane (D15): the list lives at /settings/clients, and its Revoke
-    // is behind a confirm dialog — which is where the token this posts comes from, because
-    // the bare pane renders no form of its own.
-    const listed = await page(paths.settingsClients);
-    const dialog = await page(confirmLinkFor(listed, "revoke-connection", binding?.id ?? "") ?? "");
+    // Re-pointed with the pane twice: to /settings/clients (D15), and with decision 38's
+    // family 2 to the JSON write that pane's Revoke posts now.
     const before = await query(env.DB, world.ns.owner.userId, { event: "oauth.revoked" });
-    const revoked = await post(
-      paths.connectionRevoke(binding?.id ?? ""),
-      {},
-      { csrf: csrfOf(dialog) },
+    await redirectedOf(
+      await settingsPost(settingsApi.connectionRevoke, { id: binding?.id ?? "" }, world.session.cookie),
     );
-    expect(revoked.status, await revoked.text()).toBe(303);
 
     const after = await bindingFor(world.ns.owner.userId, clientId);
     expect(after?.revokedAt).not.toBeNull();
@@ -2939,54 +2976,34 @@ const PKCE_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 // `asserts:` line there, which is where a reader goes to see what a title was meant to pin.
 
 describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
-  it(`§13 · each of the seven settings panes answers at its own URL and /settings renders the Password pane · /settings/password is a 404, not an alias and not a redirect (the twin: the six other pane URLs all answer 200)`, async () => {
+  it(`§13 · each of the seven settings panes answers the shell at its own URL — 200, \`no-store\`, the bootstrap island, the tab title the pane drew — · /settings/password is a 404, not an alias and not a redirect (the twin: the seven pane URLs all answer 200)`, async () => {
     for (const pane of PANES) {
-      expect((await get(pane, world.session.cookie)).status, `GET ${pane}`).toBe(200);
+      const answered = await get(pane, world.session.cookie);
+      expect(answered.status, `GET ${pane}`).toBe(200);
+      expect(answered.headers.get("Cache-Control"), `GET ${pane}`).toBe("no-store");
+      const html = await answered.text();
+      expect(bootstrapCsrfOf(html), `GET ${pane}`).toBe(await csrfFor(world.session.cookie));
+      expect(html, `GET ${pane}`).toContain("<title>Settings · personal-mcps</title>");
     }
-    // Scoped to the RAIL: layout.tsx renders an `aria-current="page"` anchor to /settings
-    // in the shell header of every signed-in page, so a page-wide count reads two.
-    const current = railEntries(await page(paths.settings), RAIL_NAV_LABEL).filter((e) => e.current);
-    expect(current.map((e) => e.href), "the landing pane is not Password").toEqual([paths.settings]);
+    // Which pane /settings LANDS on (Password) is the client's route table now; the URL
+    // answering at all is this row's.
     // No alias for the landing pane: not a 301, not a 302, not a 303 — nothing to follow.
     const alias = await get(`${paths.settings}/password`);
     expect(alias.status, "GET /settings/password").toBe(404);
     expect(alias.headers.get("Location")).toBeNull();
   });
 
-  it(`§13 · every pane renders the same rail — seven entries under Sign-in, Access and Runtime, in the sign-in-then-holdings order, each linking to its own pane URL — the Password entry carries no marker where the six others do, and the entry for the pane being rendered is the only rail entry carrying aria-current="page"`, async () => {
-    for (const pane of PANES) {
-      const html = await page(pane);
-      const entries = railEntries(html, RAIL_NAV_LABEL);
-      expect(entries.map((e) => e.href), `the rail on ${pane}`).toEqual(PANES);
-      expect(entries[5].label).toBe("Connected clients");
-      expect(entries.filter((e) => e.current).map((e) => e.href), `aria-current on ${pane}`).toEqual([pane]);
-      // The groups, read positionally out of the rail's own markup rather than off a
-      // class: §7 makes the heading's element and styling incidental, its ORDER durable.
-      const block = navBlock(html, RAIL_NAV_LABEL) ?? "";
-      const at = (needle: string): number => {
-        const found = block.indexOf(needle);
-        expect(found, `the rail on ${pane} carries no ${needle}`).toBeGreaterThanOrEqual(0);
-        return found;
-      };
-      expect(at("Sign-in")).toBeLessThan(at(`href="${paths.settings}"`));
-      expect(at("Access")).toBeGreaterThan(at(`href="${paths.settingsPasskeys}"`));
-      expect(at("Access")).toBeLessThan(at(`href="${paths.settingsSessions}"`));
-      // §13's Runtime group holds the one pane that configures what programs may SPEND:
-      // after Access, and before the Execution entry it heads.
-      expect(at("Runtime")).toBeGreaterThan(at(`href="${paths.settingsClients}"`));
-      expect(at("Runtime")).toBeLessThan(at(`href="${paths.settingsExecution}"`));
-      // §13's pane table: Password's marker cell reads `none`. The six beside it are what
-      // keeps that absence a fact about Password rather than about the rail.
-      expect(entries[0].marker, `the Password marker on ${pane}`).toBe("");
-      for (const entry of entries.slice(1)) {
-        expect(entry.marker, `the ${entry.label} marker on ${pane}`).not.toBe("");
-      }
-    }
-  });
+  // "Every pane renders the same rail" — seven entries under Sign-in, Access and Runtime,
+  // Password markerless, aria-current on the pane drawn — retired with decision 38's family
+  // 2: the shell draws no rail. The rail is the client's (`SETTINGS_PANES` in
+  // web/src/lib/paths.ts, its gallery states and the visual gate against the server
+  // baselines); what each marker COUNTS is the next row's, over the read.
 
-  it(`§13 · every rail count is the number of rows its own pane lists — passkeys, sessions, tokens and connected clients seeded to four different lengths, so no single number satisfies the rail`, async () => {
-    // Four different lengths on purpose: 2 passkeys, 3 sessions, 4 tokens, 1 client. A
-    // rail that answered one number for every entry cannot pass this.
+  it(`§13 · the one read carries every list a rail marker counts — passkeys, sessions, tokens and connected clients seeded to four different lengths, each list naming exactly the rows its pane lists, so no single number satisfies the rail — and no session row carries its token (§15)`, async () => {
+    // Ported with decision 38's family 2: the markers are the client's to draw, and they are
+    // the LENGTHS of these four lists (§13's shell rule — one read, never a second query), so
+    // what is pinned here is that each list is the right set. Four different lengths on
+    // purpose: 2 passkeys, 3 sessions, 4 tokens, 1 client.
     const ns = await seedNamespace(env.DB, {
       apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app1" }, { as: "app2" }] }],
       agents: [{ slug: "agent", tokens: [{ as: "agt1" }, { as: "agt2" }] }],
@@ -3000,62 +3017,42 @@ describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
     ];
     const { clientId } = await consentOnce(ns, viewer.cookie, "agent", { client_name: "Counted Client" });
 
-    // Each marker is read off the pane it belongs to, and compared with the identifiers
-    // that pane actually drew — distinct ids, never link occurrences (the sessions card
-    // renders twice into one document).
-    const passkeys = await page(paths.settingsPasskeys, viewer.cookie);
-    expect(markerOf(passkeys, paths.settingsPasskeys)).toBe("2");
-    for (const id of planted) {
-      expect(passkeys).toContain(
-        paths.settingsConfirm("passkeys", "remove-passkey", id).replace(/&/g, "&amp;"),
-      );
-    }
-
-    const sessions = await page(paths.settingsSessions, viewer.cookie);
-    expect(markerOf(sessions, paths.settingsSessions)).toBe("3");
-    // Two revocable rows plus the current one, which never carries a link (§13) — all
-    // three named, so the marker's "3" is `2 + 1` counted rather than assumed.
-    expect(revocableIds(sessions)).toEqual(
-      new Set([await sessionIdOf(first.cookie), await sessionIdOf(second.cookie)]),
+    const read = await settingsOf(viewer.cookie);
+    expect(new Set(read.passkeys.map((row) => row.id))).toEqual(new Set(planted));
+    // Two others plus the current one — all three named, so "3" is `2 + 1` counted.
+    expect(new Set(read.sessions.map((row) => row.id))).toEqual(
+      new Set([await sessionIdOf(first.cookie), await sessionIdOf(second.cookie), await sessionIdOf(viewer.cookie)]),
     );
-    expect(revocableIds(sessions).has(await sessionIdOf(viewer.cookie))).toBe(false);
+    const listed = await tokensOf(ns.owner.userId);
+    expect(listed.length).toBe(4);
+    expect(new Set(read.tokens.map((row) => row.id))).toEqual(new Set(listed.map((row) => row.id)));
+    expect(read.connections.map((row) => row.clientId)).toEqual([clientId]);
+    expect(read.connections[0].clientName).toBe("Counted Client");
 
-    const tokensPane = await page(paths.settingsTokens, viewer.cookie);
-    expect(markerOf(tokensPane, paths.settingsTokens)).toBe("4");
-    const listed = (await ops.token_list.handler(ns.owner.userId, {})) as {
-      tokens: { prefix: string }[];
-    };
-    expect(listed.tokens.length).toBe(4);
-    for (const token of listed.tokens) expect(tokensPane).toContain(token.prefix);
-
-    const clients = await page(paths.settingsClients, viewer.cookie);
-    expect(markerOf(clients, paths.settingsClients)).toBe("1");
-    expect(clients).toContain("Counted Client");
-    expect(await bindingFor(ns.owner.userId, clientId)).not.toBeNull();
+    // §15: the listing the read is built from carries every session's TOKEN; the answer
+    // carries none of them — neither a key named `token` nor any token's value.
+    const raw = JSON.stringify(read);
+    for (const session of [first, second, viewer]) expect(raw).not.toContain(session.token);
+    for (const row of read.sessions) expect(Object.keys(row)).not.toContain("token");
   });
 
-  it(`§13 · the Two-factor rail marker is a status, not a count: it reads one way with TOTP enabled and another without it, and never a number · the Passkeys entry beside it is a number in both states (the twin)`, async () => {
+  it(`§13 · the Two-factor marker is a status, not a count: the read's \`twoFactor\` says \`{ enabled: false }\` without TOTP and \`{ enabled: true }\` with it · the passkey list beside it is one row in both states (the twin)`, async () => {
+    // Ported with family 2: the marker's drawing (a dot, a word) is the client's; the status
+    // it draws is this read's, both ways.
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    // ONE planted passkey, so the twin's count is a real "1" rather than the empty string
-    // — Number("") is 0, and a marker that vanished would otherwise read as a number.
     await plantPasskey(ns.owner.userId, { name: "YubiKey 5C" });
 
-    const before = await page(paths.settingsTwoFactor, session.cookie);
-    const notEnrolled = markerOf(before, paths.settingsTwoFactor);
-    expect(notEnrolled).not.toBe("");
-    expect(Number.isNaN(Number(notEnrolled)), `"${notEnrolled}" reads as a number`).toBe(true);
-    expect(Number(markerOf(before, paths.settingsPasskeys))).toBe(1);
+    const before = await settingsOf(session.cookie);
+    expect(before.twoFactor).toEqual({ enabled: false });
+    expect(before.passkeys.length).toBe(1);
 
     await enrollTwoFactor(ns.owner.userId);
-    const after = await page(paths.settingsTwoFactor, session.cookie);
-    const enrolled = markerOf(after, paths.settingsTwoFactor);
-    expect(enrolled).not.toBe("");
-    expect(Number.isNaN(Number(enrolled)), `"${enrolled}" reads as a number`).toBe(true);
-    expect(enrolled, "the marker says the same thing in both states").not.toBe(notEnrolled);
-    expect(Number(markerOf(after, paths.settingsPasskeys))).toBe(1);
+    const after = await settingsOf(session.cookie);
+    expect(after.twoFactor).toEqual({ enabled: true });
+    expect(after.passkeys.length).toBe(1);
   });
-  it(`§4/§13 · the /settings gate is a prefix rule: a stale cookie and a bearer-sourced session are refused on all seven panes, the three ops-backed ones included · the same seven panes render on a session signed in moments ago (the twin)`, async () => {
+  it(`§4/§13 · the /settings gate is a prefix rule: a stale cookie and a bearer-sourced session are refused on all seven panes, the three ops-backed ones included, and are the same 401 at GET /api/hub/settings — the read every pane draws from (decision 38) · the same seven panes and the read open on a session signed in moments ago (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, { apps: [{ slug: "news", kind: "tunnel" }] });
     // Two sign-ins for ONE owner: ageing one cannot age the twin it is compared against.
     const stale = await seedOwnerSession(ns.owner);
@@ -3078,9 +3075,41 @@ describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
       walked += 1;
     }
     expect(walked, "the walk did not cover seven panes").toBe(7);
+
+    // The JSON twin of the same gate: one prefix rule over `/api/hub/settings/*`, so the
+    // read answers the two refusals alike — 401, never a 302 a `fetch` could not follow.
+    for (const cookie of [stale.cookie, deviceCookie]) {
+      const refused = await hub("GET", "/api/hub/settings", undefined, { cookie });
+      expect(refused.status).toBe(401);
+      expect(await reasonOf(refused)).toBe("Sign in again.");
+    }
+    expect((await hub("GET", "/api/hub/settings", undefined, { cookie: fresh.cookie })).status).toBe(200);
   });
 
-  it(`§4/§13 · every POST target under /settings/ refuses a day-old cookie carrying its own real CSRF token and never reaches its op — the credential targets and the three ops-backed panes' alike · the same posts from a fresh session are accepted (the twin)`, async () => {
+  it(`§4/§13 · the JSON gate is a PREFIX, not a list: a path under /api/hub/settings/ that no route claims is the same 401 to a stale cookie as a real one — the gate runs before routing, so a route added under the prefix cannot be added ungated · a fresh cookie meets that path's own 404 (the twin)`, async () => {
+    const ns = await seedNamespace(env.DB, {});
+    const stale = await seedOwnerSession(ns.owner);
+    await ageSession(stale.token);
+    const fresh = await seedOwnerSession(ns.owner);
+    const unclaimed = `/api/hub/settings/${uniqueSlug("nowhere")}`;
+    for (const method of ["GET", "POST"]) {
+      const refused = await hub(method, unclaimed, method === "POST" ? {} : undefined, {
+        cookie: stale.cookie,
+        csrf: await csrfFor(stale.cookie),
+      });
+      expect(refused.status, `${method} ${unclaimed} on a day-old cookie`).toBe(401);
+      const missing = await hub(method, unclaimed, method === "POST" ? {} : undefined, {
+        cookie: fresh.cookie,
+        csrf: await csrfFor(fresh.cookie),
+      });
+      expect(missing.status, `${method} ${unclaimed} on a fresh cookie`).toBe(404);
+    }
+  });
+
+  it(`§4/§13 · every write under /api/hub/settings/ refuses a day-old cookie and a bearer-sourced session with the same 401, each carrying a real CSRF token so the refusal is the gate's, and reaches neither its op nor better-auth — the passkey still listed, no session ended, the second factor unmoved · the same writes from a fresh session are answered by the target, never by the gate (the twin)`, async () => {
+    // Ported with decision 38's family 2 from "every POST target under /settings/": the
+    // eleven form targets are gone and the eleven JSON writes stand behind the same recent
+    // gate, written once as the prefix rule (the next row proves it IS a prefix).
     const ns = await seedNamespace(env.DB, {
       apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
       agents: [{ slug: "agent", tokens: [{ as: "agt" }] }],
@@ -3088,229 +3117,136 @@ describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
     const stale = await seedOwnerSession(ns.owner);
     await ageSession(stale.token);
     const fresh = await seedOwnerSession(ns.owner);
+    const other = await seedOwnerSession(ns.owner);
     const passkeyId = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    await consentOnce(ns, fresh.cookie, "agent");
+    const { bindingId } = await consentOnce(ns, fresh.cookie, "agent");
     await enrollTwoFactor(ns.owner.userId);
-
-    // Harvested FIRST, while the ops table is still real: the substitution below replaces
-    // the read handlers too, so no pane can be rendered under it.
-    const rendered = await settingsPostTargets(fresh.cookie);
-    // The credential family is derived from `paths.auth`, so a sixth one added there is
-    // walked without editing this row; the rendered targets are everything else.
-    for (const target of SETTINGS_CREDENTIAL_TARGETS) {
-      if (!rendered.has(target)) rendered.set(target, { pane: paths.settings, fields: {} });
-    }
-    const targets = [...rendered].map(([action, found]) => ({ action, ...found }));
-    const finalSegment = (action: string): string =>
-      action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-    expect(targets.map((t) => finalSegment(t.action))).toContain("token_revoke");
-    expect(targets.map((t) => finalSegment(t.action))).toContain("connection_revoke");
-    // Each session's OWN token, off a page it can still render (/apps carries no recency
-    // gate), so the refusals below cannot be the CSRF check answering — and harvested out
-    // here, because no page renders at all once the read handlers are substituted.
-    const staleCsrf = bootstrapCsrfOf(await page(paths.apps, stale.cookie));
-    const freshCsrf = bootstrapCsrfOf(await page(paths.apps, fresh.cookie));
+    const writes = settingsWrites({
+      passkey: passkeyId,
+      session: await sessionIdOf(other.cookie),
+      token: (await tokensOf(ns.owner.userId))[0].id,
+      connection: bindingId,
+    });
+    // Each session's OWN token, off a shell it can still open (/apps carries no recency
+    // gate), so the refusals below cannot be the CSRF check answering — read out here,
+    // because nothing answers once the read handlers are substituted.
+    const staleCsrf = await csrfFor(stale.cookie);
+    const freshCsrf = await csrfFor(fresh.cookie);
     const bearerCookie = `${fresh.cookie.split("=")[0]}=${await deviceFlowToken(fresh.cookie)}`;
-    // Session-ending targets last: `revoke-other-sessions` succeeds and would kill the
-    // aged twin the refusal legs ride.
-    const walk = targets.sort((a, b) => Number(ENDS_SESSIONS(a.action)) - Number(ENDS_SESSIONS(b.action)));
-    // The world the refusal legs are judged against, snapshotted while it is whole. One
-    // render carries every marker, and both are READ rather than spelled: the device flow
-    // above minted a session of its own, and §13's Two-factor marker is a status word.
-    const railBefore = await page(paths.settingsSessions, fresh.cookie);
+    // The world the refusal legs are judged against, read while it is whole — AFTER the
+    // device flow above, which minted a session of its own.
+    const before = await settingsOf(fresh.cookie);
 
-    // The refusal legs FIRST and together, so nothing the twin legs below change can be
-    // mistaken for the gate having let one through.
+    // The refusal legs FIRST and together, so nothing the twin legs change can be mistaken
+    // for the gate having let one through.
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
-      for (const { action, fields } of walk) {
-        const op = finalSegment(action);
-        const aged = await formPost(action, { ...fields, csrf: staleCsrf, password: WRONG_PASSWORD }, stale.cookie);
-        expect(aged.status, `POST ${action} on a day-old cookie`).toBe(302);
-        expect(aged.headers.get("Location"), `POST ${action}`).toMatch(/^\/login(\?|$)/);
-
-        const replayed = await formPost(action, { ...fields, csrf: staleCsrf, password: WRONG_PASSWORD }, bearerCookie);
-        expect(replayed.status, `POST ${action} on a device-flow token`).toBe(302);
-        expect(replayed.headers.get("Location"), `POST ${action}`).toMatch(/^\/login(\?|$)/);
-
-        // Only where there IS an op to count: `times` is keyed by ops names, so for the
-        // seven credential targets — which front no op — this leg says nothing at all.
-        // What stands in for them is the untouched world asserted below.
-        if (Object.prototype.hasOwnProperty.call(ops, op)) {
-          expect(times(invocations, op), `POST ${action} reached ${op}`).toBe(0);
+      for (const { path, op, body } of writes) {
+        for (const [name, cookie] of [
+          ["a day-old cookie", stale.cookie],
+          ["a device-flow token", bearerCookie],
+        ] as const) {
+          const refused = await settingsPost(path, body, cookie, staleCsrf);
+          expect(refused.status, `POST ${path} on ${name}`).toBe(401);
+          expect(await reasonOf(refused), `POST ${path} on ${name}`).toBe("Sign in again.");
         }
+        if (op !== null) expect(times(invocations, op), `POST ${path} reached ${op}`).toBe(0);
       }
     });
 
-    // "Never reached its op", said about the six credential targets that HAVE no op:
-    // `times` counts ops names, so the leg above is 0 === 0 for them by construction and
-    // this is what stands in its place — the passkey they would have deleted still
-    // listed, no session revoked, the second factor still enrolled. Outside the
-    // substitution, because a pane cannot render while its own reads are counting stubs.
-    // (The seventh, Update password, is measured by `signsIn` in the Password pane's own
-    // stale-cookie row: this owner is enrolled in 2FA, so a sign-in here never returns a
-    // cookie and the probe would say nothing.)
-    expect(
-      confirmLinkFor(await page(paths.settingsPasskeys, fresh.cookie), "remove-passkey", passkeyId),
-      "the refused delete-passkey removed the passkey anyway",
-    ).not.toBeNull();
-    const railAfter = await page(paths.settingsSessions, fresh.cookie);
-    expect(
-      markerOf(railAfter, paths.settingsSessions),
-      "the refused revokes ended a session anyway",
-    ).toBe(markerOf(railBefore, paths.settingsSessions));
-    expect(
-      markerOf(railAfter, paths.settingsTwoFactor),
-      "the refused two-factor posts moved the second factor anyway",
-    ).toBe(markerOf(railBefore, paths.settingsTwoFactor));
+    // "Never reached better-auth", said about the eight writes that front NO op: `times`
+    // counts ops names, so the leg above is 0 === 0 for them by construction and this is
+    // what stands in its place. (Update password is measured by `signsIn` in the Password
+    // pane's own stale-cookie row: this owner is enrolled in 2FA, so a sign-in here never
+    // returns a cookie and the probe would say nothing.)
+    const after = await settingsOf(fresh.cookie);
+    expect(after.passkeys.map((row) => row.id), "a refused delete-passkey removed it anyway").toEqual(
+      before.passkeys.map((row) => row.id),
+    );
+    expect(new Set(after.sessions.map((row) => row.id)), "a refused revoke ended a session anyway").toEqual(
+      new Set(before.sessions.map((row) => row.id)),
+    );
+    expect(after.twoFactor, "a refused two-factor write moved the second factor anyway").toEqual(before.twoFactor);
 
-    // THE TWIN: the same submissions from a session signed in moments ago, answered by
-    // the target rather than by the gate — a notice on a pane, never a login bounce.
-    // §4 splits the credential family by whether the target takes a password: the four
-    // that do must refuse `WRONG_PASSWORD`, and the three that take none (remove passkey,
-    // revoke session, revoke all others) legitimately succeed.
+    // THE TWIN: the same bodies from a session signed in moments ago, answered by the
+    // target rather than by the gate. §4 splits the credential writes by whether they take
+    // a password: the four that do must refuse `WRONG_PASSWORD`, the three that take none
+    // (remove passkey, revoke session, revoke all others) legitimately succeed, and the
+    // TOTP verify refuses a code for an enrolment that is not pending, on its merits.
     const PASSWORD_GUARDED: readonly string[] = [
-      paths.auth.totpEnable,
-      paths.auth.totpDisable,
-      paths.auth.backupCodesGenerate,
-      paths.auth.changePassword,
+      settingsApi.totpEnable,
+      settingsApi.totpDisable,
+      settingsApi.backupCodesGenerate,
+      settingsApi.changePassword,
     ];
-    const UNGUARDED: readonly string[] = [
-      paths.auth.passkeyDelete,
-      paths.auth.sessionRevoke,
-      paths.auth.revokeOtherSessions,
-    ];
-    // Two tokens mean two `token_revoke` targets, so "the op ran once" is counted per
-    // POST rather than per op name.
-    const expected = new Map<string, number>();
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
-      for (const { action, fields } of walk) {
-        const op = finalSegment(action);
-        const before = expected.get(op) ?? 0;
-        const answered = await formPost(action, { ...fields, csrf: freshCsrf, password: WRONG_PASSWORD }, fresh.cookie);
-        expect(answered.status, `POST ${action} on a fresh cookie`).toBe(303);
-        const location = answered.headers.get("Location") ?? "";
-        expect(location, `POST ${action}`).not.toMatch(/^\/login(\?|$)/);
-        if (Object.prototype.hasOwnProperty.call(ops, op)) {
-          expect(times(invocations, op), `POST ${action} reached ${op}`).toBe(before + 1);
-          expect(location, `POST ${action}`).toContain("done=");
-          expected.set(op, before + 1);
-        } else if (PASSWORD_GUARDED.includes(action)) {
-          expect(location, `POST ${action} accepted a password that is not the owner's`).toContain("failed=");
-        } else if (UNGUARDED.includes(action)) {
-          expect(location, `POST ${action}`).toContain("done=");
+      for (const { path, op, body } of writes) {
+        const answered = await settingsPost(path, body, fresh.cookie, freshCsrf);
+        if (path === settingsApi.totpVerify) {
+          expect(answered.status, `POST ${path} on a fresh cookie`).toBe(422);
+          continue;
+        }
+        const { next } = await redirectedOf(answered);
+        if (op !== null) {
+          expect(times(invocations, op), `POST ${path} reached ${op}`).toBe(1);
+          expect(next.searchParams.get("done"), `POST ${path}`).toBe(op);
+        } else if (PASSWORD_GUARDED.includes(path)) {
+          expect(next.searchParams.get("failed"), `POST ${path} accepted a password that is not the owner's`).not.toBeNull();
         } else {
-          // A credential target added to `paths.auth` after this row was written: the walk
-          // still covers it, and only its regime is unknown until someone says which it is.
-          expect(location, `POST ${action}`).toMatch(/[?&](done|failed)=/);
+          expect(next.searchParams.get("done"), `POST ${path}`).not.toBeNull();
         }
       }
     });
-    // The Add-passkey ceremony is the one /settings credential POST this walk cannot see:
-    // it is not a form. The Passkeys pane's ceremony row is what claims it.
+    // The Add-passkey ceremony is the one settings credential write this walk cannot see:
+    // it rides better-auth's own mount, whose freshness row (below) claims it.
   });
 
-  it(`§13 · a mutation posted from a pane redirects back to that pane's own URL carrying its notice, and the pane at that Location renders it — done= from the ops-backed targets, failed= from a refused credential — never to the page root unless the root is the pane that rendered the form`, async () => {
+  it(`§13 · a write lands on the pane that drew its control: every settings write's \`next\` names that pane's own URL — never the page root unless the root is the pane — and carries its notice, done= from the ops-backed writes and the credential writes better-auth accepts, failed= from a refused credential (both arms walked)`, async () => {
+    // Ported with family 2 from "a mutation posted from a pane redirects back to that
+    // pane": `next` IS the Location the 303 named. That the pane then DRAWS the notice —
+    // "<Op> done." against "<Op> failed", `noticeOf`'s words — is the client's, over
+    // `web/src/lib/notice.ts`.
     const ns = await seedNamespace(env.DB, {
       apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
       agents: [{ slug: "agent", tokens: [{ as: "agt" }] }],
     });
     const session = await seedOwnerSession(ns.owner);
-    // A SECOND session, because the Sessions pane draws a Revoke link only beside a row
-    // that is not the current one: with one session the pane renders no
-    // `?confirm=revoke-session` link and the harvest below quietly walks one target short.
-    await seedOwnerSession(ns.owner);
-    await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    await consentOnce(ns, session.cookie, "agent");
+    const other = await seedOwnerSession(ns.owner);
+    const passkeyId = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
+    const { bindingId } = await consentOnce(ns, session.cookie, "agent");
     await enrollTwoFactor(ns.owner.userId);
+    const writes = settingsWrites({
+      passkey: passkeyId,
+      session: await sessionIdOf(other.cookie),
+      token: (await tokensOf(ns.owner.userId))[0].id,
+      connection: bindingId,
+    });
+    // More than one pane, and the root among them, or "never the root" is vacuous.
+    const panes = new Set(writes.map((write) => write.pane));
+    expect(panes.has(paths.settings)).toBe(true);
+    expect([...panes].some((pane) => pane !== paths.settings)).toBe(true);
 
-    const targets = await settingsPostTargets(session.cookie);
-    // The three targets whose owning pane is NOT the root, and which exist only behind a
-    // `?confirm=` dialog — an under-seeded world fails HERE rather than passing on a
-    // shorter walk.
-    expect([...targets.keys()]).toEqual(
-      expect.arrayContaining([paths.auth.sessionRevoke, paths.auth.passkeyDelete, paths.auth.totpDisable]),
-    );
-    const panes = new Set([...targets.values()].map((found) => found.pane));
-    expect(panes.has(paths.settings), "no harvested form is drawn on the page root").toBe(true);
-    expect([...panes].some((pane) => pane !== paths.settings), "every harvested form is on the root").toBe(true);
-
-    const walk = [...targets].sort(([a], [b]) => Number(ENDS_SESSIONS(a)) - Number(ENDS_SESSIONS(b)));
-    const landings: { pane: string; location: string; flash: string; done: boolean }[] = [];
-    // Two tokens mean two `token_revoke` targets, so the count is kept per POST.
-    const expected = new Map<string, number>();
-    await withCountedOps([...Object.keys(ops)], async (invocations) => {
-      for (const [action, { pane, fields }] of walk) {
-        const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-        const answered = await formPost(action, { ...fields, password: WRONG_PASSWORD }, session.cookie);
-        expect(answered.status, `POST ${action}`).toBe(303);
-        const location = answered.headers.get("Location") ?? "";
-        expect(new URL(location, ORIGIN).pathname, `POST ${action} landed off its pane`).toBe(pane);
-        const outcome = new URL(location, ORIGIN).searchParams;
-        const flash = outcome.get("done") ?? outcome.get("failed") ?? "";
-        expect(flash, `POST ${action} carried no notice`).not.toBe("");
-        landings.push({ pane, location, flash, done: outcome.get("done") !== null });
-        if (Object.prototype.hasOwnProperty.call(ops, op)) {
-          const ran = (expected.get(op) ?? 0) + 1;
-          expect(times(invocations, op), `POST ${action} reached ${op}`).toBe(ran);
-          expected.set(op, ran);
-        }
+    const csrf = await csrfFor(session.cookie);
+    const flashes: boolean[] = [];
+    await withCountedOps([...Object.keys(ops)], async () => {
+      for (const { path, pane, body } of writes) {
+        // The verify's landing needs a pending enrolment, which the journey rows build.
+        if (path === settingsApi.totpVerify) continue;
+        const { next } = await redirectedOf(await settingsPost(path, body, session.cookie, csrf));
+        expect(next.pathname, `POST ${path} landed off its pane`).toBe(pane);
+        const done = next.searchParams.get("done");
+        const failed = next.searchParams.get("failed");
+        expect(done ?? failed, `POST ${path} carried no notice`).not.toBeNull();
+        flashes.push(done !== null);
       }
     });
-    // FOLLOWED outside the substitution — a pane cannot render while its own reads are
-    // counting handlers — because a pane that dropped `notice` from its props would
-    // otherwise pass on the Location alone.
-    // Both arms are walked, so neither branch below is satisfied by an empty set.
-    expect(landings.some((row) => row.done), "no target answered done=").toBe(true);
-    expect(landings.some((row) => !row.done), "no target answered failed=").toBe(true);
-    for (const { pane, location, flash, done } of landings) {
-      const landed = await page(location, session.cookie);
-      // The WHOLE sentence `noticeOf` builds, not the op name both arms share: a success
-      // line reads "<Op> done." and a refusal "<Op> failed", so a pane that drew every
-      // notice in one tone would otherwise pass on the prefix.
-      const humanized = `${flash.charAt(0).toUpperCase()}${flash.slice(1).replace(/_/g, " ")}`;
-      expect(landed, `${pane} rendered no notice for ${flash}`).toContain(
-        done ? `${humanized} done.` : `${humanized} failed`,
-      );
-    }
+    expect(flashes.some((done) => done), "no write answered done=").toBe(true);
+    expect(flashes.some((done) => !done), "no write answered failed=").toBe(true);
   });
 
-  it(`§13 · a confirm dialog rides the URL of the pane that owns it: every ?confirm= link a pane renders resolves to that same pane's path and draws its dialog there · the identical query on another pane's URL draws none (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
-    const session = await seedOwnerSession(ns.owner);
-    await seedOwnerSession(ns.owner);
-    await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    await plantPasskey(ns.owner.userId, { name: "YubiKey 5C" });
-    await consentOnce(ns, session.cookie, "agent");
-    await enrollTwoFactor(ns.owner.userId);
-
-    const harvested: { pane: string; href: string }[] = [];
-    for (const pane of PANES) {
-      for (const href of confirmLinksOn(await page(pane, session.cookie))) harvested.push({ pane, href });
-    }
-    expect(harvested.length, "no pane rendered a confirm link").toBeGreaterThan(0);
-
-    for (const { pane, href } of harvested) {
-      expect(new URL(href, ORIGIN).pathname, `${href} does not ride ${pane}`).toBe(pane);
-      const withQuery = await page(href, session.cookie);
-      const plain = await page(pane, session.cookie);
-      const opened = formsOn(withQuery).filter((form) => !formsOn(plain).includes(form));
-      expect(opened.length, `${href} drew no form the bare pane does not`).toBeGreaterThan(0);
-    }
-
-    // The twin: the same query on a pane that does not own it draws nothing.
-    const foreign = harvested.find((row) => row.href.includes("id="));
-    expect(foreign, "no id-carrying confirm link to move").toBeDefined();
-    const query = new URL(foreign?.href ?? "", ORIGIN).search;
-    const elsewhere = PANES.find((pane) => pane !== foreign?.pane) ?? paths.settings;
-    expect(formsOn(await page(`${elsewhere}${query}`, session.cookie))).toEqual(
-      formsOn(await page(elsewhere, session.cookie)),
-    );
-    // And a guessed id on the OWNING pane is no dialog either.
-    const guessed = `${foreign?.pane ?? ""}?confirm=${new URL(foreign?.href ?? "", ORIGIN).searchParams.get("confirm") ?? ""}&id=${uniqueSlug("nope")}`;
-    expect(formsOn(await page(guessed, session.cookie))).toEqual(
-      formsOn(await page(foreign?.pane ?? paths.settings, session.cookie)),
-    );
-  });
+  // "A confirm dialog rides the URL of the pane that owns it" — retired with family 2: the
+  // `?confirm=` dialogs are drawn by the client now. The rule is the pure `settingsConfirm`
+  // (web/src — a unit row over it, as routes §2 lists), and the owning panes are
+  // `SETTINGS_CONFIRM_PANE` in web/src/lib/paths.ts.
 
   it(`§13 · the seven pane routes are the seven strings §13 spells — /settings, /settings/two-factor, /settings/passkeys, /settings/sessions, /settings/tokens, /settings/clients, /settings/execution — asserted against the literals once, since every other row reads them through paths`, () => {
     // Every other row here derives both sides from `paths`, so renaming a member would
@@ -3335,439 +3271,285 @@ describe(`§13 · the /settings shell — seven panes behind one rail`, () => {
     ]);
   });
 
-  it(`§13 · no rendered page links /oauth/consent — it is chromeless and has no nav slot, by design · the same pages link all seven settings panes (the twin)`, async () => {
-    const linked = new Set<string>();
-    for (const path of [...PANES, paths.apps]) {
-      const html = await page(path);
-      for (const anchor of html.matchAll(/<a\b[^>]*href="([^"]*)"/g)) {
-        const href = decodeEntities(anchor[1]);
-        if (!href.startsWith("/")) continue;
-        const target = new URL(href, ORIGIN).pathname;
-        expect(target, `${path} links the consent screen`).not.toBe(paths.oauthConsent);
-        linked.add(target);
-      }
-    }
-    // Non-vacuous by the same walk: these pages demonstrably do link pane URLs, so the
-    // absence above is about /oauth/consent and not about a walk that found no anchors.
-    expect([...PANES].filter((pane) => linked.has(pane))).toEqual([...PANES]);
-  });
+  // Three rows retired with family 2, each a claim about markup the shell no longer draws:
+  //  - "no rendered page links /oauth/consent (the same pages link all seven panes)" — the
+  //    pages that link panes are the client's; a walk over the links its routes render is
+  //    web-side (routes §2, row 3152), and consent stays chromeless in its own family.
+  //  - "the mobile pill row lists the same seven URLs, shortening only Clients" — the pill
+  //    row is `SETTINGS_PANES`' `short` column in web/src/lib/paths.ts, drawn by the client.
+  //  - "nothing is added TO the consent screen: no rail, no pills" — its twin needed a
+  //    server-drawn rail, and none is left; the consent screen's chrome moves to the client
+  //    with family 4, where the gallery holds it.
 
-  it(`§13 · the mobile pill row lists the same seven pane URLs in the same order as the rail, markerless, and shortens only the Connected clients label, to Clients — structure only, nothing visual`, async () => {
-    for (const pane of PANES) {
-      const html = await page(pane);
-      const rail = railEntries(html, RAIL_NAV_LABEL);
-      const pills = railEntries(html, PILL_NAV_LABEL);
-      expect(pills.map((e) => e.href), `the pill row on ${pane}`).toEqual(rail.map((e) => e.href));
-      expect(pills.map((e) => e.href), `the pill row on ${pane}`).toEqual(PANES);
-      // §13: "label only, no markers".
-      expect(pills.map((e) => e.marker), `the pill row on ${pane}`).toEqual(PANES.map(() => ""));
-      for (let at = 0; at < PANES.length; at += 1) {
-        if (at === 5) continue;
-        expect(pills[at].label, `pill ${at} on ${pane}`).toBe(rail[at].label);
-      }
-      // The single shortening, asserted as a DIFFERENCE so it cannot pass by accident.
-      expect(rail[5].label).toBe("Connected clients");
-      expect(pills[5].label).toBe("Clients");
-      // §13 (pinned 2026-09-03): the active pill carries aria-current="page" like the
-      // rail's active entry — exactly one pill per page, and it is this page's.
-      const block = /<nav class="pill-row"[^>]*>([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "";
-      const current = [...block.matchAll(/<a class="pill" href="([^"]*)" aria-current="page">/g)].map((m) => m[1]);
-      expect(current, `the current pill on ${pane}`).toEqual([pane]);
-    }
-  });
-
-  it(`§4/§13 · an Authorization header with no cookie is bounced to /login at a /settings POST — a credential target and an ops-backed one alike — and reaches neither better-auth nor the op · the identical submissions under the owner's cookie are accepted (the twin)`, async () => {
-    // Here rather than in auth-matrix, which can neither render a pane nor obtain the CSRF
-    // token a page rendered — and without that token a refusal proves nothing about which
-    // gate answered.
+  it(`§4/§13 · an Authorization header with no cookie is refused 401 at an /api/hub/settings write — a credential write and an ops-backed one alike — and reaches neither better-auth nor the op · the identical bodies under the owner's cookie are answered by the target (the twin)`, async () => {
+    // Ported with family 2 from the /settings form POSTs, where the same credential was a
+    // 302 to /login. Here rather than in auth-matrix, which cannot obtain the CSRF token a
+    // shell bootstrapped — and without that token a refusal proves nothing about which gate
+    // answered.
     const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent", tokens: [{ as: "agt" }] }] });
     const session = await seedOwnerSession(ns.owner);
     const bearer = await deviceFlowToken(session.cookie);
-    const tokensPane = await page(paths.settingsTokens, session.cookie);
-    const seeded = (await ops.token_list.handler(ns.owner.userId, {})) as {
-      tokens: { id: string; revokedAt: number | null }[];
-    };
-    const tokenId = seeded.tokens[0].id;
-    const passwordForm = formsPostingTo(await page(paths.settings, session.cookie), paths.auth.changePassword)[0];
-    expect(passwordForm, "the Password pane rendered no change-password form").toBeDefined();
-    const revokeForm = formsPostingTo(tokensPane, paths.tokenRevoke(tokenId))[0];
-    expect(revokeForm, "the Tokens pane rendered no revoke form for the seeded key").toBeDefined();
+    const csrf = await csrfFor(session.cookie);
+    const tokenId = (await tokensOf(ns.owner.userId))[0].id;
 
     const legs = [
       {
-        action: paths.auth.changePassword,
+        path: settingsApi.changePassword,
         // Deliberately wrong, so the twin below cannot move the world it is measured in.
-        fields: typedInto(passwordForm, {
-          currentPassword: WRONG_PASSWORD,
-          newPassword: WRONG_PASSWORD,
-          confirmPassword: WRONG_PASSWORD,
-        }),
+        body: passwordChange({ currentPassword: WRONG_PASSWORD, newPassword: WRONG_PASSWORD }),
         op: "",
       },
-      { action: paths.tokenRevoke(tokenId), fields: revokeForm, op: "token_revoke" },
+      { path: settingsApi.tokenRevoke, body: { id: tokenId }, op: "token_revoke" },
     ];
 
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
       for (const leg of legs) {
-        // The header ALONE — no Cookie — carrying the page's real CSRF token, so the only
-        // rule that can answer is the gate's. `mutation` resolves the session BEFORE
-        // checkCsrf, which is why the 403 is not what comes back.
+        // The header ALONE — no Cookie — carrying the session's real CSRF token and the
+        // hub's Origin, so the only rule that can answer is the session gate's.
         const refused = await call(
-          new Request(`${ORIGIN}${leg.action}`, {
+          new Request(`${ORIGIN}/api/hub${leg.path}`, {
             method: "POST",
             headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
+              "Content-Type": "application/json",
               Origin: ORIGIN,
               Authorization: `Bearer ${bearer}`,
+              "X-Pmcp-Csrf": csrf,
             },
-            body: new URLSearchParams(leg.fields).toString(),
+            body: JSON.stringify(leg.body),
           }),
         );
-        expect(refused.status, `POST ${leg.action} with a bearer and no cookie`).toBe(302);
-        expect(refused.headers.get("Location"), `POST ${leg.action}`).toMatch(/^\/login(\?|$)/);
+        expect(refused.status, `POST ${leg.path} with a bearer and no cookie`).toBe(401);
         expect(sessionCookieOf(refused)).toBeNull();
-        if (leg.op !== "") expect(times(invocations, leg.op), `POST ${leg.action}`).toBe(0);
+        if (leg.op !== "") expect(times(invocations, leg.op), `POST ${leg.path}`).toBe(0);
       }
     });
 
     // Nothing moved — read with the real ops table back, which is also why the counting
     // block above holds only the refusals.
-    const untouched = (await ops.token_list.handler(ns.owner.userId, {})) as {
-      tokens: { id: string; revokedAt: number | null }[];
-    };
-    expect(untouched.tokens.find((row) => row.id === tokenId)?.revokedAt ?? null).toBeNull();
+    const untouched = await tokensOf(ns.owner.userId);
+    expect(untouched.find((row) => row.id === tokenId)?.revokedAt ?? null).toBeNull();
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
 
-    // The twin: the identical submissions under the owner's own cookie and no header.
+    // The twin: the identical bodies under the owner's own cookie and no header.
     await withCountedOps([...Object.keys(ops)], async (invocations) => {
       for (const leg of legs) {
-        const answered = await formPost(leg.action, leg.fields, session.cookie);
-        expect(answered.status, `POST ${leg.action} under the owner's cookie`).toBe(303);
-        const location = answered.headers.get("Location") ?? "";
+        const { next } = await redirectedOf(await settingsPost(leg.path, leg.body, session.cookie, csrf));
         if (leg.op === "") {
-          expect(location, `POST ${leg.action}`).toContain("failed=");
+          expect(next.searchParams.get("failed"), `POST ${leg.path}`).not.toBeNull();
         } else {
-          expect(location, `POST ${leg.action}`).toContain("done=");
-          expect(times(invocations, leg.op), `POST ${leg.action}`).toBe(1);
+          expect(next.searchParams.get("done"), `POST ${leg.path}`).toBe(leg.op);
+          expect(times(invocations, leg.op), `POST ${leg.path}`).toBe(1);
         }
       }
     });
   });
-
-  it(`§13 · nothing is added TO the consent screen either: /oauth/consent renders neither paned page's rail and neither pill row — chromeless, no nav slot · the same helpers find the seven entries on a settings pane (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, { agents: [{ slug: "agent" }] });
-    const session = await seedOwnerSession(ns.owner);
-    const { clientId } = await registerOAuthClient();
-    const { html } = await reachConsent(clientId, session.cookie, {
-      resource: oauthResourceFor(ns.owner.username),
-    });
-    for (const label of [RAIL_NAV_LABEL, PILL_NAV_LABEL, APP_RAIL_NAV_LABEL, APP_PILL_NAV_LABEL]) {
-      expect(railEntries(html, label), `/oauth/consent rendered "${label}"`).toEqual([]);
-    }
-    // The twin, so the four empties are the page's answer and not the helper's: the same
-    // helper finds seven entries on a settings pane in this same case.
-    expect(railEntries(await page(paths.settings, session.cookie), RAIL_NAV_LABEL).length).toBe(7);
-  });
 });
 
 describe(`§4/§13 · the Password pane`, () => {
-  it(`§13 · /settings lands on the Password pane: current password, new password, confirm new password, Sign out my other sessions checked by default, Update password — and the footer that sends a forgotten password to the server script, verbatim`, async () => {
+  // Ported with decision 38's family 2: every row posts `POST /api/hub/settings/change-password`
+  // — the body the SPA builds — where it posted the pane's form, and reads the refusal's
+  // FIELD and the success's `signedOut` off the answer's `next`, which is the Location the
+  // 303 named. The SENTENCES a refusal is drawn with ("That password is not right.", "The
+  // two entries do not match.", "Password updated." and its two companions) are the client's
+  // now, as the pure `passwordErrorOf` and `noticeOf`'s change_password arm (routes §2's view
+  // rules, web-side unit rows).
+
+  it(`§13 · the Password pane's one configured number comes from the read: \`limits.passwordMinLength\` is PASSWORD_MIN_LENGTH, the constant better-auth is configured with, beside the two timeout bounds hub_settings_update enforces — so the page holds no second literal of any of them`, async () => {
+    // What this row owned about the pane's CONTROLS — the three fields, the default-on box,
+    // Update password and the footer sending a forgotten password to the server script — is
+    // drawn by the client and held by its gallery states; the body those controls post is
+    // `passwordChange`, which every row below sends.
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    const { pane, form } = await passwordForm(session.cookie);
-
-    expect(actionFor(pane, "change-password")).toBe(paths.auth.changePassword);
-    // Typing into the three controls IS the assertion that the page drew all three:
-    // `typedInto` refuses a name the rendered form never carried.
-    typedInto(form, { currentPassword: "", newPassword: "", confirmPassword: "" });
-    expect(form.csrf ?? "").not.toBe("");
-    // THE DEFAULT, said as a submission: an unticked box contributes nothing to a
-    // browser's body, so the untouched submission carrying the key is "checked".
-    expect(Object.keys(form)).toContain("revokeOtherSessions");
-    expect(pane).toContain("Update password");
-
-    // §13's footer in three fragments, so the spec's `<username>` placeholder and the
-    // page's substituted username both pass; what sits between them is not asserted.
-    const text = textOf(pane);
-    expect(text).toContain(
-      "No email is on file, so there is no reset link: a forgotten password is recovered on the server with ",
-    );
-    expect(text).toContain("pnpm users reset-password");
-    expect(text).toContain(" (§12). Changing it here needs the current one.");
-    // §13's other half of the flag's cost — every CLI session is among the "others".
-    expect(text).toContain("pmcp login");
-
-    // Parity as a POSITIVE: every form this pane draws is a credential translation, and
-    // change-password is one of them (§8's pinned exception, stated rather than assumed).
-    // `formsRenderedOn` and not `formsOn`: a submit button's `formaction` is a target of
-    // its own, and one this leg would otherwise never walk.
-    const drawn = formsRenderedOn(pane).map((form) => form.op);
-    expect(drawn.length).toBeGreaterThan(0);
-    for (const op of drawn) expect(BETTER_AUTH_ACTIONS.has(op), `${op} is no credential`).toBe(true);
-    expect(drawn).toContain("change-password");
+    expect((await settingsOf(session.cookie)).limits).toEqual({
+      passwordMinLength: PASSWORD_MIN_LENGTH,
+      minTimeoutMs: HUB_MIN_TIMEOUT_MS,
+      maxTimeoutMs: HUB_HARD_MAX_TIMEOUT_MS,
+    });
   });
 
-  it(`§13/§4 · the length hint renders from the one configured minimum: a new password one character short is refused with the pane carrying no second number, sets no cookie and leaves the password already on file signing in · one of exactly PASSWORD_MIN_LENGTH characters is accepted (the twin)`, async () => {
+  it(`§13/§4 · a new password one character under PASSWORD_MIN_LENGTH is refused: \`next\` lands on the Password pane with failed=change_password and field=newPassword — the length refusal and neither of the other two — no cookie is set and the password already on file still signs in · one of exactly PASSWORD_MIN_LENGTH characters is accepted (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    const { pane, form } = await passwordForm(session.cookie);
-
-    // ONE number on the page, and it is the constant better-auth is configured from.
-    const hints = [...pane.matchAll(/At least (\d+) characters\./g)];
-    expect(hints.length, "the pane renders no length hint").toBeGreaterThan(0);
-    for (const hint of hints) expect(hint[1]).toBe(String(PASSWORD_MIN_LENGTH));
 
     const short = fakePassword(PASSWORD_MIN_LENGTH - 1);
-    const refused = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: short,
-        confirmPassword: short,
-      }),
+    const refused = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: short }),
       session.cookie,
     );
-    expect(refused.status).toBe(303);
-    const back = refused.headers.get("Location") ?? "";
-    expect(back).toContain(paths.settings);
-    expect(back).toContain("failed=");
     expect(sessionCookieOf(refused)).toBeNull();
-    // The refusal is the LENGTH one and neither of the other two. The hint's own presence
-    // afterwards is not asserted: it is drawn on every render either way.
-    const drawn = await page(back, session.cookie);
-    expect(drawn).not.toContain("That password is not right.");
-    expect(drawn).not.toContain("The two entries do not match.");
+    const { next } = await redirectedOf(refused);
+    expect(next.pathname).toBe(paths.settings);
+    expect(next.searchParams.get("failed")).toBe("change_password");
+    expect(next.searchParams.get("field")).toBe("newPassword");
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
     expect(await signsIn(ns.owner.username, short)).toBe(false);
 
     // THE TWIN, one character longer — an off-by-one or a second literal fails one leg.
     const exact = fakePassword(PASSWORD_MIN_LENGTH);
-    const again = await passwordForm(session.cookie);
-    const accepted = await formPost(
-      actionFor(again.pane, "change-password"),
-      unticked(
-        typedInto(again.form, {
-          currentPassword: SEEDED_OWNER_PASSWORD,
-          newPassword: exact,
-          confirmPassword: exact,
-        }),
+    const accepted = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: exact, revokeOtherSessions: false }),
+        session.cookie,
       ),
-      session.cookie,
     );
-    expect(accepted.status).toBe(303);
-    expect(accepted.headers.get("Location") ?? "").toContain("done=");
+    expect(accepted.next.searchParams.get("done")).toBe("change_password");
     expect(await signsIn(ns.owner.username, exact)).toBe(true);
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(false);
   });
 
-  it(`§13 · a wrong current password is refused with "That password is not right.", changes nothing and touches no session — the password already on file still signs in and a bystander session still opens a page · the right one changes it (the twin)`, async () => {
+  it(`§13 · a wrong current password is refused with field=currentPassword, changes nothing and touches no session — the password already on file still signs in and a bystander session still opens a page · the right one changes it (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const actor = await seedOwnerSession(ns.owner);
     const bystander = await seedOwnerSession(ns.owner);
     const before = await sessionIdOf(actor.cookie);
-    const { pane, form } = await passwordForm(actor.cookie);
     const wanted = fakePassword(20);
 
-    const refused = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: WRONG_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
+    const refused = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: WRONG_PASSWORD, newPassword: wanted }),
       actor.cookie,
     );
-    expect(refused.status).toBe(303);
-    const back = refused.headers.get("Location") ?? "";
-    expect(back).toContain(paths.settings);
-    expect(back).toContain("failed=");
     expect(sessionCookieOf(refused)).toBeNull();
+    const { next } = await redirectedOf(refused);
+    expect(next.pathname).toBe(paths.settings);
+    expect(next.searchParams.get("failed")).toBe("change_password");
+    expect(next.searchParams.get("field")).toBe("currentPassword");
     // "No session is touched", said of a session OTHER than the one posting as well.
     expect(await sessionIdOf(actor.cookie)).toBe(before);
     expect((await get(paths.apps, bystander.cookie)).status).toBe(200);
-
-    const drawn = await page(back, actor.cookie);
-    expect(drawn).toContain("That password is not right.");
-    // Exclusivity, with the length hint deliberately outside it: it always renders.
-    expect(drawn).not.toContain("The two entries do not match.");
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
     expect(await signsIn(ns.owner.username, wanted)).toBe(false);
 
     // THE TWIN, one field different — §13's "change is not reset" as the pair it is.
-    const again = await passwordForm(actor.cookie);
-    const accepted = await formPost(
-      actionFor(again.pane, "change-password"),
-      unticked(
-        typedInto(again.form, {
-          currentPassword: SEEDED_OWNER_PASSWORD,
-          newPassword: wanted,
-          confirmPassword: wanted,
-        }),
+    const accepted = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted, revokeOtherSessions: false }),
+        actor.cookie,
       ),
-      actor.cookie,
     );
-    expect(accepted.status).toBe(303);
-    expect(accepted.headers.get("Location") ?? "").toContain("done=");
+    expect(accepted.next.searchParams.get("done")).toBe("change_password");
     expect(await signsIn(ns.owner.username, wanted)).toBe(true);
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(false);
   });
-  it(`§13 · new ≠ confirm is the one check the hub makes itself, made before better-auth is called: "The two entries do not match." comes back although the current password was right, the session id is unchanged and the password already on file still signs in · the same form with the two entries equal changes it (the twin)`, async () => {
+
+  it(`§13 · new ≠ confirm is the one check the hub makes itself, made before better-auth is called: field=confirmPassword comes back although the current password was right, the session id is unchanged and the password already on file still signs in · the same body with the two entries equal changes it (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
     const before = await sessionIdOf(session.cookie);
-    const { pane, form } = await passwordForm(session.cookie);
     // Both well inside 12..128, so length cannot refuse, and the current password is
     // RIGHT — so better-auth, whose body schema carries no confirm field, would have
     // succeeded had the hub forwarded. That is the leg a forwarding hub goes red on.
     const typed = fakePassword(20);
     const mistyped = fakePassword(21);
 
-    const refused = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: typed,
-        confirmPassword: mistyped,
-      }),
+    const refused = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: typed, confirmPassword: mistyped }),
       session.cookie,
     );
-    expect(refused.status).toBe(303);
-    const back = refused.headers.get("Location") ?? "";
-    expect(back).toContain("failed=");
     expect(sessionCookieOf(refused)).toBeNull();
+    const { next } = await redirectedOf(refused);
+    expect(next.searchParams.get("failed")).toBe("change_password");
+    expect(next.searchParams.get("field")).toBe("confirmPassword");
     expect(await sessionIdOf(session.cookie)).toBe(before);
-
-    const drawn = await page(back, session.cookie);
-    expect(drawn).toContain("The two entries do not match.");
-    expect(drawn).not.toContain("That password is not right.");
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
     expect(await signsIn(ns.owner.username, typed)).toBe(false);
     expect(await signsIn(ns.owner.username, mistyped)).toBe(false);
 
-    // THE TWIN: the same form with the two entries equal.
-    const again = await passwordForm(session.cookie);
-    const accepted = await formPost(
-      actionFor(again.pane, "change-password"),
-      unticked(
-        typedInto(again.form, {
-          currentPassword: SEEDED_OWNER_PASSWORD,
-          newPassword: typed,
-          confirmPassword: typed,
-        }),
+    // THE TWIN: the same body with the two entries equal.
+    const accepted = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: typed, revokeOtherSessions: false }),
+        session.cookie,
       ),
-      session.cookie,
     );
-    expect(accepted.status).toBe(303);
-    expect(accepted.headers.get("Location") ?? "").toContain("done=");
+    expect(accepted.next.searchParams.get("done")).toBe("change_password");
     expect(await signsIn(ns.owner.username, typed)).toBe(true);
   });
 
-  it(`§13 · a refusal better-auth answers with a code the pane maps to no field changes nothing and renders neither mapped refusal sentence · a mapped code does render its own (the twin)`, async () => {
+  it(`§13 · a refusal better-auth answers with a code the pane maps to no field lands with failed= and NO field, changing nothing · a mapped code does carry its field (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    // Past better-auth's own ceiling — a length the hub knows nothing about, so reaching
-    // a refusal at all is evidence better-auth's own validation ran. Spelled as a length.
+    // Past better-auth's own ceiling — a length the hub knows nothing about, so reaching a
+    // refusal at all is evidence better-auth's own validation ran. Spelled as a length.
     const enormous = fakePassword(200);
-    const { pane, form } = await passwordForm(session.cookie);
 
-    const unmapped = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: enormous,
-        confirmPassword: enormous,
-      }),
+    const unmapped = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: enormous }),
       session.cookie,
     );
-    expect(unmapped.status).toBe(303);
-    const back = unmapped.headers.get("Location") ?? "";
-    expect(back).toContain(paths.settings);
-    expect(back).toContain("failed=");
     expect(sessionCookieOf(unmapped)).toBeNull();
-    // Nothing is asserted about the notice's own words: §13 quotes none for this arm.
-    const drawn = await page(back, session.cookie);
-    expect(drawn).not.toContain("That password is not right.");
-    expect(drawn).not.toContain("The two entries do not match.");
+    const { next } = await redirectedOf(unmapped);
+    expect(next.pathname).toBe(paths.settings);
+    expect(next.searchParams.get("failed")).toBe("change_password");
+    // §13's "Anything else is the ordinary refusal notice": no control named.
+    expect(next.searchParams.get("field")).toBeNull();
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
 
-    // THE TWIN: a MAPPED code also answers `failed=`, and is distinguishable — which is
-    // the whole of §13's "Anything else is the ordinary refusal notice".
-    const again = await passwordForm(session.cookie);
+    // THE TWIN: a MAPPED code also answers `failed=`, and is distinguishable.
     const legal = fakePassword(20);
-    const mapped = await formPost(
-      actionFor(again.pane, "change-password"),
-      typedInto(again.form, {
-        currentPassword: WRONG_PASSWORD,
-        newPassword: legal,
-        confirmPassword: legal,
-      }),
-      session.cookie,
+    const mapped = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: WRONG_PASSWORD, newPassword: legal }),
+        session.cookie,
+      ),
     );
-    expect(mapped.status).toBe(303);
-    const mappedBack = mapped.headers.get("Location") ?? "";
-    expect(mappedBack).toContain("failed=");
-    expect(await page(mappedBack, session.cookie)).toContain("That password is not right.");
+    expect(mapped.next.searchParams.get("failed")).toBe("change_password");
+    expect(mapped.next.searchParams.get("field")).toBe("currentPassword");
   });
 
-  it(`§13 · the pane reports the gate's own clock: a session created a known number of minutes ago renders "Confirmed your identity N minutes ago." with that number, and a session of a different age renders a different one`, async () => {
+  it(`§13 · the pane reports the gate's own clock: the read's current session carries the createdAt the recent-auth gate reads, so a session created a known number of minutes ago reads that many minutes, and a session of a different age reads a different number`, async () => {
+    // Ported with family 2: "Confirmed your identity N minutes ago." is the client's
+    // sentence over this value — the row pins that the value IS the gate's clock.
     const ns = await seedNamespace(env.DB, {});
     const a = await seedOwnerSession(ns.owner);
     const b = await seedOwnerSession(ns.owner);
-    // EXACT minute multiples, so the row need not choose between floor and round; both
-    // well inside `freshAge`, so `page`'s own 200 is the check that these ages are the
-    // gate's `createdAt` and not an expiry.
+    // EXACT minute multiples, both well inside `freshAge`, so the read's own 200 is the
+    // check that these ages are the gate's `createdAt` and not an expiry.
     await ageSession(a.token, 7 * 60_000);
     await ageSession(b.token, 20 * 60_000);
-
-    const under = await page(paths.settings, a.cookie);
-    expect(under).toContain("Confirmed your identity 7 minutes ago.");
-    expect(under).not.toContain("20 minutes");
-
-    const other = await page(paths.settings, b.cookie);
-    expect(other).toContain("Confirmed your identity 20 minutes ago.");
-    expect(other).not.toContain("7 minutes");
+    const minutesOf = async (cookie: string): Promise<number> => {
+      const current = (await settingsOf(cookie)).sessions.filter((row) => row.current);
+      expect(current.length, "the read marked no single session current").toBe(1);
+      return Math.floor((Date.now() - Date.parse(current[0].createdAt)) / 60_000);
+    };
+    expect(await minutesOf(a.cookie)).toBe(7);
+    expect(await minutesOf(b.cookie)).toBe(20);
   });
-  it(`§13 · Update password with Sign out my other sessions left ticked walks end to end: "Password updated.", "2 other session(s) were signed out — this one stays.", better-auth's Set-Cookie carries a session id that is not the one that posted, the old cookie and the other browser session are sent to /login, the CLI's bearer is dead, and the Sessions pane afterwards offers no per-session Revoke and counts one`, async () => {
+
+  it(`§13 · Update password with Sign out my other sessions ticked walks end to end: \`next\` is the Password pane with done=change_password and signedOut=2, the answer forwards better-auth's Set-Cookie and says reload, that cookie names a session that is not the one that posted, the old cookie and the other browser session are sent to /login, the CLI's bearer is dead, and the read afterwards lists one session`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const { actor, bystander, device, before, otherId } = await threeSessions(ns);
-
-    // The before-leg that makes the after-leg's null non-vacuous.
-    const listed = await page(paths.settingsSessions, actor.cookie);
-    expect(revokeLinkFor(listed, otherId)).not.toBeNull();
+    // The before-leg that makes the after-leg's absence non-vacuous.
+    expect((await settingsOf(actor.cookie)).sessions.map((row) => row.id)).toContain(otherId);
 
     const wanted = fakePassword(20);
-    const { pane, form } = await passwordForm(actor.cookie);
-    // Only the three fields typed: `revokeOtherSessions` rides exactly as drawn.
-    const answered = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
+    const answered = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted }),
       actor.cookie,
     );
-    expect(answered.status).toBe(303);
-    const back = answered.headers.get("Location") ?? "";
-    expect(new URL(back, ORIGIN).pathname).toBe(paths.settings);
-    expect(back).toContain("done=");
-
     // §13's "this one stays" is true from the owner's chair and false at the row level:
-    // the id changes and the cookie is REPLACED in the same response.
+    // the id changes and the cookie is REPLACED in the same response — which is why the
+    // answer says `reload`: the CSRF token the document holds died with the old session.
     const fresh = sessionCookieOf(answered);
     expect(fresh).not.toBeNull();
+    const { next, reload } = await redirectedOf(answered);
+    expect(reload).toBe(true);
+    expect(next.pathname).toBe(paths.settings);
+    expect(next.searchParams.get("done")).toBe("change_password");
+    expect(next.searchParams.get("signedOut")).toBe("2");
     expect(await sessionIdOf(fresh ?? "")).not.toBe(before);
 
-    const landed = await page(back, fresh ?? "");
-    expect(landed).toContain("Password updated.");
-    expect(landed).toContain("2 other session(s) were signed out — this one stays.");
-    expect(landed).toContain(
-      "App and agent tokens keep working: they do not derive from the password.",
-    );
-
     // Every other way in is gone — the browser's old cookie, the other browser, the CLI.
-    // The destination, not just the status: a redirect anywhere else — back onto /settings,
-    // say — is not "signed out", and 302 alone cannot tell the two apart.
+    // The destination, not just the status: a redirect anywhere else is not "signed out".
     for (const dead of [actor.cookie, bystander.cookie]) {
       const bounced = await get(paths.settings, dead);
       expect(bounced.status).toBe(302);
@@ -3776,13 +3558,11 @@ describe(`§4/§13 · the Password pane`, () => {
     expect((await whoami(device)).status).toBe(401);
     expect((await get(paths.settings, fresh ?? "")).status).toBe(200);
 
-    // §13's "shows one session created just now", as the shell's own count rule.
-    const after = await page(paths.settingsSessions, fresh ?? "");
-    expect(revokeLinkFor(after, before)).toBeNull();
-    expect(revokeLinkFor(after, otherId)).toBeNull();
-    expect(after).not.toContain(before);
-    expect(after).not.toContain(otherId);
-    expect(markerOf(after, paths.settingsSessions)).toBe("1");
+    // §13's "shows one session created just now".
+    const after = (await settingsOf(fresh ?? "")).sessions;
+    expect(after.length).toBe(1);
+    expect(after.map((row) => row.id)).not.toContain(before);
+    expect(after.map((row) => row.id)).not.toContain(otherId);
   });
 
   it(`§4/§13 · a password change derives nothing and revokes nothing in the token table: the app token and the agent token issued before it still authenticate afterwards — "App and agent tokens keep working: they do not derive from the password." made true rather than said`, async () => {
@@ -3805,21 +3585,14 @@ describe(`§4/§13 · the Password pane`, () => {
 
     // The harshest change there is: the box left TICKED, which deletes every session.
     const wanted = fakePassword(20);
-    const { pane, form } = await passwordForm(session.cookie);
-    const answered = await formPost(
-      actionFor(pane, "change-password"),
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
-      session.cookie,
+    const { next } = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted }),
+        session.cookie,
+      ),
     );
-    expect(answered.status).toBe(303);
-    const landed = await page(answered.headers.get("Location") ?? "", sessionCookieOf(answered) ?? "");
-    expect(landed).toContain(
-      "App and agent tokens keep working: they do not derive from the password.",
-    );
+    expect(next.searchParams.get("done")).toBe("change_password");
 
     const afterAgent = await whoami(ns.tokens.agent.token);
     expect(afterAgent.status).toBe(200);
@@ -3827,68 +3600,40 @@ describe(`§4/§13 · the Password pane`, () => {
     expect(await resolveAppToken(appRequest())).toMatchObject({ appId: ns.apps[slug].id });
   });
 
-  it(`§13 · unticking Sign out my other sessions is the whole difference: the change succeeds, this session's id is unchanged, the other sessions still open pages, and the success copy carries no sessions sentence (the twin of the flag)`, async () => {
+  it(`§13 · unticking Sign out my other sessions is the whole difference: the change succeeds with no signedOut in \`next\`, this session's id is unchanged, and the other sessions still open pages (the twin of the flag)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     // Built exactly as the ticked row builds them, so the two rows differ in ONE thing.
     const { actor, bystander, device, before } = await threeSessions(ns);
 
     const wanted = fakePassword(20);
-    const { pane, form } = await passwordForm(actor.cookie);
-    const answered = await formPost(
-      actionFor(pane, "change-password"),
-      unticked(
-        typedInto(form, {
-          currentPassword: SEEDED_OWNER_PASSWORD,
-          newPassword: wanted,
-          confirmPassword: wanted,
-        }),
+    const { next } = await redirectedOf(
+      await settingsPost(
+        settingsApi.changePassword,
+        passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted, revokeOtherSessions: false }),
+        actor.cookie,
       ),
-      actor.cookie,
     );
-    expect(answered.status).toBe(303);
-    const back = answered.headers.get("Location") ?? "";
-    expect(new URL(back, ORIGIN).pathname).toBe(paths.settings);
-    expect(back).toContain("done=");
+    expect(next.pathname).toBe(paths.settings);
+    expect(next.searchParams.get("done")).toBe("change_password");
+    // Non-vacuous because the ticked row next door carries exactly this key.
+    expect(next.searchParams.get("signedOut")).toBeNull();
 
     expect(await sessionIdOf(actor.cookie)).toBe(before);
     expect((await get(paths.apps, bystander.cookie)).status).toBe(200);
     expect((await whoami(device)).status).toBe(200);
-
-    // Followed with the SAME cookie — nothing replaced it. Whether better-auth also sets
-    // one when the flag is absent is its business and no §13 sentence, so it is not read.
-    const landed = await page(back, actor.cookie);
-    expect(landed).toContain("Password updated.");
-    expect(landed).toContain(
-      "App and agent tokens keep working: they do not derive from the password.",
-    );
-    // Non-vacuous because the ticked row next door renders exactly this.
-    expect(landed).not.toContain("other session(s) were signed out");
-
     expect(await signsIn(ns.owner.username, wanted)).toBe(true);
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(false);
   });
-  it(`§13 · POST /settings/change-password without the CSRF field the pane rendered is 403 and the password is untouched — the old one still signs in · the same submission carrying it changes the password (the twin)`, async () => {
+
+  it(`§13 · POST /api/hub/settings/change-password without the X-Pmcp-Csrf header is 403 and the password is untouched — the old one still signs in · the same body carrying it changes the password (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
     const before = await sessionIdOf(session.cookie);
-    const { pane, form } = await passwordForm(session.cookie);
     const wanted = fakePassword(20);
-    const filled = unticked(
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
-    );
+    const body = passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted, revokeOtherSessions: false });
 
-    // The shape of a cross-site post: everything the page drew EXCEPT its token.
-    const stripped = { ...filled };
-    delete stripped.csrf;
-    const refused = await formPost(
-      actionFor(pane, "change-password"),
-      stripped,
-      session.cookie,
-    );
+    // The shape of a cross-site request: everything the SPA sends EXCEPT its token.
+    const refused = await settingsPost(settingsApi.changePassword, body, session.cookie, null);
     expect(refused.status).toBe(403);
     expect(sessionCookieOf(refused)).toBeNull();
     expect(await sessionIdOf(session.cookie)).toBe(before);
@@ -3896,46 +3641,38 @@ describe(`§4/§13 · the Password pane`, () => {
     expect(await signsIn(ns.owner.username, wanted)).toBe(false);
 
     // THE TWIN, without which a `throw 403` on the whole route would pass.
-    const accepted = await formPost(actionFor(pane, "change-password"), filled, session.cookie);
-    expect(accepted.status).toBe(303);
-    expect(accepted.headers.get("Location") ?? "").toContain("done=");
+    const accepted = await redirectedOf(await settingsPost(settingsApi.changePassword, body, session.cookie));
+    expect(accepted.next.searchParams.get("done")).toBe("change_password");
     expect(await signsIn(ns.owner.username, wanted)).toBe(true);
   });
 
-  it(`§4/§13 · POST /settings/change-password with no credential at all — no cookie, no bearer — is bounced to /login and the password is untouched · the same submission under the owner's own fresh cookie reaches better-auth (the twin)`, async () => {
+  it(`§4/§13 · POST /api/hub/settings/change-password with no credential at all — no cookie, no bearer — is 401 and the password is untouched · the same body under the owner's own fresh cookie reaches better-auth (the twin)`, async () => {
     // The SESSION third of §13's "session, recent authentication, CSRF" — the one a gate
     // that checked only recency would slip through.
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    const { pane, form } = await passwordForm(session.cookie);
-    const wanted = fakePassword(20);
-    const filled = unticked(
-      typedInto(form, {
-        currentPassword: SEEDED_OWNER_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
-    );
-    const target = actionFor(pane, "change-password");
+    const csrf = await csrfFor(session.cookie);
+    const body = passwordChange({
+      currentPassword: SEEDED_OWNER_PASSWORD,
+      newPassword: fakePassword(20),
+      revokeOtherSessions: false,
+    });
 
-    const anonymous = await formPost(target, filled);
-    expect(anonymous.status).toBe(302);
-    expect(anonymous.headers.get("Location") ?? "").toMatch(/^\/login(\?|$)/);
+    const anonymous = await hub("POST", `/api/hub${settingsApi.changePassword}`, body, { cookie: null, csrf });
+    expect(anonymous.status).toBe(401);
     expect(sessionCookieOf(anonymous)).toBeNull();
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
 
-    const accepted = await formPost(target, filled, session.cookie);
-    expect(accepted.status).toBe(303);
-    expect(accepted.headers.get("Location") ?? "").toContain(paths.settings);
+    const accepted = await redirectedOf(await settingsPost(settingsApi.changePassword, body, session.cookie, csrf));
+    expect(accepted.next.pathname).toBe(paths.settings);
   });
 
-  it(`§4 · decision 39 · a day-old cookie is refused at both doors to a password change: straight at /api/auth/change-password it meets the mount's freshness guard (403 SESSION_NOT_FRESH, password untouched), and at /settings/change-password the hub's recent-auth gate never lets it reach better-auth`, async () => {
+  it(`§4 · decision 39 · a day-old cookie is refused at both doors to a password change: straight at /api/auth/change-password it meets the mount's freshness guard (403 SESSION_NOT_FRESH, password untouched), and at POST /api/hub/settings/change-password the hub's recent-auth gate never lets it reach better-auth`, async () => {
     // Both doors refuse the same stale session.
     // One app, because /apps is where a session with no recency left can still read its
     // own CSRF token and a namespace with no rows draws no form to read one off.
     const ns = await seedNamespace(env.DB, { apps: [{ slug: uniqueSlug("pwgate"), kind: "tunnel" }] });
     const stale = await seedOwnerSession(ns.owner);
-    const fresh = await seedOwnerSession(ns.owner);
     await ageSession(stale.token);
     const wanted = fakePassword(20);
 
@@ -3953,130 +3690,82 @@ describe(`§4/§13 · the Password pane`, () => {
     expect(((await direct.json()) as { code?: string }).code).toBe("SESSION_NOT_FRESH");
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
 
-    // LEG B: the same cookie at the hub's own route, carrying its own real CSRF token
-    // (read off /apps, which has no recency gate) — it never reaches better-auth.
-    // The submission the pane RENDERED, filled — never hand-spelled field names, which
-    // would keep this leg green through a rename the browser could not survive (§9 4b).
-    const { pane, form } = await passwordForm(fresh.cookie);
-    const gated = await formPost(
-      actionFor(pane, "change-password"),
-      {
-        ...unticked(
-          typedInto(form, {
-            currentPassword: SEEDED_OWNER_PASSWORD,
-            newPassword: wanted,
-            confirmPassword: wanted,
-          }),
-        ),
-        // The stale session's OWN token, so the refusal cannot be the CSRF check.
-        csrf: bootstrapCsrfOf(await page(paths.apps, stale.cookie)),
-      },
+    // LEG B: the same cookie at the hub's own write (decision 38 moved it from the
+    // /settings/change-password form, where the same refusal was a 302), carrying its own
+    // real CSRF token — read off /apps, which has no recency gate — so the refusal is the
+    // prefix gate's, before better-auth is ever called.
+    const gated = await settingsPost(
+      settingsApi.changePassword,
+      passwordChange({ currentPassword: SEEDED_OWNER_PASSWORD, newPassword: wanted, revokeOtherSessions: false }),
       stale.cookie,
     );
-    expect(gated.status).toBe(302);
-    expect(gated.headers.get("Location") ?? "").toMatch(/^\/login(\?|$)/);
+    expect(gated.status).toBe(401);
     expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
   });
 
-  it(`§4 · the day-old cookie that can post none of /settings's credential targets cannot post Update password either — the action read off the rendered pane, walked stale and fresh · a session signed in moments ago reaches better-auth with the same body (the twin)`, async () => {
+  it(`§4 · the day-old cookie that can post none of the settings credential writes cannot post Update password either — refused 401, walked stale and fresh · a session signed in moments ago reaches better-auth with the same body (the twin)`, async () => {
     // /apps is where a stale session can still read its own CSRF token: the shell document
     // carries it in the bootstrap island behind no recency gate, whatever the namespace
-    // holds. An app is seeded anyway, so the namespace is the one row 26's is.
+    // holds. An app is seeded anyway, so the namespace is the one the gate walk's is.
     const ns = await seedNamespace(env.DB, { apps: [{ slug: uniqueSlug("pwstale"), kind: "tunnel" }] });
     const stale = await seedOwnerSession(ns.owner);
     const fresh = await seedOwnerSession(ns.owner);
     await ageSession(stale.token);
-
-    const { pane, form } = await passwordForm(fresh.cookie);
-    const target = actionFor(pane, "change-password");
-    expect(target).toBe(paths.auth.changePassword);
     // A deliberately WRONG current password throughout, so neither leg's success can move
     // the other's world and the two legs differ in exactly one thing: whose cookie.
-    const wanted = fakePassword(20);
-    const body = unticked(
-      typedInto(form, {
-        currentPassword: WRONG_PASSWORD,
-        newPassword: wanted,
-        confirmPassword: wanted,
-      }),
-    );
+    const body = passwordChange({ currentPassword: WRONG_PASSWORD, newPassword: fakePassword(20), revokeOtherSessions: false });
 
-    // Each session's own real CSRF token, off /apps — so the refusal cannot be the CSRF
-    // check answering instead of the gate.
-    const refused = await formPost(
-      target,
-      { ...body, csrf: bootstrapCsrfOf(await page(paths.apps, stale.cookie)) },
-      stale.cookie,
-    );
-    expect(refused.status).toBe(302);
-    expect(refused.headers.get("Location") ?? "").toMatch(/^\/login(\?|$)/);
+    // Each session's own real CSRF token, so the refusal cannot be the CSRF check.
+    const refused = await settingsPost(settingsApi.changePassword, body, stale.cookie);
+    expect(refused.status).toBe(401);
+    expect(await reasonOf(refused)).toBe("Sign in again.");
 
-    const reached = await formPost(
-      target,
-      { ...body, csrf: bootstrapCsrfOf(await page(paths.apps, fresh.cookie)) },
-      fresh.cookie,
-    );
-    expect(reached.status).toBe(303);
-    const back = reached.headers.get("Location") ?? "";
-    expect(back).toContain(paths.settings);
-    expect(back).toContain("failed=");
-
-    // The debt case 26's DERIVED list owes (§9 rule 4a): the derivation's honesty check,
-    // recorded here rather than claimed as this row's subject.
-    expect(SETTINGS_CREDENTIAL_TARGETS.length).toBeGreaterThan(0);
-    expect(SETTINGS_CREDENTIAL_TARGETS).toContain(target);
+    const reached = await redirectedOf(await settingsPost(settingsApi.changePassword, body, fresh.cookie));
+    expect(reached.next.pathname).toBe(paths.settings);
+    expect(reached.next.searchParams.get("failed")).toBe("change_password");
   });
 });
 
-/** How settings.tsx spells a passkey's stamp today — `Added <date> · <last used>`. §13
- *  pins only that the row carries an `added` field, never its wording, so the spelling is
- *  §7-incidental and lives behind one name: this is the single place the drift shows. */
-const ADDED_STAMP = /Added ([^·]+)·/g;
-
 describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
+  // Ported with decision 38's family 2: each row's server fact is read off
+  // `GET /api/hub/settings`'s `passkeys` and `sessions` rows, and each journey posts its
+  // `/api/hub/settings/*` write. How a row is DRAWN — "Added <date>", the "· device flow"
+  // suffix, the current badge, the empty-state sentence, the Remove/Revoke dialogs — is the
+  // client's, over `format.ts` and its gallery states.
+
   // plan row 8, and the replacement for the row retired with it — that one was green on
   // data the ceremony never produces: a stored name and no aaguid. What the pane owes is
   // the authenticator's own report — a known AAGUID reading "Windows Hello", the all-zero
-  // one privacy-preserving platforms send reading "Passkey" — with the empty pane the twin.
+  // one privacy-preserving platforms send reading "Passkey" — with the empty list the twin.
   it(
-    `§13 · /settings/passkeys names a row the way the authenticator reported it: a passkey stored with a known AAGUID and no name lists as "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report lists as "Passkey", the marker reads 2 and each row links its own Remove dialog · with none, the pane renders "No passkeys yet. Add one to sign in without a password." and the marker reads 0 (the twin)`,
+    `§13 · the read names a passkey the way the authenticator reported it: a passkey stored with a known AAGUID and no name reads "Windows Hello", one with the all-zero AAGUID that privacy-preserving platforms report reads "Passkey", and the list is those two · with none, the list is empty (the twin)`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const session = await seedOwnerSession(ns.owner);
 
-      // The twin first, before anything is planted: the pane with none.
-      const empty = await page(paths.settingsPasskeys, session.cookie);
-      expect(textOf(empty)).toContain("No passkeys yet. Add one to sign in without a password.");
-      expect(markerOf(empty, paths.settingsPasskeys)).toBe("0");
+      // The twin first, before anything is planted. Its sentence ("No passkeys yet. Add
+      // one to sign in without a password.") is the client's empty state.
+      expect((await settingsOf(session.cookie)).passkeys).toEqual([]);
 
-      // Exactly what a registration writes and the retired row never had: an AAGUID and no
-      // name at all (the Add-passkey ceremony sends none). One model the plugin's own table
-      // knows, and the all-zero value privacy-preserving platforms report instead.
+      // Exactly what a registration writes: an AAGUID and no name at all (the Add-passkey
+      // ceremony sends none). One model the plugin's own table knows, and the all-zero value.
       const known = await plantPasskey(ns.owner.userId, { aaguid: "08987058-cadc-4b81-b6e1-30de50dcbe96" });
       const anonymous = await plantPasskey(ns.owner.userId, { aaguid: "00000000-0000-0000-0000-000000000000" });
 
-      const html = await page(paths.settingsPasskeys, session.cookie);
-      expect(markerOf(html, paths.settingsPasskeys)).toBe("2");
-      // Read off each row's OWN Remove dialog, whose title model.ts builds from the same
-      // resolved name the row lists — so "Windows Hello" cannot be satisfied by the pane's
-      // own chrome, and the two rows are told apart by the name each one carries.
-      for (const [id, name] of [
-        [known, "Windows Hello"],
-        [anonymous, "Passkey"],
-      ] as const) {
-        const link = confirmLinkFor(html, "remove-passkey", id);
-        expect(link, `the pane drew no Remove dialog for ${id}`).not.toBeNull();
-        expect(textOf(await page(link ?? "", session.cookie))).toContain(`Remove passkey “${name}”?`);
-      }
+      const names = new Map((await settingsOf(session.cookie)).passkeys.map((row) => [row.id, row.name]));
+      expect(names).toEqual(
+        new Map([
+          [known, "Windows Hello"],
+          [anonymous, "Passkey"],
+        ]),
+      );
     },
   );
 
-  // plan row 7. The Sessions pane names each session's client, and the device flow mints the
-  // one client no browser can — so the row reads both rows off a single render: the CLI's
-  // device-flow suffix beside the browser session's own client without it, and the rail's
-  // Sessions marker counting the two.
+  // plan row 7. The device flow mints the one client no browser can — so the row reads both
+  // sessions off a single read: the CLI's row beside the browser session's own.
   it(
-    `§13 · a session minted by the device flow lists as "pmcp CLI · device flow" in the Sessions pane beside the browser session that rendered the page, which reads its own client with no device-flow suffix (the twin) — and the rail's Sessions marker counts both`,
+    `§13 · a session minted by the device flow is a \`source: "cli"\` row whose client is "pmcp CLI", beside the browser session that asked, a \`source: "web"\` row reading its own client — "Unknown client", since it sent no User-Agent — and never the CLI's (the twin); the list is those two`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const browser = await seedOwnerSession(ns.owner);
@@ -4084,51 +3773,45 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
       // column — a row planted by hand would be the test asserting its own setup.
       await deviceFlowToken(browser.cookie);
 
-      const listed = await page(paths.settingsSessions, browser.cookie);
-      const text = textOf(listed);
-      // The client no browser can be, with format.ts's suffix on it.
-      expect(text).toContain("pmcp CLI · device flow");
-      // The twin, on the same render: the browser session that drew this page sent no
-      // User-Agent, so it reads the label an unnamed web session gets — and never the CLI's
-      // label, nor the suffix, which a `source` stamped from a header would give it.
-      expect(text).toContain("Unknown client");
-      expect(text, "the browser session was labelled a device-flow one").not.toContain(
-        "Unknown client · device flow",
-      );
-      expect(markerOf(listed, paths.settingsSessions)).toBe("2");
+      const sessions = (await settingsOf(browser.cookie)).sessions;
+      expect(sessions.length).toBe(2);
+      const cli = sessions.filter((row) => row.source === "cli");
+      const web = sessions.filter((row) => row.source === "web");
+      expect(cli.map((row) => row.client)).toEqual(["pmcp CLI"]);
+      // The twin, on the same read: a `source` stamped from a header would make the browser
+      // claim the CLI's label; the column decides.
+      expect(web.map((row) => [row.client, row.current])).toEqual([["Unknown client", true]]);
     },
   );
 
-  it(`§13 · each passkey row carries its own added stamp: two passkeys with the same name and different createdAt render two different rows`, async () => {
+  it(`§13 · each passkey row carries its own added stamp: two passkeys with the same name and different createdAt are two rows whose addedAt is each one's own`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
     // Same name, different stamps: everything about these rows except the stamp is equal,
-    // so a loader that dropped it — or stamped the render instant, which is what a null
-    // `createdAt` produces today — renders one row twice.
-    await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", createdAt: "2026-01-08T17:40:00.000Z" });
-    await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", createdAt: "2026-03-12T09:14:00.000Z" });
+    // so a loader that dropped it — or stamped the read instant, which is what a null
+    // `createdAt` produces — answers one row twice.
+    const older = await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", createdAt: "2026-01-08T17:40:00.000Z" });
+    const newer = await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", createdAt: "2026-03-12T09:14:00.000Z" });
 
-    const html = await page(paths.settingsPasskeys, session.cookie);
-    expect(markerOf(html, paths.settingsPasskeys)).toBe("2");
-    // The row's own meta line, read as text: §13 gives the passkey row an `added` field,
-    // and §7 makes how a date is SPELLED incidental — so this pins two stamps that differ
-    // and nothing about either one's format.
-    const added = [...textOf(html).matchAll(ADDED_STAMP)].map((match) => match[1].trim());
-    // At LEAST two, never exactly two: a card a pane renders twice (as the sessions card
-    // already is) draws each row's stamp twice, and that is not this row's subject.
-    expect(added.length, "the pane drew no added stamps").toBeGreaterThanOrEqual(2);
-    expect(new Set(added).size, "two passkeys with different stamps rendered one row twice").toBe(2);
+    const added = new Map((await settingsOf(session.cookie)).passkeys.map((row) => [row.id, row.addedAt]));
+    expect(added).toEqual(
+      new Map([
+        [older, "2026-01-08T17:40:00.000Z"],
+        [newer, "2026-03-12T09:14:00.000Z"],
+      ]),
+    );
   });
-  it(`§5/§13 · identity.stampPasskeyUse writes §5's last_used_at for the credential id it names — and only that one — and the pane's row reads "last used …" only after it: before the stamp the pane says it of no passkey (the twin)`, async () => {
+
+  it(`§5/§13 · identity.stampPasskeyUse writes §5's last_used_at for the credential id it names — and only that one — and the read's row carries it as lastUsedAt only after it: before the stamp no passkey has one (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
     const credA = uniqueSlug("creda");
     const credB = uniqueSlug("credb");
-    await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID", credentialId: credA });
-    await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", credentialId: credB });
+    const rowA = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID", credentialId: credA });
+    const rowB = await plantPasskey(ns.owner.userId, { name: "YubiKey 5C", credentialId: credB });
 
     // LEG ONE, the twin that keeps leg two non-vacuous: neither row has ever been used.
-    expect(await page(paths.settingsPasskeys, session.cookie)).not.toContain("last used");
+    expect((await settingsOf(session.cookie)).passkeys.map((row) => row.lastUsedAt)).toEqual([null, null]);
 
     // An INJECTED clock, so the value written is known rather than merely non-null.
     const AT = 1_760_000_000_000;
@@ -4137,84 +3820,44 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
     // Keyed by the credential the assertion named, not by the user who owns both.
     expect(await lastUsedOf(credB)).toBeNull();
 
-    // LEG TWO: §5's own phrase, which is what proves the loader reads the hub's column.
-    expect(await page(paths.settingsPasskeys, session.cookie)).toContain("last used");
+    // LEG TWO: §5's own column, which is what proves the read reads the hub's column.
+    const lastUsed = new Map((await settingsOf(session.cookie)).passkeys.map((row) => [row.id, row.lastUsedAt]));
+    expect(lastUsed).toEqual(
+      new Map([
+        [rowA, new Date(AT).toISOString()],
+        [rowB, null],
+      ]),
+    );
   });
-  it(`§13 · /settings/passkeys' Remove walks end to end as a browser walks it — the confirm link riding the pane's own URL, the dialog's form, the form-encoded POST, the redirect back to /settings/passkeys — and the row and its rail count are gone afterwards, while a guessed id draws no dialog at all (the twin)`, async () => {
-    // Its own namespace and session: the marker below is an absolute number, so another
-    // case's planted passkey must not be able to move it.
+
+  it(`§13 · Remove passkey walks end to end: POST /api/hub/settings/passkey/delete-passkey with the row's id answers \`next\` on /settings/passkeys with done=passkey_remove, and the read lists it no more · an id naming no passkey lands failed= and removes nothing (the twin)`, async () => {
+    // Its own namespace and session: the list below is compared whole.
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
     const id = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    const confirm = paths.settingsConfirm("passkeys", "remove-passkey", id);
+    expect((await settingsOf(session.cookie)).passkeys.map((row) => row.id)).toEqual([id]);
 
-    const listed = await page(paths.settingsPasskeys, session.cookie);
-    expect(listed).toContain("MacBook Touch ID");
-    expect(listed).toContain(confirm.replace(/&/g, "&amp;"));
-    // Plan constraint 4 made observable: the dialog rides the pane, not the page root.
-    expect(confirm.startsWith(paths.settingsPasskeys)).toBe(true);
-    expect(markerOf(listed, paths.settingsPasskeys)).toBe("1");
-
-    // The twin, read structurally rather than off the dialog's title (§13 quotes none):
-    // a confirm naming no row on the pane is no dialog at all.
-    const guessed = paths.settingsConfirm("passkeys", "remove-passkey", uniqueSlug("nope"));
-    expect(formsPostingTo(await page(guessed, session.cookie), paths.auth.passkeyDelete)).toEqual([]);
-
-    const dialog = await page(confirm, session.cookie);
-    expect(formsPostingTo(dialog, paths.auth.passkeyDelete).length).toBeGreaterThan(0);
-    const answered = await formPost(
-      actionFor(dialog, "delete-passkey"),
-      submissionOf(dialog),
-      session.cookie,
+    // The twin FIRST, so the removal below is what empties the list. (A guessed id drawing
+    // no DIALOG is the client's `settingsConfirm`; the server's half is refusing to act.)
+    const guessed = await redirectedOf(
+      await settingsPost(settingsApi.passkeyDelete, { id: uniqueSlug("nope") }, session.cookie),
     );
-    expect(answered.status).toBe(303);
-    const location = answered.headers.get("Location") ?? "";
-    expect(location.startsWith(paths.settingsPasskeys)).toBe(true);
-    expect(location).toContain("done=");
+    expect(guessed.next.pathname).toBe(paths.settingsPasskeys);
+    expect(guessed.next.searchParams.get("failed")).toBe("passkey_remove");
+    expect((await settingsOf(session.cookie)).passkeys.map((row) => row.id)).toEqual([id]);
 
-    const after = await page(paths.settingsPasskeys, session.cookie);
-    expect(after).not.toContain("MacBook Touch ID");
-    expect(after).not.toContain(confirm.replace(/&/g, "&amp;"));
-    expect(markerOf(after, paths.settingsPasskeys)).toBe("0");
+    const { next } = await redirectedOf(await settingsPost(settingsApi.passkeyDelete, { id }, session.cookie));
+    expect(next.pathname).toBe(paths.settingsPasskeys);
+    expect(next.searchParams.get("done")).toBe("passkey_remove");
+    expect((await settingsOf(session.cookie)).passkeys).toEqual([]);
   });
-  it(`§13/§9 · Add passkey is the one credential control that is not a form: /settings/passkeys names better-auth's own generate-register-options and verify-registration endpoints inside a script calling navigator.credentials.create, in no action= and no href= · every form the same page renders posts to a hub route under /settings (the twin)`, async () => {
-    const ns = await seedNamespace(env.DB, {});
-    const session = await seedOwnerSession(ns.owner);
-    const planted = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    // ONE document, and one that demonstrably HAS forms: the pane's own URL with its
-    // Remove dialog open, which is where §13 puts the pane's only credential form.
-    const html = await page(
-      paths.settingsConfirm("passkeys", "remove-passkey", planted),
-      session.cookie,
-    );
 
-    expect(html).toContain("Add passkey");
-    expect(html).toContain(paths.auth.passkeyRegister);
-    expect(html).toContain(paths.auth.passkeyVerifyRegistration);
-    expect(html).toContain("navigator.credentials.create");
-    // NOT A FORM AND NOT A LINK: neither endpoint is anywhere a browser could navigate.
-    expect(inNavigableAttribute(html, paths.auth.passkeyRegister)).toBe(false);
-    expect(inNavigableAttribute(html, paths.auth.passkeyVerifyRegistration)).toBe(false);
-
-    // THE TWIN, on the same document. The shell's Sign out is the one posting form that
-    // is not the pane's — layout.tsx draws it into every signed-in page — and it is a hub
-    // translation route too, so it is named here rather than silently skipped.
-    const actions = formsOn(html);
-    expect(actions.length).toBeGreaterThan(0);
-    for (const action of actions) {
-      expect(
-        action.startsWith(paths.settings) || action === paths.auth.signOut,
-        `${action} is not a hub route`,
-      ).toBe(true);
-      expect(action.startsWith(paths.auth.base), `${action} posts at better-auth's mount`).toBe(false);
-    }
-    const answered = await formPost(
-      actionFor(html, "delete-passkey"),
-      submissionOf(html),
-      session.cookie,
-    );
-    expect(answered.status).toBe(303);
-  });
+  // "Add passkey is the one credential control that is not a form: /settings/passkeys names
+  // better-auth's register endpoints in a script calling navigator.credentials.create" —
+  // retired with family 2: the pane is the client's, and its ceremony is a module of the
+  // bundle, not an inline script the worker renders (routes §2, rows 3996/4035: web-side).
+  // Its SERVER half stays below: the two register endpoints refuse a day-old cookie with
+  // better-auth's own SESSION_NOT_FRESH.
 
   it(`§13 · /login's passkey button is live the same way — the page names generate-authenticate-options and verify-authentication in a script calling navigator.credentials.get, while its own username form still posts form-encoded to the hub's translation route (the twin)`, async () => {
     // No session exists, which is the whole point of the button.
@@ -4234,40 +3877,36 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
     expect(signIn.startsWith(paths.login)).toBe(true);
     expect(signIn).toBe(paths.auth.signIn);
   });
-  it(`§13 · /settings/sessions lists every session under Client / Created / Last active, and the rail's Sessions marker is the number of rows the pane listed`, async () => {
+
+  it(`§13 · the read lists every session of the owner — the viewer's own marked current and no other — and each row carries the Client / Created / Last active facts the pane's columns draw`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const a = await seedOwnerSession(ns.owner);
     const b = await seedOwnerSession(ns.owner);
     const viewer = await seedOwnerSession(ns.owner);
-    const [aId, bId] = [await sessionIdOf(a.cookie), await sessionIdOf(b.cookie)];
+    const [aId, bId, viewerId] = [await sessionIdOf(a.cookie), await sessionIdOf(b.cookie), await sessionIdOf(viewer.cookie)];
 
-    const html = await page(paths.settingsSessions, viewer.cookie);
-    // §13's three column names. `Client` takes a word boundary: "Clients" is the rail's
-    // Connected clients entry and the mobile pill's label, so a bare toContain("Client")
-    // is true of every settings pane.
-    expect(html).toMatch(/\bClient\b/);
-    expect(html).toContain("Created");
-    expect(html).toContain("Last active");
-    // Every session listed — the two others by their revoke links, the viewer's own by the
-    // badge, which is the only mark its row carries (§13: never revocable from its own row).
-    expect(revokeLinkFor(html, aId)).not.toBeNull();
-    expect(revokeLinkFor(html, bId)).not.toBeNull();
-    // The badge as TEXT: `aria-current="page"` on the rail and `autocomplete=
-    // "current-password"` on the landing pane both carry the word inside an attribute, so
-    // a raw-HTML match is true of every settings pane. Stripped of tags, only the badge is.
-    expect(textOf(html)).toMatch(/\bcurrent\b/);
-    // DISTINCT ids: the sessions card renders twice into one document.
-    const revocable = revocableIds(html);
-    expect(revocable.size).toBe(2);
-    expect(markerOf(html, paths.settingsSessions)).toBe(String(revocable.size + 1));
+    const sessions = (await settingsOf(viewer.cookie)).sessions;
+    expect(new Map(sessions.map((row) => [row.id, row.current]))).toEqual(
+      new Map([
+        [aId, false],
+        [bId, false],
+        [viewerId, true],
+      ]),
+    );
+    // The column names are the client's; the facts under them are these fields.
+    for (const row of sessions) {
+      expect(typeof row.client).toBe("string");
+      expect(Number.isNaN(Date.parse(row.createdAt)), `${row.id} createdAt`).toBe(false);
+      expect(Number.isNaN(Date.parse(row.lastActiveAt)), `${row.id} lastActiveAt`).toBe(false);
+    }
   });
 
   // The owner's live pane read "Unknown client" on every browser row (2026-09-03): /login's
   // translation rebuilt the request with only the cookie, so better-auth stored "" as the
   // session's User-Agent and nothing was left to name. The fix is on both sides of that
   // seam — identity forwards the header, model reads a label out of it — and this row
-  // walks the whole seam as a browser does: three form sign-ins, one pane.
-  it(`§13 · the Client column names the browser and system a web session was signed in from — /login's translation forwards the browser's User-Agent to better-auth, so a Chrome-on-Windows sign-in through the form lists as "Chrome on Windows" and a Safari-on-iPhone one as "Safari on iPhone", never the raw string · a sign-in that sent no User-Agent lists as "Unknown client" (the twin)`, async () => {
+  // walks the whole seam as a browser does: three form sign-ins, one read.
+  it(`§13 · the Client column names the browser and system a web session was signed in from — /login's translation forwards the browser's User-Agent to better-auth, so a Chrome-on-Windows sign-in through the form reads "Chrome on Windows" and a Safari-on-iPhone one "Safari on iPhone", never the raw string · a sign-in that sent no User-Agent reads "Unknown client" (the twin)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     await seedOwnerCredential(ns.owner.userId);
     // /login's own form, posted as a browser posts it — `formPost` minus the header this
@@ -4299,73 +3938,54 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
     );
     await signIn();
 
-    const text = textOf(await page(paths.settingsSessions, chrome));
-    // Chrome's string also says "Safari" and "Mac OS X" is in the iPhone's: the labels
-    // are what the lists picked, so a parse that took the first or last token would
-    // read something else here.
-    expect(text).toContain("Chrome on Windows");
-    expect(text).toContain("Safari on iPhone");
-    expect(text).toContain("Unknown client");
-    expect(text).not.toContain("Mozilla/");
-    expect(markerOf(await page(paths.settingsSessions, chrome), paths.settingsSessions)).toBe("3");
+    // Chrome's string also says "Safari" and "Mac OS X" is in the iPhone's: the labels are
+    // what the lists picked, so a parse that took the first or last token would read
+    // something else here.
+    const clients = (await settingsOf(chrome)).sessions.map((row) => row.client).sort();
+    expect(clients).toEqual(["Chrome on Windows", "Safari on iPhone", "Unknown client"]);
   });
 
-  it(`§13 · the session rendering /settings/sessions is badged current and offers no Revoke — no link on its row, and its own ?confirm=revoke-session draws no dialog · every other session's row carries both (the twin)`, async () => {
+  it(`§13 · the session asking is the read's one \`current\` row — the row the client badges and never offers a Revoke on — while every other session of the owner is \`current: false\` (the twin)`, async () => {
+    // Ported with family 2. "No link on its row, and its own ?confirm=revoke-session draws no
+    // dialog" is the client's drawing of this one field (`settingsConfirm`, web-side).
     const ns = await seedNamespace(env.DB, {});
     const other = await seedOwnerSession(ns.owner);
     const viewer = await seedOwnerSession(ns.owner);
     const [currentId, otherId] = [await sessionIdOf(viewer.cookie), await sessionIdOf(other.cookie)];
 
-    const html = await page(paths.settingsSessions, viewer.cookie);
-    // As TEXT, so the positive precondition guarding the refusal below cannot be satisfied
-    // by the rail's `aria-current` — a pane listing no session at all would then pass it.
-    expect(textOf(html)).toMatch(/\bcurrent\b/);
-    // The refusal, on the row AND on the dialog route — "never revocable from its own row"
-    // is not a missing link that a hand-typed URL walks around.
-    expect(revokeLinkFor(html, currentId)).toBeNull();
-    const own = paths.settingsConfirm("sessions", "revoke-session", currentId);
-    expect(formsPostingTo(await page(own, viewer.cookie), paths.auth.sessionRevoke)).toEqual([]);
-
-    // The twin, same page and same helpers: another session's row carries both.
-    const link = revokeLinkFor(html, otherId);
-    expect(link).not.toBeNull();
-    const dialog = await page(link ?? "", viewer.cookie);
-    const forms = formsPostingTo(dialog, paths.auth.sessionRevoke);
-    expect(forms.length).toBeGreaterThan(0);
-    expect(forms[0].id).toBe(otherId);
+    const sessions = (await settingsOf(viewer.cookie)).sessions;
+    expect(sessions.filter((row) => row.current).map((row) => row.id)).toEqual([currentId]);
+    expect(sessions.find((row) => row.id === otherId)?.current).toBe(false);
+    // And the same owner asking from the OTHER session sees the flag move with it.
+    expect((await settingsOf(other.cookie)).sessions.filter((row) => row.current).map((row) => row.id)).toEqual([
+      otherId,
+    ]);
   });
-  it(`§4/§13 · /settings/sessions' Revoke walks end to end as a browser walks it — the confirm link on the pane's own URL, the rendered form, the form-encoded POST, the redirect back to /settings/sessions — and the session it named is gone from the listing and from the rail count afterwards while the current one still opens the page`, async () => {
+
+  it(`§4/§13 · Revoke walks end to end: POST /api/hub/settings/revoke-session with a listed session's id answers \`next\` on /settings/sessions with done=session_revoke, the session is gone from the read — one row fewer — and its cookie opens nothing, while the current one still does`, async () => {
     const doomed = await seedOwnerSession(world.ns.owner);
     // Resolved BEFORE the revoke: afterwards the cookie names no session, which is the
     // postcondition rather than a way to ask for the id.
     const doomedId = await sessionIdOf(doomed.cookie);
-    const listed = await page(paths.settingsSessions);
-    const confirm = revokeLinkFor(listed, doomedId);
-    expect(confirm, "the pane rendered no revoke link for the second session").not.toBeNull();
-    expect((confirm ?? "").startsWith(paths.settingsSessions)).toBe(true);
-    const before = markerOf(listed, paths.settingsSessions);
+    const before = (await settingsOf(world.session.cookie)).sessions;
+    expect(before.map((row) => row.id)).toContain(doomedId);
 
-    const dialog = await page(confirm ?? "");
-    const answered = await formPost(
-      actionFor(dialog, "revoke-session"),
-      submissionOf(dialog),
-      world.session.cookie,
+    const { next } = await redirectedOf(
+      await settingsPost(settingsApi.sessionRevoke, { id: doomedId }, world.session.cookie),
     );
-    expect(answered.status).toBe(303);
-    const location = answered.headers.get("Location") ?? "";
-    // The redirect-back flash says which it was, so a refusal fails HERE with its reason
-    // rather than three lines later as an unexplained listing.
-    expect(location.startsWith(paths.settingsSessions)).toBe(true);
-    expect(location).toContain("done=");
+    // The flash says which it was, so a refusal fails HERE with its reason rather than
+    // three lines later as an unexplained listing.
+    expect(next.pathname).toBe(paths.settingsSessions);
+    expect(next.searchParams.get("done")).toBe("session_revoke");
 
-    const after = await page(paths.settingsSessions);
-    expect(after).not.toContain(doomedId);
-    expect(textOf(after)).toMatch(/\bcurrent\b/);
-    expect(markerOf(after, paths.settingsSessions)).toBe(String(Number(before) - 1));
+    const after = (await settingsOf(world.session.cookie)).sessions;
+    expect(after.map((row) => row.id)).not.toContain(doomedId);
+    expect(after.length).toBe(before.length - 1);
+    expect(after.some((row) => row.current)).toBe(true);
     expect((await get(paths.settingsSessions, doomed.cookie)).status).toBe(302);
   });
 
-  it(`§13 · Revoke all others walks end to end through better-auth's /revoke-other-sessions: every other session is gone and its cookie opens nothing, while the CURRENT session's id is unchanged, its cookie unreplaced and still opening the pane — the opposite contract from the Password pane's flag, which replaces it`, async () => {
+  it(`§13 · Revoke all others walks end to end through better-auth's /revoke-other-sessions: every other session is gone and its cookie opens nothing, while the CURRENT session's id is unchanged, its cookie unreplaced — so the answer does not say reload — and still opening the pane: the opposite contract from the Password pane's flag, which replaces it`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const a = await seedOwnerSession(ns.owner);
     const b = await seedOwnerSession(ns.owner);
@@ -4375,190 +3995,95 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
       await sessionIdOf(b.cookie),
       await sessionIdOf(viewer.cookie),
     ];
+    expect((await settingsOf(viewer.cookie)).sessions.length).toBe(3);
 
-    const listed = await page(paths.settingsSessions, viewer.cookie);
-    expect(markerOf(listed, paths.settingsSessions)).toBe("3");
-    const confirm = confirmLinksOn(listed).find((href) => href.includes("revoke-other-sessions"));
-    expect(confirm, "the pane rendered no Revoke all others link").toBeDefined();
-    expect((confirm ?? "").startsWith(paths.settingsSessions)).toBe(true);
-
-    const dialog = await page(confirm ?? "", viewer.cookie);
-    const answered = await formPost(
-      actionFor(dialog, "revoke-other-sessions"),
-      submissionOf(dialog),
-      viewer.cookie,
-    );
-    expect(answered.status).toBe(303);
-    const location = answered.headers.get("Location") ?? "";
-    expect(location.startsWith(paths.settingsSessions)).toBe(true);
-    expect(location).toContain("done=");
-
+    const answered = await settingsPost(settingsApi.revokeOtherSessions, {}, viewer.cookie);
     // THE CONTRAST with the Password pane's checkbox, three ways. (1) This session is not
     // replaced — stated as "never a cookie naming a different session", so a same-token
     // refresh cookie cannot fail the row for the wrong reason.
     const replacement = sessionCookieOf(answered);
     if (replacement !== null) expect(replacement).toBe(viewer.cookie);
+    const { next } = await redirectedOf(answered);
+    expect(next.pathname).toBe(paths.settingsSessions);
+    expect(next.searchParams.get("done")).toBe("revoke_other_sessions");
     // (2) its id is unchanged, and (3) it still opens the pane.
     expect(await sessionIdOf(viewer.cookie)).toBe(viewerId);
     expect((await get(paths.settingsSessions, viewer.cookie)).status).toBe(200);
 
-    const after = await page(paths.settingsSessions, viewer.cookie);
-    for (const id of [aId, bId]) {
-      expect(after).not.toContain(id);
-      expect(revokeLinkFor(after, id)).toBeNull();
-    }
-    expect(markerOf(after, paths.settingsSessions)).toBe("1");
+    const after = (await settingsOf(viewer.cookie)).sessions.map((row) => row.id);
+    expect(after).toEqual([viewerId]);
+    for (const id of [aId, bId]) expect(after).not.toContain(id);
     expect((await get(paths.settingsSessions, a.cookie)).status).toBe(302);
     expect((await get(paths.settingsSessions, b.cookie)).status).toBe(302);
   });
 
-  it(`§13 · a CLI session is listed on /settings/sessions and revocable from it: after a device flow the pane's marker goes up by one and carries one more revoke link, and revoking that row kills the CLI's bearer while the browser session still opens the pane (the twin)`, async () => {
-    // §13 says "every web and CLI session", and every other row here proves the universal
-    // over browser sessions alone. Only the row's LABEL is unassertable (nothing
-    // better-auth stores separates a device-flow session from a browser one); listed and
-    // revocable is not.
+  it(`§13 · a CLI session is listed and revocable: after a device flow the read carries one more row, and revoking that row through POST /api/hub/settings/revoke-session kills the CLI's bearer while the browser session still opens the pane (the twin)`, async () => {
+    // §13 says "every web and CLI session", and the rows above prove the universal over
+    // browser sessions alone.
     const ns = await seedNamespace(env.DB, {});
     const viewer = await seedOwnerSession(ns.owner);
-    const listedBefore = await page(paths.settingsSessions, viewer.cookie);
-    const before = revocableIds(listedBefore);
-    expect(markerOf(listedBefore, paths.settingsSessions)).toBe("1");
+    const before = new Set((await settingsOf(viewer.cookie)).sessions.map((row) => row.id));
+    expect(before.size).toBe(1);
 
     // The real RFC 8628 exchange, which mints a real session row for this owner.
     const token = await deviceFlowToken(viewer.cookie);
-    const listedAfter = await page(paths.settingsSessions, viewer.cookie);
-    const added = [...revocableIds(listedAfter)].filter((id) => !before.has(id));
-    expect(added.length, "the device flow added no revocable row").toBe(1);
-    expect(markerOf(listedAfter, paths.settingsSessions)).toBe("2");
+    const added = (await settingsOf(viewer.cookie)).sessions.filter((row) => !before.has(row.id));
+    expect(added.map((row) => row.source), "the device flow added no single CLI row").toEqual(["cli"]);
     // The PRINCIPAL, not just the status (case 28's own call): a bearer that authenticated
     // as somebody else would otherwise satisfy the pre-revoke leg.
     const answeredWhoami = await whoami(token);
     expect(answeredWhoami.status).toBe(200);
     expect(await answeredWhoami.json()).toMatchObject({ principal: `user:${ns.owner.username}` });
 
-    const dialog = await page(
-      paths.settingsConfirm("sessions", "revoke-session", added[0]),
-      viewer.cookie,
+    const { next } = await redirectedOf(
+      await settingsPost(settingsApi.sessionRevoke, { id: added[0].id }, viewer.cookie),
     );
-    const answered = await formPost(
-      actionFor(dialog, "revoke-session"),
-      submissionOf(dialog),
-      viewer.cookie,
-    );
-    expect(answered.status).toBe(303);
+    expect(next.searchParams.get("done")).toBe("session_revoke");
     expect((await whoami(token)).status).toBe(401);
     // The twin: revoking the CLI's row took the CLI's session and nothing else.
     expect((await get(paths.settingsSessions, viewer.cookie)).status).toBe(200);
   });
 
-  it(`§13 · /settings/two-factor is the Two-factor pane's one URL: it renders the card, its forms post to the same paths.auth targets as before, and its Disable confirm rides /settings/two-factor`, async () => {
-    // Substance deliberately not re-pinned here: case 27 keeps the TOTP acceptance claim,
-    // re-pointed to this URL. What this row owns is the pane's identity.
+  // "/settings/two-factor is the Two-factor pane's one URL: it renders the card, its forms
+  // post to the paths.auth targets, and its Disable confirm rides /settings/two-factor" —
+  // retired with family 2. The URL answering the shell is the shell describe's first row;
+  // the card, its controls and its Disable dialog are the client's; and where each write
+  // lands is the "a write lands on the pane that drew its control" row.
+
+  it(`§9/§13 · every settings write is claimed: the eleven writes are the credential routes routes §2 designs plus exactly one route per ops-backed pane — each of the eight credential writes reaches no op at all (§13's pinned exception), token_revoke is reached only by the Tokens write, connection_revoke only by the Clients write and hub_settings_update only by the Execution write — so no generic dispatcher survives under /api/hub/settings`, async () => {
+    // Ported with family 2 from "every control the /settings panes render is claimed". The
+    // CONTROL walk — which pane draws which form, the confirm links riding their panes, Add
+    // passkey as the one enumerated exclusion — is the client's; the ROUTE set is here.
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
+    const csrf = await csrfFor(session.cookie);
+    const writes = settingsWrites();
+    // Exactly three ops-backed writes, each naming a DIFFERENT op.
+    expect(writes.filter((write) => write.op !== null).map((write) => write.op).sort()).toEqual([
+      "connection_revoke",
+      "hub_settings_update",
+      "token_revoke",
+    ]);
 
-    const notEnrolled = await page(paths.settingsTwoFactor, session.cookie);
-    expect(formsPostingTo(notEnrolled, paths.auth.totpEnable).length).toBeGreaterThan(0);
+    for (const { path, op, body } of writes) {
+      await withCountedOps([...Object.keys(ops)], async (invocations) => {
+        const answered = await settingsPost(path, body, session.cookie, csrf);
+        expect([200, 422], `POST ${path} → ${answered.status}`).toContain(answered.status);
+        const reached = [...invocations.keys()].filter((name) => times(invocations, name) > 0);
+        expect(reached, `POST ${path} fronts ${reached.join(", ") || "no op"}`).toEqual(op === null ? [] : [op]);
+      });
+    }
 
-    // The one state no route reaches (settingsProps never renders the mid-enrollment card).
-    await enrollTwoFactor(ns.owner.userId);
-    const enrolled = await page(paths.settingsTwoFactor, session.cookie);
-    expect(formsPostingTo(enrolled, paths.auth.backupCodesGenerate).length).toBeGreaterThan(0);
-    const disable = paths.settingsConfirm("two-factor", "disable-two-factor");
-    expect(enrolled).toContain(disable);
-    expect(disable.startsWith(paths.settingsTwoFactor)).toBe(true);
-    const dialog = await page(disable, session.cookie);
-    expect(formsPostingTo(dialog, paths.auth.totpDisable).length).toBeGreaterThan(0);
-
-    // Scoped to the RAIL: the pill row draws the same routes and marks its active pill too.
-    const current = railEntries(enrolled, RAIL_NAV_LABEL).filter((entry) => entry.current);
-    expect(current.map((entry) => entry.href)).toEqual([paths.settingsTwoFactor]);
-  });
-
-  it(`§9/§13 · every control the /settings panes render is claimed: the Sign-in panes and Sessions render only better-auth credential targets and no ops-backed form (§13's pinned exception, per pane), the two Access panes front ops keys, every ?confirm= link rides the pane that drew it, and Add passkey is the single enumerated exclusion`, async () => {
-    // §9 rule 4a's totality case, and the replacement for row 18 — whose "/settings renders
-    // no ops-backed form at all" stopped being true the moment Tokens and Clients became
-    // panes. The claim is now PER PANE, so a Sessions pane that started fronting
-    // `token_revoke` fails here.
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
-      agents: [{ slug: "agent", tokens: [{ as: "agt" }] }],
+    // And a generic op name under either ops-backed pane is not a route: `token_issue`
+    // under Tokens, `app_delete` under Clients — the two dispatchers this replaced admitted
+    // both by name.
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      for (const path of ["/api/hub/settings/tokens/token_issue", "/api/hub/settings/clients/app_delete"]) {
+        const answered = await hub("POST", path, { slug: "news", kind: "app" }, { cookie: session.cookie, csrf });
+        expect(answered.status, `POST ${path}`).toBe(404);
+      }
+      expect([...invocations.keys()].filter((name) => times(invocations, name) > 0)).toEqual([]);
     });
-    const session = await seedOwnerSession(ns.owner);
-    await seedOwnerSession(ns.owner);
-    await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
-    await consentOnce(ns, session.cookie, "agent");
-
-    const CREDENTIAL_PANES: readonly string[] = [
-      paths.settings,
-      paths.settingsTwoFactor,
-      paths.settingsPasskeys,
-      paths.settingsSessions,
-    ];
-    const ACCESS_PANES: readonly string[] = [paths.settingsTokens, paths.settingsClients];
-
-    for (const pane of PANES) {
-      const bare = await page(pane, session.cookie);
-      const confirms = confirmLinksOn(bare);
-      // (4) Every confirm link a pane renders rides that pane's own path.
-      for (const href of confirms) {
-        expect(new URL(href, ORIGIN).pathname, `${href} was drawn on ${pane}`).toBe(pane);
-      }
-      // A pane's controls include the ones that exist only under its own `?confirm=`.
-      const actions: string[] = [...formsOn(bare)];
-      for (const href of confirms) actions.push(...formsOn(await page(href, session.cookie)));
-
-      const fronted = actions
-        .map((action) => action.split("?")[0].split("/").filter(Boolean).pop() ?? "")
-        .filter((op) => Object.prototype.hasOwnProperty.call(ops, op));
-      if (CREDENTIAL_PANES.includes(pane)) {
-        // (1) The pinned parity exception, per pane.
-        expect(fronted, `${pane} fronts an ops key`).toEqual([]);
-        for (const action of actions) {
-          const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-          expect(BETTER_AUTH_ACTIONS.has(op), `${pane} posts to "${op}"`).toBe(true);
-        }
-      }
-      // (2) The two Access panes DO front ops keys.
-      if (ACCESS_PANES.includes(pane)) expect(fronted.length, `${pane} fronts no ops key`).toBeGreaterThan(0);
-      // (3) Nothing on any pane posts at better-auth's own mount, which would answer 415.
-      for (const action of actions) {
-        expect(action.startsWith(paths.auth.base), `${pane} posts at ${action}`).toBe(false);
-      }
-    }
-
-    // The two /settings renders no GET produces: `credential`'s reveals answer 200 with the
-    // pane rather than redirecting (a secret cannot ride a URL, §15), and the enrolment
-    // card's verify form is a /settings control this walk would otherwise never see — a
-    // hole in the totality, not a named exclusion. Enable first: the fresh set is minted
-    // against the row enable creates. Checks (1) and (3) again, over what each 200 drew.
-    const revealCsrf = csrfOf(await page(paths.settingsTwoFactor, session.cookie));
-    for (const target of [paths.auth.totpEnable, paths.auth.backupCodesGenerate]) {
-      // Regenerate only answers for an owner whose factor is LIVE, which no page can make
-      // it (the verify that flips the column needs a code derived from the minted secret).
-      if (target === paths.auth.backupCodesGenerate) await enrollTwoFactor(ns.owner.userId);
-      const revealed = await formPost(
-        target,
-        { csrf: revealCsrf, password: SEEDED_OWNER_PASSWORD },
-        session.cookie,
-      );
-      expect(revealed.status, `POST ${target}`).toBe(200);
-      const drew = formsOn(await revealed.text());
-      for (const action of drew) {
-        const op = action.split("?")[0].split("/").filter(Boolean).pop() ?? "";
-        expect(Object.prototype.hasOwnProperty.call(ops, op), `${target}'s reveal fronts "${op}"`).toBe(false);
-        expect(BETTER_AUTH_ACTIONS.has(op), `${target}'s reveal posts to "${op}"`).toBe(true);
-        expect(action.startsWith(paths.auth.base), `${target}'s reveal posts at ${action}`).toBe(false);
-      }
-    }
-
-    // THE EXCLUSION, enumerated and then spent: the Add-passkey ceremony is the one
-    // credential POST under /settings that is not a form, and the ceremony row claims it.
-    const passkeysPane = await page(paths.settingsPasskeys, session.cookie);
-    for (const endpoint of [paths.auth.passkeyRegister, paths.auth.passkeyVerifyRegistration]) {
-      // Present FIRST, or deleting the ceremony script outright would satisfy the negative.
-      expect(passkeysPane, `${endpoint} is not named on the pane at all`).toContain(endpoint);
-      expect(inNavigableAttribute(passkeysPane, endpoint), `${endpoint} is navigable`).toBe(false);
-    }
   });
 
   // plan row 9. Its two named traps, either of which would make a status-only assertion green
@@ -4614,62 +4139,40 @@ describe(`§13 · the Two-factor, Passkeys and Sessions panes`, () => {
 });
 
 describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`, () => {
-  // The journey has ONE entrance and no other: /settings never renders the enrolment card
-  // on a GET (settingsProps has no producer for it), so every row below starts by posting
-  // the pane's own Enable form and reading the 200 that answers with the card.
+  // Ported with decision 38's family 2. The journey still has ONE entrance: the read never
+  // carries an enrolment (nothing answers one but Enable), so every row below starts by
+  // posting Enable and reading the 200 that answers with it. The CARD — the QR drawn, the
+  // grouped line, the six boxes, the codes and their Copy control, the refusal redrawn under
+  // the boxes — is the client's now, drawn from that body and held in its gallery states;
+  // what the server owes is the body itself, and that no secret ever reaches a URL.
 
-  /**
-   * The enrolment card as the pane's own Enable form produces it — the password typed into
-   * the form the not-enrolled arm drew, posted as a browser posts it. The whole Response is
-   * handed back rather than its body, because "carries no Location" is one of the claims.
-   */
-  async function enable(cookie: string): Promise<Response> {
-    const forms = formsPostingTo(await page(paths.settingsTwoFactor, cookie), paths.auth.totpEnable);
-    expect(forms.length, "the Two-factor pane rendered no Enable two-factor form").toBeGreaterThan(0);
-    return formPost(paths.auth.totpEnable, typedInto(forms[0], { password: SEEDED_OWNER_PASSWORD }), cookie);
+  /** Enable, as the SPA posts it — the owner's own password. The whole Response is handed
+   *  back rather than its body, because "carries no Location" is one of the claims. */
+  function enable(cookie: string): Promise<Response> {
+    return settingsPost(settingsApi.totpEnable, { password: SEEDED_OWNER_PASSWORD }, cookie);
   }
 
-  /** The verify form the enrolment card drew, as a browser would submit it untouched — the
-   *  CSRF token, the two hidden carriers and the stitched `code` field, each at the value
-   *  the page put there. */
-  function verifyForm(html: string): Record<string, string> {
-    const forms = formsPostingTo(html, paths.auth.totpVerifySettings);
-    expect(forms.length, "the enrolment card drew no verify form").toBeGreaterThan(0);
-    return forms[0];
+  /** The reveal Enable answers with (routes §2): the enrolment and the ten codes, and
+   *  nothing else — a body with a third key is a body something extra could ride. */
+  async function enrolmentOf(response: Response): Promise<{
+    enrollment: { totpUri: string; qrDataUri: string; secret: string; error: string | null };
+    backupCodes: string[];
+  }> {
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await jsonOf(response);
+    expect(Object.keys(body).sort()).toEqual(["backupCodes", "enrollment"]);
+    return body as Awaited<ReturnType<typeof enrolmentOf>>;
   }
 
-  /** The `secret` parameter of one card's own otpauth URI — better-auth's unpadded base32,
-   *  which is both what the QR encodes and what an authenticator is typed. */
-  function secretOf(form: Record<string, string>): string {
-    const uri = new URL(form.totpuri ?? "");
-    expect(uri.protocol, "the verify form carries no otpauth URI").toBe("otpauth:");
+  /** The `secret` parameter of one enrolment's own otpauth URI — better-auth's unpadded
+   *  base32, which is both what the QR encodes and what an authenticator is typed. */
+  function secretOf(totpUri: string): string {
+    const uri = new URL(totpUri);
+    expect(uri.protocol, "the enrolment carries no otpauth URI").toBe("otpauth:");
     expect(uri.host).toBe("totp");
     const secret = uri.searchParams.get("secret") ?? "";
     expect(secret, "the otpauth URI names no secret").not.toBe("");
     return secret;
-  }
-
-  /** How settings.tsx spells the manual-entry line today — the same secret, grouped for
-   *  reading aloud. §13 pins that the secret is readable by hand, never the element, so
-   *  this is the single place that spelling drifts. */
-  function groupedSecretOn(html: string): string {
-    const line = /<div class="secret">([^<]*)<\/div>/.exec(html)?.[1];
-    expect(line, "the card drew no grouped secret").not.toBeUndefined();
-    return line ?? "";
-  }
-
-  /** The QR's own `src`, which §15 requires to be self-contained rather than a fetch. */
-  function qrSrcOn(html: string): string {
-    const src = /<img[^>]*\bsrc="(data:[^"]*)"/.exec(html)?.[1];
-    expect(src, "the card drew no data: image").not.toBeUndefined();
-    return src ?? "";
-  }
-
-  /** Every code a reveal drew, read off the `data-code` element each one sits in — that
-   *  attribute is what the Copy control's own selector reads, so this walk returns the set
-   *  the handler would copy rather than a second, independent reading of the page. */
-  function revealedCodesOn(html: string): string[] {
-    return [...html.matchAll(/<[^>]*\bdata-code="[^"]*"[^>]*>([\s\S]*?)</g)].map((chip) => textOf(chip[1]));
   }
 
   /** The six code boxes one OTP card drew, as the tags they are — found through the
@@ -4679,297 +4182,183 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
     return row === null ? [] : [...row[1].matchAll(/<input\b[^>]*>/g)].map((box) => box[0]);
   }
 
-  /** Every inline script one page embedded, as its text. */
-  function scriptsOn(html: string): string[] {
-    return [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((script) => script[1]);
-  }
-
-  /** The ONE stitching script an OTP card embeds, found by the hidden field it writes —
-   *  row 4's "the same handler text" is an equality between two renders, so the harvest
-   *  names what the script does and never where it sits. */
-  function otpScriptOn(html: string): string {
-    const found = scriptsOn(html).filter((body) => body.includes("data-otp-value"));
-    expect(found.length, "the page embedded no single OTP stitching script").toBe(1);
-    return found[0];
-  }
-
-  // plan row 1. Answering in place gives the minted secret exactly one carrier, this body, so
-  // the row reads the grouped line, the verify form's hidden totpuri and the QR against the
-  // "secret" parameter of that same answer's own otpauth URI — and the pane's next GET, the
-  // state no route reaches today, is the twin that draws none of it.
+  // plan row 1. The body is the minted secret's one carrier, so the row reads the grouped
+  // secret and the QR against the "secret" parameter of that same answer's own otpauth URI
+  // — and the read afterwards is the twin that carries none of it.
   it(
-    `§13/§15 · POST /settings/two-factor/enable with the owner's own password answers 200 rendering the setup card in place — the secret better-auth minted reaches the page as the grouped line and again as the verify form's hidden totpuri, both equal to the "secret" parameter of that same answer's otpauth URI, beside a QR served as a data:image/svg+xml URI and the ten backup codes from the same answer — while the answer carries no Location and the pane's own next GET draws the not-enrolled arm with the secret, the codes and the QR nowhere in it (the twin)`,
+    `§13/§15 · POST /api/hub/settings/two-factor/enable with the owner's own password answers 200 with the enrolment in its body — the grouped secret equal to the "secret" parameter of the same answer's otpauth URI, a QR served as a data:image/svg+xml URI, no error, and the ten backup codes from the same answer — with no Location and no \`next\` for any of it to ride, while the read afterwards says the factor is still off and carries none of it (the twin)`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const session = await seedOwnerSession(ns.owner);
 
       const answered = await enable(session.cookie);
-      expect(answered.status, `POST ${paths.auth.totpEnable}`).toBe(200);
-      // In place, so there is no redirect for the secret to ride at all (§15).
+      // In the body, so there is no redirect for the secret to ride at all (§15).
       expect(answered.headers.get("Location"), "the enable answer set a Location").toBeNull();
-      const card = await answered.text();
+      const { enrollment, backupCodes } = await enrolmentOf(answered);
+      expect(Object.keys(enrollment).sort()).toEqual(["error", "qrDataUri", "secret", "totpUri"]);
+      const secret = secretOf(enrollment.totpUri);
+      // The grouped line is the SAME secret, spaced — not a second one minted for display.
+      expect(enrollment.secret.replace(/\s/g, "")).toBe(secret);
+      expect(enrollment.qrDataUri.startsWith("data:image/svg+xml"), "the QR is not an inline SVG").toBe(true);
+      expect(enrollment.error).toBeNull();
+      expect(backupCodes.length, "the enrolment carried no ten backup codes").toBe(10);
 
-      const secret = secretOf(verifyForm(card));
-      // The grouped line is the SAME secret, spaced — not a second one minted for display,
-      // which is exactly what an owner typing it into an authenticator would discover.
-      expect(groupedSecretOn(card).replace(/\s/g, "")).toBe(secret);
-      expect(qrSrcOn(card).startsWith("data:image/svg+xml"), "the QR is not an inline SVG").toBe(true);
-      const codes = revealedCodesOn(card);
-      expect(codes.length, "the card drew no ten backup codes").toBe(10);
-
-      // The twin: the pane's own next GET is the not-enrolled arm, and nothing of the
-      // enrolment survives into it — better-auth will not repeat any of it.
-      const next = await page(paths.settingsTwoFactor, session.cookie);
-      expect(
-        formsPostingTo(next, paths.auth.totpEnable).length,
-        "the next GET did not draw the not-enrolled arm",
-      ).toBeGreaterThan(0);
-      expect(next, "the secret survived into the pane's next GET").not.toContain(secret);
-      expect(next, "an otpauth URI survived into the pane's next GET").not.toContain("otpauth:");
-      expect(next, "the QR survived into the pane's next GET").not.toContain("data:image/svg+xml");
-      for (const code of codes) expect(next, `${code} survived into the pane's next GET`).not.toContain(code);
+      // The twin: the read is the not-enrolled state, and nothing of the enrolment survives
+      // into it — better-auth will not repeat any of it.
+      const read = await settingsOf(session.cookie);
+      expect(read.twoFactor).toEqual({ enabled: false });
+      const raw = JSON.stringify(read);
+      expect(raw, "the secret survived into the read").not.toContain(secret);
+      expect(raw, "an otpauth URI survived into the read").not.toContain("otpauth:");
+      expect(raw, "the QR survived into the read").not.toContain("data:image/svg+xml");
+      for (const code of backupCodes) expect(raw, `${code} survived into the read`).not.toContain(code);
     },
   );
 
-  // plan row 2. Rendering in place is what keeps the secret and the codes off a URL; this row
-  // is the negative that makes it structural rather than incidental — the secret and all ten
-  // codes in the bodies, no Location on either answer, and no href or form action on either
-  // render carrying a "secret", an otpauth: URI or any code from the set.
+  // plan row 2. The negative that makes "in the body" structural rather than incidental.
   it(
-    `§13/§15 · nothing on the enrolment journey puts the secret or a backup code on a URL: the enable answer and the verify refusal both carry the secret and all ten codes in their bodies, and neither sets a Location, and no href or form action either render draws carries a "secret", an otpauth: or any code from the set`,
+    `§13/§15 · nothing on the enrolment journey puts the secret or a backup code on a URL: the enable answer carries them in its body and sets no Location; the verify refusal is a 422 carrying neither and no Location — the client redraws the enrolment it already holds, so nothing is posted back for the server to echo — and the verified answer's \`next\` carries none of them`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const session = await seedOwnerSession(ns.owner);
 
       const enabled = await enable(session.cookie);
-      const card = await enabled.text();
-      const form = verifyForm(card);
-      const secret = secretOf(form);
-      const codes = revealedCodesOn(card);
-      expect(codes.length).toBe(10);
+      expect(enabled.headers.get("Location"), "the enable answer set a Location").toBeNull();
+      const { enrollment, backupCodes } = await enrolmentOf(enabled);
+      const secret = secretOf(enrollment.totpUri);
+      expect(backupCodes.length).toBe(10);
 
-      // The refusal redraws the same enrolment, so it is the second body that holds both —
-      // and the one a hand-written URL would be easiest to smuggle into.
-      const refused = await formPost(
-        paths.auth.totpVerifySettings,
-        typedInto(form, { code: "000000" }),
-        session.cookie,
-      );
-      const redrawn = await refused.text();
+      const refused = await settingsPost(settingsApi.totpVerify, { code: "000000" }, session.cookie);
+      expect(refused.status).toBe(422);
+      expect(refused.headers.get("Location"), "the verify refusal set a Location").toBeNull();
+      const refusal = await refused.text();
+      expect(refusal, "the refusal echoed the secret").not.toContain(secret);
+      expect(refusal, "the refusal echoed an otpauth URI").not.toContain("otpauth:");
+      for (const code of backupCodes) expect(refusal, `the refusal echoed ${code}`).not.toContain(code);
 
-      for (const [name, body, response] of [
-        ["the enable answer", card, enabled],
-        ["the verify refusal", redrawn, refused],
-      ] as const) {
-        expect(response.status, name).toBe(200);
-        expect(response.headers.get("Location"), `${name} set a Location`).toBeNull();
-        // Present FIRST: a render that drew neither would satisfy every negative below.
-        expect(body, `${name} lost the secret`).toContain(secret);
-        for (const code of codes) expect(body, `${name} lost ${code}`).toContain(code);
-        expect(inNavigableAttribute(body, "secret"), `${name} put a secret on a URL`).toBe(false);
-        expect(inNavigableAttribute(body, "otpauth:"), `${name} put an otpauth URI on a URL`).toBe(false);
-        for (const code of codes) {
-          expect(inNavigableAttribute(body, code), `${name} put ${code} on a URL`).toBe(false);
-        }
-      }
+      const verified = await settingsPost(settingsApi.totpVerify, { code: await totpCode(secret) }, session.cookie);
+      expect(verified.headers.get("Location"), "the verified answer set a Location").toBeNull();
+      const { raw } = await redirectedOf(verified);
+      expect(raw, "`next` carries the secret").not.toContain(secret);
+      expect(raw, "`next` carries an otpauth URI").not.toContain("otpauth:");
+      for (const code of backupCodes) expect(raw, `\`next\` carries ${code}`).not.toContain(code);
     },
   );
 
-  // plan row 3. Its named trap: a successful verify DELETES the session it ran under and mints
-  // a new one, and `redirectWith` forwards those Set-Cookie headers onto the 303 — so the
-  // cookie the test signed in with is dead the moment the POST returns and a follow-up GET
-  // with it bounces to /login. The twin parses the new cookie off the 303 with sessionCookieOf.
+  // plan row 3. Its named trap survives the port: a successful verify DELETES the session it
+  // ran under and mints a new one, and the route forwards that Set-Cookie — so the cookie
+  // the test signed in with is dead the moment the POST returns, and the answer says
+  // `reload` for exactly that reason.
   it(
-    `§13 · a wrong code posted to /settings/two-factor/verify-totp answers 200 redrawing the SAME enrolment — byte-identical secret, the boxes aria-invalid, better-auth's own "Invalid code" on the card, the ten codes still shown — and twoFactorEnabled is still 0 · the code generated from that same secret answers 303 and re-issues the session cookie, and the pane read with THAT cookie renders the enabled arm with the codes gone (the twin)`,
+    `§13 · a wrong code posted to POST /api/hub/settings/two-factor/verify-totp is a 422 carrying better-auth's own "Invalid code", and twoFactorEnabled is still 0 · the code generated from the SAME secret — which the refusal did not rotate — answers \`next\` on /settings/two-factor with done=two_factor_enable, re-issues the session cookie and says reload, and the read with THAT cookie says the factor is on (the twin)`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const session = await seedOwnerSession(ns.owner);
+      const { enrollment } = await enrolmentOf(await enable(session.cookie));
+      const secret = secretOf(enrollment.totpUri);
 
-      const card = await (await enable(session.cookie)).text();
-      const form = verifyForm(card);
-      const secret = secretOf(form);
-      const codes = revealedCodesOn(card);
-
-      const refused = await formPost(
-        paths.auth.totpVerifySettings,
-        typedInto(form, { code: "000000" }),
-        session.cookie,
-      );
-      expect(refused.status, `POST ${paths.auth.totpVerifySettings}`).toBe(200);
-      const redrawn = await refused.text();
-      // THE SAME enrolment, byte for byte: a redraw that called /two-factor/enable again
-      // would answer with a fresh secret and silently invalidate the QR already scanned.
-      expect(secretOf(verifyForm(redrawn))).toBe(secret);
-      expect(groupedSecretOn(redrawn)).toBe(groupedSecretOn(card));
-      const boxes = otpBoxesOn(redrawn);
-      expect(boxes.length, "the redraw drew no box row").toBe(6);
-      for (const box of boxes) expect(box, "a box is not aria-invalid").toContain(`aria-invalid="true"`);
-      // better-auth's own sentence, not one this hub wrote for it.
-      expect(textOf(redrawn)).toContain("Invalid code");
-      expect(revealedCodesOn(redrawn), "the refusal cost the owner the codes").toEqual(codes);
+      const refused = await settingsPost(settingsApi.totpVerify, { code: "000000" }, session.cookie);
+      expect(refused.status, `POST ${settingsApi.totpVerify}`).toBe(422);
+      // better-auth's own sentence, not one this hub wrote for it — the words the client
+      // draws under the boxes of the enrolment it redraws.
+      expect(await reasonOf(refused)).toContain("Invalid code");
       expect(await twoFactorEnabledOf(ns.owner.userId), "a wrong code enabled the factor").toBe(0);
 
       // The twin: the six digits an authenticator would show for that same secret, played
       // by the harness because nothing in the tree can produce them.
-      const accepted = await formPost(
-        paths.auth.totpVerifySettings,
-        typedInto(form, { code: await totpCode(secret) }),
-        session.cookie,
-      );
-      expect(accepted.status).toBe(303);
-      // The trap this row exists for: better-auth deleted the session this ran under and
-      // minted a new one, and `redirectWith` forwarded it — so the cookie the case signed
-      // in with is dead, and the pane has to be read with the one the 303 set.
+      const accepted = await settingsPost(settingsApi.totpVerify, { code: await totpCode(secret) }, session.cookie);
       const rotated = sessionCookieOf(accepted);
       expect(rotated, "the successful verify re-issued no session cookie").not.toBeNull();
       expect(rotated).not.toBe(session.cookie);
-      const enabledArm = await page(paths.settingsTwoFactor, rotated ?? "");
-      expect(
-        formsPostingTo(enabledArm, paths.auth.backupCodesGenerate).length,
-        "the pane did not draw the enabled arm",
-      ).toBeGreaterThan(0);
-      expect(revealedCodesOn(enabledArm), "the enabled arm still showed the codes").toEqual([]);
+      const { next, reload } = await redirectedOf(accepted);
+      expect(reload).toBe(true);
+      expect(next.pathname).toBe(paths.settingsTwoFactor);
+      expect(next.searchParams.get("done")).toBe("two_factor_enable");
+      expect((await settingsOf(rotated ?? "")).twoFactor).toEqual({ enabled: true });
     },
   );
 
-  // plan row 4. One shared component, two consumers — the settings enrolment card and /login's
-  // TOTP challenge — pinned on the field better-auth actually reads: a single "code". Today's
-  // pane posts digit0…digit5 and could never verify, which is the twin's half.
+  // plan row 4, halved by family 2. The shared component had two consumers, the settings
+  // enrolment card and /login's TOTP challenge; the settings card is the client's now (its
+  // six boxes stitched into the one `code` field its verify body carries — web-side), and
+  // /login's card is still the worker's until family 5, so its half stays here.
   it(
-    `§13 · the six boxes are stitched into the one field better-auth reads: the settings enrolment card and /login's TOTP challenge both carry data-otp-form and both render the shared component's hidden [data-otp-value] input, its six [data-otp] boxes and the same handler text, and the settings card posts a "code" field · neither card posts a digit0 field, which is what a code typed into today's pane sends (the twin)`,
+    `§13 · /login's TOTP challenge stitches its six boxes into the one field better-auth reads: its form carries data-otp-form, the shared hidden [data-otp-value] input, six [data-otp] boxes and one stitching script, and posts a "code" field · never a digit0 field, which is what six unstitched boxes send (the twin)`,
     async () => {
-      const ns = await seedNamespace(env.DB, {});
-      const session = await seedOwnerSession(ns.owner);
-      const card = await (await enable(session.cookie)).text();
       const challenge = await anonymousPage(`${paths.login}?step=totp`);
+      expect(/<form\b[^>]*\bdata-otp-form=/.test(challenge), "the form carries no data-otp-form").toBe(true);
+      expect(/<input\b[^>]*\bdata-otp-value=/.test(challenge), "no hidden [data-otp-value]").toBe(true);
+      expect(otpBoxesOn(challenge).length, "the box row").toBe(6);
+      const scripts = [...challenge.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((script) => script[1]);
+      expect(scripts.filter((body) => body.includes("data-otp-value")).length, "one stitching script").toBe(1);
 
-      for (const [name, html] of [
-        ["the settings enrolment card", card],
-        ["/login's TOTP challenge", challenge],
-      ] as const) {
-        // On the FORM, which is what the script looks for first — the two forms differ in
-        // action and hidden fields, so the hook is each caller's own to carry.
-        expect(/<form\b[^>]*\bdata-otp-form=/.test(html), `${name}'s form carries no data-otp-form`).toBe(true);
-        expect(/<input\b[^>]*\bdata-otp-value=/.test(html), `${name} renders no hidden [data-otp-value]`).toBe(true);
-        expect(otpBoxesOn(html).length, `${name}'s box row`).toBe(6);
-      }
-      // ONE definition rather than two copies: a second copy is exactly how G30 happened.
-      expect(otpScriptOn(card)).toBe(otpScriptOn(challenge));
-
-      const loginForms = formsPostingTo(challenge, paths.auth.totpVerify);
-      expect(loginForms.length, "/login drew no TOTP challenge form").toBeGreaterThan(0);
-      for (const [name, form] of [
-        ["the settings card", verifyForm(card)],
-        ["/login's card", loginForms[0]],
-      ] as const) {
-        // The field better-auth's verify-totp actually reads …
-        expect(Object.keys(form), `${name} posts no "code" field`).toContain("code");
-        // … and the twin: the six names a code typed into today's pane sends instead, which
-        // better-auth reads as no code at all.
-        expect(Object.keys(form), `${name} still posts digit0`).not.toContain("digit0");
-      }
+      const forms = formsPostingTo(challenge, paths.auth.totpVerify);
+      expect(forms.length, "/login drew no TOTP challenge form").toBeGreaterThan(0);
+      // The field better-auth's verify-totp actually reads …
+      expect(Object.keys(forms[0])).toContain("code");
+      // … and the twin: the names six unstitched boxes send, which better-auth reads as no
+      // code at all.
+      expect(Object.keys(forms[0])).not.toContain("digit0");
     },
   );
 
-  // plan row 5. The reveal happens in place too, which is what makes "fresh" checkable: none of
-  // the ten codes the enrolment showed may appear in the new set. Its twins are the pane's next
-  // GET, which reveals nothing, and the wrong password, which redirects with failed= instead.
+  // plan row 5. "Fresh" is checkable because the enrolment's own ten are in hand: none of
+  // them may appear in the new set. Its twins are the read, which reveals nothing, and the
+  // wrong password, which lands a flash instead.
   it(
-    `§13 · Regenerate backup codes answers 200 revealing a fresh set in place — ten codes, none of them from the set the enrolment showed — while the pane's next GET reveals none and a wrong password redirects with failed= instead (the twin)`,
+    `§13 · Regenerate backup codes answers 200 with a fresh set in its body — ten codes, none of them from the set the enrolment showed, no Location — while the read reveals none and a wrong password answers \`next\` on /settings/two-factor with failed=backup_codes_generate instead (the twin)`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       const session = await seedOwnerSession(ns.owner);
       // The enrolment's own set, which is what "fresh" is measured against.
-      const enrolled = revealedCodesOn(await (await enable(session.cookie)).text());
+      const { backupCodes: enrolled } = await enrolmentOf(await enable(session.cookie));
       expect(enrolled.length).toBe(10);
-      // The enabled arm is the only one that draws the Regenerate control at all.
+      // The enabled arm is the only one that offers Regenerate at all.
       await enrollTwoFactor(ns.owner.userId);
 
-      const forms = formsPostingTo(
-        await page(paths.settingsTwoFactor, session.cookie),
-        paths.auth.backupCodesGenerate,
-      );
-      expect(forms.length, "the enabled arm rendered no Regenerate backup codes form").toBeGreaterThan(0);
-      const answered = await formPost(
-        paths.auth.backupCodesGenerate,
-        typedInto(forms[0], { password: SEEDED_OWNER_PASSWORD }),
+      const answered = await settingsPost(
+        settingsApi.backupCodesGenerate,
+        { password: SEEDED_OWNER_PASSWORD },
         session.cookie,
       );
-      expect(answered.status, `POST ${paths.auth.backupCodesGenerate}`).toBe(200);
+      expect(answered.status, await answered.clone().text()).toBe(200);
       expect(answered.headers.get("Location"), "the regenerate answer set a Location").toBeNull();
-      const fresh = revealedCodesOn(await answered.text());
-      expect(fresh.length, "the reveal drew no ten codes").toBe(10);
+      const body = await jsonOf(answered);
+      expect(Object.keys(body)).toEqual(["backupCodes"]);
+      const fresh = body.backupCodes as string[];
+      expect(fresh.length, "the reveal carried no ten codes").toBe(10);
       expect(
         fresh.filter((code) => enrolled.includes(code)),
         "a regenerated code was one the enrolment already showed",
       ).toEqual([]);
 
-      // The twins: the pane's own next GET reveals none …
-      expect(revealedCodesOn(await page(paths.settingsTwoFactor, session.cookie))).toEqual([]);
+      // The twins: the read reveals none …
+      const raw = JSON.stringify(await settingsOf(session.cookie));
+      for (const code of fresh) expect(raw, `${code} survived into the read`).not.toContain(code);
       // … and a wrong password has no set to show, so it takes the flash instead.
-      const refused = await formPost(
-        paths.auth.backupCodesGenerate,
-        typedInto(forms[0], { password: WRONG_PASSWORD }),
-        session.cookie,
+      const { next } = await redirectedOf(
+        await settingsPost(settingsApi.backupCodesGenerate, { password: WRONG_PASSWORD }, session.cookie),
       );
-      expect(refused.status).toBe(303);
-      expect(refused.headers.get("Location") ?? "").toContain("failed=");
+      expect(next.pathname).toBe(paths.settingsTwoFactor);
+      expect(next.searchParams.get("failed")).toBe("backup_codes_generate");
     },
   );
 
-  // plan row 6. A Copy-codes control naming fewer codes than it drew is the drift this catches:
-  // each code in its own [data-code] element and one handler reading all ten. The two arms that
-  // reveal nothing render neither the control nor a code element (the twin).
-  it(
-    `§13 · the reveal carries a Copy-codes control that names every code it drew: each code sits in its own [data-code] element and one handler reads all ten · the not-enrolled arm and the enabled arm render no Copy-codes control and no code element (the twin)`,
-    async () => {
-      const ns = await seedNamespace(env.DB, {});
-      const session = await seedOwnerSession(ns.owner);
-      const card = await (await enable(session.cookie)).text();
+  // plan row 6, "the reveal carries a Copy-codes control that names every code it drew" —
+  // retired with family 2: the reveal and its Copy control are the client's, over the ten
+  // codes the bodies above carry.
 
-      // EVERY code the answer minted sits in its own element. The set the verify form
-      // carries forward comes from that same answer, so this is two independent readings of
-      // one reveal — a card that chipped nine of ten fails here rather than at a keyboard.
-      const carried = (verifyForm(card).codes ?? "").split("\n").map((code) => code.trim());
-      expect(carried.length, "the verify form carried no ten codes forward").toBe(10);
-      expect(revealedCodesOn(card)).toEqual(carried);
-
-      // ONE handler, and what it reads is the attribute every chip carries — which is what
-      // makes "names every code it drew" a fact about the page and not about an ordering.
-      const handlers = scriptsOn(card).filter((body) => body.includes("copy-codes"));
-      expect(handlers.length, "the reveal drew no single Copy-codes handler").toBe(1);
-      expect(handlers[0], "the handler does not read the chips").toContain("[data-code]");
-      expect(card, "the reveal drew no Copy-codes control").toContain(`id="copy-codes"`);
-
-      // The twins, as plain GETs of the pane's two arms.
-      const notEnrolled = await page(paths.settingsTwoFactor, session.cookie);
-      await enrollTwoFactor(ns.owner.userId);
-      const enabledArm = await page(paths.settingsTwoFactor, session.cookie);
-      for (const [name, html] of [
-        ["the not-enrolled arm", notEnrolled],
-        ["the enabled arm", enabledArm],
-      ] as const) {
-        expect(html, `${name} drew a Copy-codes control`).not.toContain("copy-codes");
-        expect(revealedCodesOn(html), `${name} drew a code element`).toEqual([]);
-      }
-    },
-  );
   it(
     `§4/§13 · after a complete TOTP sign-in, the minted browser session opens /apps and the same Worker isolate still answers /login — the full password challenge and successful second-factor path, not enrollment verification`,
     async () => {
       const ns = await seedNamespace(env.DB, {});
       await seedOwnerCredential(ns.owner.userId);
       const enrollmentSession = await seedOwnerSession(ns.owner);
-      const enrollmentCard = await (await enable(enrollmentSession.cookie)).text();
-      const enrollmentForm = verifyForm(enrollmentCard);
-      const secret = secretOf(enrollmentForm);
-      const enrolled = await formPost(
-        paths.auth.totpVerifySettings,
-        typedInto(enrollmentForm, { code: await totpCode(secret) }),
-        enrollmentSession.cookie,
+      const { enrollment } = await enrolmentOf(await enable(enrollmentSession.cookie));
+      const secret = secretOf(enrollment.totpUri);
+      await redirectedOf(
+        await settingsPost(settingsApi.totpVerify, { code: await totpCode(secret) }, enrollmentSession.cookie),
       );
-      expect(enrolled.status).toBe(303);
-
       const password = await formPost(paths.auth.signIn, {
         username: ns.owner.username,
         password: SEEDED_OWNER_PASSWORD,
@@ -4999,38 +4388,25 @@ describe(`§13/§15 · /settings/two-factor — the enrolment journey, in place`
       expect((await get(paths.login)).status).toBe(200);
     },
   );
-
 });
 
 /* ------------------------------------------------------------------ *
  * The two Access panes (§13's Tokens and Connected clients)
  * ------------------------------------------------------------------ */
 
-/** §13's three Tokens-pane sentences, byte-for-byte. The footer is ONE string on purpose:
- *  its two sentences are quoted together and a split rendering is the drift these guard. */
-// §13's sentence, final again now that the agent page issues keys (2026-09-03, step 9).
-const NO_ISSUE_CONTROL = "Issue new keys from an app or agent page.";
-const TOKENS_FOOTER =
-  "Revoking an app token closes that app's live connection. Keys are shown only once, at issue time.";
-const CLIENTS_FOOTER =
-  "A client registers itself the first time you approve it on the consent screen — that screen is a step inside the sign-in redirect, never a page you navigate to. Revoking stops its tokens working; the agent it acted as, and that agent's grants, are untouched.";
-
-/** §13 pins the query, so the two narrowed URLs are spelled here — the pane comes from
- *  `paths`, the filter from the spec. */
-const TOKENS_AGENTS_ONLY = `${paths.settingsTokens}?kind=agent`;
-const TOKENS_APPS_ONLY = `${paths.settingsTokens}?kind=app`;
-
 /** The Tokens pane's read-only world: one tunneled app holding one key, one agent holding
- *  one key. Both slugs are `uniqueSlug`-distinct because the file's own `news` and `agent`
- *  are words the shell renders anyway, and a row asserting "the slug is on the page" would
- *  pass against a page that never drew the column. */
+ *  one key. Both slugs are `uniqueSlug`-distinct, so a claim about the read naming a slug
+ *  cannot be satisfied by a word the fixture uses elsewhere. */
 const KEYS_APP = uniqueSlug("keysapp");
 const KEYS_AGENT = uniqueSlug("keysagt");
 
 describe(`§13 · the Tokens pane`, () => {
-  // G12's interim row (the Tokens intro naming `pmcp token issue`) was retired on
-  // 2026-09-03 when the agent page landed: the final sentence is pinned by the pointers row
-  // of the /agents describe and by the token_issue row below.
+  // Ported with decision 38's family 2: the pane's server facts are the read's `tokens` rows
+  // and its one write is POST /api/hub/settings/tokens/token_revoke. Retired to the client,
+  // each where its row stood: the bound-to links (/apps/<slug>, /agents/<slug>), the
+  // **All · Agents · Apps** filter and the marker narrowing with it (the pure `tokenKindOf`,
+  // web-side), Revoke-vs-Remove as a LABEL, the absent Issue control and §13's intro and
+  // footer sentences, and the column names.
 
   let keys: { ns: SeededNamespace; session: SeededSession };
 
@@ -5042,99 +4418,24 @@ describe(`§13 · the Tokens pane`, () => {
     keys = { ns, session: await seedOwnerSession(ns.owner) };
   });
 
-  /** This describe's own pages, under its OWN session: `page` defaults to the file world's
-   *  cookie, a different owner, and asserts 200 — so an omitted cookie would fail as a
-   *  login bounce rather than as the property under test. */
-  const keysPage = (path: string): Promise<string> => page(path, keys.session.cookie);
-
-  it(`§13 · /settings/tokens lists every key in the namespace, agent and app alike — the set of ids its Revoke/Remove controls name is exactly token_list's unrevoked set, each listed key showing its display prefix, its kind and the slug it is bound to`, async () => {
+  it(`§13 · the read lists every key in the namespace, agent and app alike — its token ids are exactly token_list's unrevoked set, each row carrying its display prefix, its kind and the slug it is bound to — and it takes no filter: a \`?kind=\` on the read changes nothing, because the All · Agents · Apps filter narrows the TABLE the client draws, never the read (token_list takes no arguments at all)`, async () => {
     const live = (await tokensOf(keys.ns.owner.userId)).filter((row) => row.revokedAt === null);
-    // The precondition the claim rests on: this namespace really does hold BOTH kinds, so
-    // "agent and app alike" is a fact about the page rather than about the fixture.
+    // The precondition the claim rests on: this namespace really does hold BOTH kinds.
     expect(new Set(live.map((row) => row.kind))).toEqual(new Set(["agent", "app"]));
 
-    const html = await keysPage(paths.settingsTokens);
-    // A SET both ways, never a count: a responsive pane may legally draw one row as two
-    // forms, and §13 pins no control count.
-    expect(revokeTargets(html, "token_revoke")).toEqual(new Set(live.map((row) => row.id)));
+    const read = await settingsOf(keys.session.cookie);
+    expect(
+      new Map(read.tokens.map((row) => [row.id, [row.prefix, row.kind, row.boundTo]])),
+    ).toEqual(new Map(live.map((row) => [row.id, [row.prefix, row.kind, row.refSlug]])));
 
-    // Each row's own window, keyed on its display prefix and closed by the footer — so a
-    // page-wide toContain("agent") cannot satisfy the Kind column, and the last row's
-    // window does not run on into prose that happens to say "app".
-    const blocks = blocksOf(textOf(html), [...live.map((row) => row.prefix), TOKENS_FOOTER]);
-    for (const row of live) {
-      expect(blocks[row.prefix], `${row.prefix} is not bound to ${row.refSlug}`).toContain(row.refSlug);
-      expect(blocks[row.prefix], `${row.prefix} does not say "${row.kind}"`).toMatch(
-        new RegExp(`\\b${row.kind}\\b`),
-      );
-    }
-  });
-
-  it(`§13 · a bound-to app slug links to /apps/<slug> · the agent slug beside it links to /agents/<slug> now that the agent page exists (the twin — re-pointed 2026-09-03, step 9)`, async () => {
-    const html = await keysPage(paths.settingsTokens);
-    expect(html, "the app row does not link its app").toContain(`href="${paths.appDetail(KEYS_APP)}"`);
-
-    // INNER HTML, not text equality: `design/SettingsTokens.dc.html` draws these cells as
-    // anchors, and a <span> wrapper inside one would defeat a text check.
-    const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)];
-    expect(anchors.length, "the walk found no anchors at all").toBeGreaterThan(0);
-    const agentAnchor = anchors.find(
-      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail(KEYS_AGENT),
+    const narrowed = await hub("GET", "/api/hub/settings?kind=agent", undefined, { cookie: keys.session.cookie });
+    expect(((await narrowed.json()) as SettingsRead).tokens.map((row) => row.id).sort()).toEqual(
+      read.tokens.map((row) => row.id).sort(),
     );
-    expect(agentAnchor, "no anchor links the agent slug to its page").toBeDefined();
-    expect(agentAnchor?.[2] ?? "").toContain(KEYS_AGENT);
-  });
-
-  it(`§13 · the All · Agents · Apps filter narrows: ?kind=agent lists the namespace's agent keys and no app key, ?kind=app the reverse, and the unfiltered pane lists both (the twin) — each pill followed from the href the pane rendered`, async () => {
-    const live = (await tokensOf(keys.ns.owner.userId)).filter((row) => row.revokedAt === null);
-    const agentKey = live.find((row) => row.kind === "agent");
-    const appKey = live.find((row) => row.kind === "app");
-    expect(agentKey, "no agent key seeded").toBeDefined();
-    expect(appKey, "no app key seeded").toBeDefined();
-
-    const html = await keysPage(paths.settingsTokens);
-    for (const href of [paths.settingsTokens, TOKENS_AGENTS_ONLY, TOKENS_APPS_ONLY]) {
-      expect(html, `the pane renders no link to ${href}`).toContain(`href="${href}"`);
-    }
-    expect(revokeTargets(html, "token_revoke")).toEqual(
-      new Set([agentKey?.id ?? "", appKey?.id ?? ""]),
-    );
-
-    const agentsOnly = await keysPage(TOKENS_AGENTS_ONLY);
-    expect(revokeTargets(agentsOnly, "token_revoke")).toEqual(new Set([agentKey?.id ?? ""]));
-    expect(agentsOnly).toContain(agentKey?.prefix ?? "");
-    expect(agentsOnly).not.toContain(appKey?.prefix ?? "");
-
-    const appsOnly = await keysPage(TOKENS_APPS_ONLY);
-    expect(revokeTargets(appsOnly, "token_revoke")).toEqual(new Set([appKey?.id ?? ""]));
-    expect(appsOnly).toContain(appKey?.prefix ?? "");
-    expect(appsOnly).not.toContain(agentKey?.prefix ?? "");
-
-    // The filter is provably the PAGE's: `token_list` takes no arguments at all (§8/§13,
-    // and contracts pins the schema), so nothing narrowed the read.
     expect(schemaKeysOf(ops.token_list)).toEqual([]);
   });
 
-  it(`§13 · the Tokens rail marker is the number of rows the pane lists, so ?kind=agent narrows the marker with the table · the unfiltered pane's marker counts both keys (the twin)`, async () => {
-    const live = (await tokensOf(keys.ns.owner.userId)).filter((row) => row.revokedAt === null);
-    const agentKey = live.find((row) => row.kind === "agent");
-    expect(agentKey, "no agent key seeded").toBeDefined();
-    expect(live.length, "the twin is vacuous unless both kinds are live").toBe(2);
-
-    // §13's rail rule reads the marker off "the number of rows its pane lists", and under
-    // `?kind=` the pane lists fewer — so the marker narrows WITH the table rather than
-    // reporting holdings the table does not draw. Asserted against `revokeTargets` on the
-    // same render, since the claim is that the two cannot disagree.
-    const narrowed = await keysPage(TOKENS_AGENTS_ONLY);
-    expect(revokeTargets(narrowed, "token_revoke")).toEqual(new Set([agentKey?.id ?? ""]));
-    expect(markerOf(narrowed, paths.settingsTokens)).toBe("1");
-
-    // The twin: the same rail entry on the unfiltered pane counts both keys, so "narrows"
-    // is not satisfied by a marker that is always the same number.
-    expect(markerOf(await keysPage(paths.settingsTokens), paths.settingsTokens)).toBe("2");
-  });
-
-  it(`§13 · Revoke on a live row walks end to end as a browser walks it — the form the pane rendered, posted form-encoded to /settings/tokens/token_revoke — and the key is gone from the pane afterwards while token_list still reports its row revoked`, async () => {
+  it(`§13 · Revoke walks end to end: POST /api/hub/settings/tokens/token_revoke with a live key's id answers \`next\` exactly /settings/tokens?done=token_revoke, and the key is gone from the read while token_list still reports its row revoked · the other key is still listed (the twin)`, async () => {
     const APP = uniqueSlug("revapp");
     const AGENT = uniqueSlug("revagt");
     const ns = await seedNamespace(env.DB, {
@@ -5147,21 +4448,14 @@ describe(`§13 · the Tokens pane`, () => {
     const agentKey = seeded.find((row) => row.kind === "agent");
     expect(appKey, "no app key seeded").toBeDefined();
 
-    const html = await page(paths.settingsTokens, session.cookie);
-    const control = controlFor(html, appKey?.id ?? "");
-    expect(new URL(control.action, ORIGIN).pathname).toBe(`${paths.settingsTokens}/token_revoke`);
-    expect(control.label, "a live key's control does not read Revoke").toBe("Revoke");
+    const { raw } = await redirectedOf(
+      await settingsPost(settingsApi.tokenRevoke, { id: appKey?.id }, session.cookie),
+    );
+    expect(raw).toBe(`${paths.settingsTokens}?done=token_revoke`);
 
-    // `application/x-www-form-urlencoded`, because the rendered form declares no enctype
-    // and that is what a browser sends — NOT the multipart `post()` the older rows use.
-    const answered = await formPost(control.action, control.fields, session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
-    expect(answered.headers.get("Location")).toBe(`${paths.settingsTokens}?done=token_revoke`);
-
-    // §13's "revoked rows are not listed" located in the PAGE, with §8's op unchanged.
-    const after = await page(paths.settingsTokens, session.cookie);
-    expect(revokeTargets(after, "token_revoke").has(appKey?.id ?? "")).toBe(false);
-    expect(after).not.toContain(appKey?.prefix ?? "");
+    // §13's "revoked rows are not listed" located in the READ, with §8's op unchanged.
+    const after = (await settingsOf(session.cookie)).tokens.map((row) => row.id);
+    expect(after).not.toContain(appKey?.id);
     const relisted = await tokensOf(ns.owner.userId);
     // A stamp, not `not.toBeNull()`: `find` yields `undefined` for a row the op DROPPED, and
     // `undefined` is not null — the drift this leg exists to catch would have passed.
@@ -5169,11 +4463,11 @@ describe(`§13 · the Tokens pane`, () => {
       relisted.find((row) => row.id === appKey?.id)?.revokedAt,
       "token_list stopped reporting the revoked row",
     ).toEqual(expect.any(Number));
-    // Non-vacuous: the other key is still listed, so the pane did not simply empty.
-    expect(revokeTargets(after, "token_revoke").has(agentKey?.id ?? "")).toBe(true);
+    // Non-vacuous: the other key is still listed, so the list did not simply empty.
+    expect(after).toContain(agentKey?.id);
   });
 
-  it(`§13 · an expired key's control reads Remove where a live key's reads Revoke, and both post the same token_revoke target under the pane's own prefix (the twin) — the expired row leaves the listing the same way`, async () => {
+  it(`§13 · an expired key is a read row marked \`expired: true\` where a live key is \`expired: false\` — what the client's Remove-vs-Revoke label is drawn from — and both leave through the same token_revoke write (the twin)`, async () => {
     const AGENT = uniqueSlug("expagt");
     const ns = await seedNamespace(env.DB, {
       // The seed's production-path mint against a backdated clock — the only honest
@@ -5187,97 +4481,28 @@ describe(`§13 · the Tokens pane`, () => {
     expect(dead, "no expired key seeded").toBeDefined();
     expect(live, "no live key seeded").toBeDefined();
 
-    const html = await page(paths.settingsTokens, session.cookie);
-    const removeControl = controlFor(html, dead?.id ?? "");
-    const revokeControl = controlFor(html, live?.id ?? "");
-    expect(removeControl.label).toBe("Remove");
-    expect(revokeControl.label).toBe("Revoke");
-    // "Both `token_revoke`", read off the page rather than assumed: same pathname under the
-    // pane's own prefix, and the only thing that differs is the id.
-    const removeUrl = new URL(removeControl.action, ORIGIN);
-    const revokeUrl = new URL(revokeControl.action, ORIGIN);
-    expect(removeUrl.pathname).toBe(`${paths.settingsTokens}/token_revoke`);
-    expect(revokeUrl.pathname).toBe(removeUrl.pathname);
-    // Spelling-blind, like `controlFor` itself: whether the id rides the query or a hidden
-    // control is the direction-B row's business, so only WHICH id each names is pinned.
-    expect(removeUrl.searchParams.get("id") ?? removeControl.fields.id).toBe(dead?.id);
-    expect(revokeUrl.searchParams.get("id") ?? revokeControl.fields.id).toBe(live?.id);
-
-    const answered = await formPost(removeControl.action, removeControl.fields, session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
-    expect(answered.headers.get("Location")).toBe(`${paths.settingsTokens}?done=token_revoke`);
+    const flags = new Map((await settingsOf(session.cookie)).tokens.map((row) => [row.id, row.expired]));
+    expect(flags).toEqual(
+      new Map([
+        [dead?.id, true],
+        [live?.id, false],
+      ]),
+    );
 
     // Remove is the same mutation and not a no-op — and the live twin is still there.
-    const after = await page(paths.settingsTokens, session.cookie);
-    expect(revokeTargets(after, "token_revoke").has(dead?.id ?? "")).toBe(false);
-    expect(revokeTargets(after, "token_revoke").has(live?.id ?? "")).toBe(true);
-  });
-
-  it(`§13 · the Tokens pane renders no token_issue control — "Issue new keys from an app or agent page." and its two-sentence footer render verbatim instead · the same pane does render token_revoke forms, so this is an absent control and not an absent pane (the twin)`, async () => {
-    const html = await keysPage(paths.settingsTokens);
-    // A control of ANY shape: §13's "No Issue control" is not only about forms.
-    const fronted = formsRenderedOn(html).map((form) => form.op);
-    expect(fronted, "the pane fronts token_issue").not.toContain("token_issue");
-    const anchors = [...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)];
-    expect(anchors.length, "the walk found no anchors at all").toBeGreaterThan(0);
-    for (const anchor of anchors) {
-      const href = new URL(decodeEntities(anchor[1]), ORIGIN);
-      expect(href.pathname.split("/").filter(Boolean).pop() ?? "").not.toBe("token_issue");
-    }
-    // The twin: an absent control, not an absent pane.
-    expect(fronted.filter((op) => op === "token_revoke").length).toBeGreaterThan(0);
-
-    // The prose decoder, which handles the `&#39;` in "that app's" — NOT `decodeEntities`,
-    // which documents itself as the URL-attribute decoder.
-    const text = textOf(html);
-    expect(text).toContain(NO_ISSUE_CONTROL);
-    expect(text).toContain(TOKENS_FOOTER);
-  });
-
-  it(`§13 · the two Access panes draw the column names §13 spells — Token / Kind / Bound to / Created / Expires / Last used under an All · Agents · Apps filter, and Client / Acts as / Created / Last used / Status — the same class of durable string the Sessions pane's three already pin`, async () => {
-    // The client's name is generated and contains neither `Client` nor `Status`: a row
-    // VALUE spelling a header would satisfy that header's assertion and prove nothing.
-    const AGENT = uniqueSlug("colagt");
-    const APP = uniqueSlug("colapp");
-    const ns = await seedNamespace(env.DB, {
-      apps: [{ slug: APP, kind: "tunnel", tokens: [{ as: "app" }] }],
-      agents: [{ slug: AGENT, tokens: [{ as: "agt" }] }],
-    });
-    const session = await seedOwnerSession(ns.owner);
-    await consentOnce(ns, session.cookie, AGENT, { client_name: uniqueSlug("colcli") });
-
-    // Asserted FIRST through the ops, so no header is checked against an empty state.
-    expect((await tokensOf(ns.owner.userId)).length).toBeGreaterThan(0);
-    expect((await connectionsOf(ns.owner.userId)).length).toBeGreaterThan(0);
-
-    // Word boundaries throughout, so a longer word cannot satisfy a header: the rail's own
-    // entry reads `Tokens`, and both `Client` and `current` are already true of every
-    // settings page.
-    const tokensText = textOf(await page(paths.settingsTokens, session.cookie));
-    for (const header of [/\bToken\b/, /\bKind\b/, /\bCreated\b/, /\bExpires\b/]) {
-      expect(tokensText, `the Tokens pane draws no ${header.source}`).toMatch(header);
-    }
-    expect(tokensText).toContain("Bound to");
-    expect(tokensText).toContain("Last used");
-
-    // The filter's three labels read as the ANCHORS' own text: the shell's top nav already
-    // renders the word `Apps`, and the rail's Tokens entry shares the unfiltered href.
-    const tokensHtml = await page(paths.settingsTokens, session.cookie);
-    expect(linkTexts(tokensHtml, paths.settingsTokens)).toContain("All");
-    expect(linkTexts(tokensHtml, TOKENS_AGENTS_ONLY)).toContain("Agents");
-    expect(linkTexts(tokensHtml, TOKENS_APPS_ONLY)).toContain("Apps");
-
-    const clientsText = textOf(await page(paths.settingsClients, session.cookie));
-    for (const header of [/\bClient\b/, /\bCreated\b/, /\bStatus\b/]) {
-      expect(clientsText, `the clients pane draws no ${header.source}`).toMatch(header);
-    }
-    expect(clientsText).toContain("Acts as");
-    expect(clientsText).toContain("Last used");
+    const { raw } = await redirectedOf(await settingsPost(settingsApi.tokenRevoke, { id: dead?.id }, session.cookie));
+    expect(raw).toBe(`${paths.settingsTokens}?done=token_revoke`);
+    expect((await settingsOf(session.cookie)).tokens.map((row) => row.id)).toEqual([live?.id]);
   });
 });
 
 describe(`§13/§19 · the Connected clients pane`, () => {
-  it(`§13/§19 · GET /oauth/connections answers 301 to /settings/clients, and the pane it points at lists the binding — the redirect's code and target are pinned, not merely "a redirect"`, async () => {
+  // Ported with decision 38's family 2: the pane's server facts are the read's `connections`
+  // rows and its one write is POST /api/hub/settings/clients/connection_revoke. The name
+  // and origin as TEXT, the Acts-as link, the "unverified" badge, the `active`/`revoked`
+  // words and §13's footer are the client's to draw.
+
+  it(`§13/§19 · GET /oauth/connections answers 301 to /settings/clients, and the read that pane draws from lists the binding — the redirect's code and target are pinned, not merely "a redirect"`, async () => {
     await consentOnce(world.ns, world.session.cookie, "agent", { client_name: "Listed Client" });
 
     // 301 exactly — §13 pins the CODE, because the move is permanent and a 302 would leave
@@ -5287,163 +4512,104 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     expect(redirected.headers.get("Location")).toBe(paths.settingsClients);
     // Nothing is asserted about the anonymous case: /oauth/connections is not under
     // /settings/* and §13 pins no gate for it.
-    expect(await page(paths.settingsClients)).toContain("Listed Client");
+    expect((await settingsOf(world.session.cookie)).connections.map((row) => row.clientName)).toContain(
+      "Listed Client",
+    );
   });
 
-  it(`§13/§19 · the connections POST moved with its pane: nothing routes /oauth/connections/connection_revoke any more — it reaches connection_revoke zero times, and no rendered page posts under the old path · the same revoke at /settings/clients/connection_revoke reaches it exactly once and lands back on the pane (the twin)`, async () => {
+  it(`§13/§19 · the connections POST moved with its pane, twice: nothing routes /oauth/connections/connection_revoke, and since decision 38 nothing routes /settings/clients/connection_revoke either — each reaches connection_revoke zero times and answers no redirect · the same revoke at POST /api/hub/settings/clients/connection_revoke reaches it exactly once and lands on the pane (the twin)`, async () => {
     const AGENT = uniqueSlug("movagt");
     const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
     const session = await seedOwnerSession(ns.owner);
     const { bindingId } = await consentOnce(ns, session.cookie, AGENT, {
       client_name: uniqueSlug("movcli"),
     });
-
-    // The CSRF token comes off the dialog, which is where §13 puts this pane's Revoke —
-    // the bare pane renders no form of its own, and the shell's Sign out carries none.
-    const listed = await page(paths.settingsClients, session.cookie);
-    const dialog = await page(confirmLinkFor(listed, "revoke-connection", bindingId) ?? "", session.cookie);
-    const csrf = csrfOf(dialog);
+    const csrf = await csrfFor(session.cookie);
 
     await withCountedOps(["connection_revoke"], async (invocations) => {
-      // Spelled literally on purpose: this is the string that must no longer route, so it
-      // cannot come from `paths`.
-      const gone = await post(
+      // Spelled literally on purpose: these are the strings that must no longer route, so
+      // they cannot come from `paths`.
+      for (const gone of [
         `/oauth/connections/connection_revoke?id=${bindingId}`,
-        {},
-        { cookie: session.cookie, csrf },
-      );
+        `/settings/clients/connection_revoke?id=${bindingId}`,
+      ]) {
+        const answered = await post(gone, {}, { cookie: session.cookie, csrf });
+        // Observed 404s: the `oauth` mount's own tail, and the page router's own. What
+        // §13 pins is that the op is not reached and nothing redirects.
+        expect(answered.status, `POST ${gone}`).toBeGreaterThanOrEqual(400);
+        expect(answered.headers.get("Location"), `POST ${gone}`).toBeNull();
+      }
       expect(times(invocations, "connection_revoke")).toBe(0);
-      // Observed 404: the `oauth` mount's own `claim(...)` tail answers anything under
-      // /oauth/ that no route took. Recorded rather than asserted as a §13 claim — what
-      // §13 pins is that the op is not reached and nothing is written.
-      expect(gone.status).toBeGreaterThanOrEqual(400);
-      expect(gone.headers.get("Location")).toBeNull();
 
-      const answered = await post(paths.connectionRevoke(bindingId), {}, { cookie: session.cookie, csrf });
-      expect(answered.status, await answered.text()).toBe(303);
-      expect(new URL(answered.headers.get("Location") ?? "", ORIGIN).pathname).toBe(paths.settingsClients);
+      const { next } = await redirectedOf(
+        await settingsPost(settingsApi.connectionRevoke, { id: bindingId }, session.cookie, csrf),
+      );
+      expect(next.pathname).toBe(paths.settingsClients);
       expect(times(invocations, "connection_revoke")).toBe(1);
     });
-
-    // The totality half §13 actually pins: nothing the seven panes render points under the
-    // old prefix, as a form action or as a link.
-    for (const pane of PANES) {
-      const html = await paneWithDialogs(pane, session.cookie);
-      const rendered = [
-        ...postTargets(html),
-        ...[...html.matchAll(/<a\b[^>]*href="([^"]*)"/g)].map((anchor) => decodeEntities(anchor[1])),
-      ];
-      // The negative's own precondition: a pane that rendered nothing at all would pass
-      // the loop below without ever entering it.
-      expect(rendered.length, `${pane} rendered no targets at all`).toBeGreaterThan(0);
-      for (const target of rendered) {
-        expect(target.startsWith(`${paths.oauthConnections}/`), `${pane} points at ${target}`).toBe(false);
-      }
-    }
+    // "No rendered page posts under the old path" is the client's now: the bundle posts
+    // through `settingsApi`, which case 24 pins whole.
   });
 
-  it(`§13/§19.5 · a connected client's row shows the name it registered with, the ORIGIN of its registered redirect URI beneath it — never the full URI — and the bound agent's slug linking to /agents/<slug> under Acts as (re-pointed 2026-09-03, step 9) · a client that registered without a name shows its client id in the name's place (the twin)`, async () => {
+  it(`§13/§19.5 · a connected client's read row carries the name it registered with and the ORIGIN of its registered redirect URI — never the full URI — and the bound agent's slug · a client that registered without a name carries null there and its client id beside it (the twin)`, async () => {
     const AGENT = uniqueSlug("acts");
     const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
     const session = await seedOwnerSession(ns.owner);
     const named = `Named ${uniqueSlug("named")}`;
-    await consentOnce(ns, session.cookie, AGENT, {
+    const { clientId: namedId } = await consentOnce(ns, session.cookie, AGENT, {
       client_name: named,
       redirect_uris: [REDIRECT_A],
     });
     // GENUINELY absent, not `""`: `listConnections` coalesces with `??`, so an empty string
-    // would survive as `""` and pin a render §13 never describes.
+    // would survive as `""` and pin a state §13 never describes.
     const { clientId: nameless } = await consentOnce(ns, session.cookie, AGENT, {
       client_name: undefined,
       redirect_uris: [REDIRECT_B],
     });
 
-    const rows = await connectionsOf(ns.owner.userId);
-    expect(rows.find((row) => row.clientId === nameless)?.clientName).toBeNull();
-
-    const html = await page(paths.settingsClients, session.cookie);
-    expect(html, "the named client's name is missing").toContain(named);
+    const rows = new Map((await settingsOf(session.cookie)).connections.map((row) => [row.clientId, row]));
+    expect(rows.get(namedId)).toMatchObject({ clientName: named, redirectOrigin: new URL(REDIRECT_A).origin, agentSlug: AGENT });
+    expect(rows.get(nameless)).toMatchObject({ clientName: null, redirectOrigin: new URL(REDIRECT_B).origin, agentSlug: AGENT });
     // The origin is a strict prefix of the URI, so only the ABSENCE carries the claim.
-    expect(html).toContain(new URL(REDIRECT_A).origin);
-    expect(html, "the pane renders the whole redirect URI").not.toContain(REDIRECT_A);
-    expect(html, "the nameless client shows no id").toContain(nameless);
-
-    expect(textOf(html)).toContain(AGENT);
-    // Acts as LINKS to the agent page now that it exists (2026-09-03, step 9).
-    const anchors = [...html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)];
-    const actsAs = anchors.find(
-      (anchor) => decodeEntities(attributeOf(anchor[1], "href") ?? "") === paths.agentDetail(AGENT),
-    );
-    expect(actsAs, "no anchor links the agent slug to its page").toBeDefined();
-    expect(actsAs?.[2] ?? "").toContain(AGENT);
+    expect(JSON.stringify([...rows.values()]), "the read carries a whole redirect URI").not.toContain(REDIRECT_A);
   });
 
-  it(`§13/§19.5 · a self-registered (DCR) client's row carries the "unverified" marker · a client registered under the owner's own session does not (the twin) — the consent screen's second identity string, repeated on the pane`, async () => {
-    // TWO namespaces, each holding exactly ONE connection — which is what makes the twin
-    // markup-free: the page-wide assertion IS the row-level one. Never `world.ns`, where a
-    // dozen earlier §19 rows have already bound DCR clients.
+  it(`§13/§19.5 · a self-registered (DCR) client's read row says \`selfRegistered: true\` — what the client's "unverified" marker is drawn from · a client registered under the owner's own session says false (the twin) — the consent screen's second identity string, repeated on the pane`, async () => {
     const dcr = await oneConnectedNamespace(uniqueSlug("dcr"));
     const known = await oneConnectedNamespace(uniqueSlug("known"), true);
-
-    const selfRegistered = await page(paths.settingsClients, dcr.session.cookie);
-    const preRegistered = await page(paths.settingsClients, known.session.cookie);
-    // Each page holds ONE row, so its client's name being there is what makes the absence
-    // below about the marker rather than about an empty pane.
-    expect(selfRegistered).toContain(dcr.client);
-    expect(preRegistered).toContain(known.client);
-    expect(selfRegistered).toContain("unverified");
-    expect(preRegistered).not.toContain("unverified");
+    expect((await settingsOf(dcr.session.cookie)).connections.map((row) => [row.clientName, row.selfRegistered])).toEqual([
+      [dcr.client, true],
+    ]);
+    expect((await settingsOf(known.session.cookie)).connections.map((row) => [row.clientName, row.selfRegistered])).toEqual([
+      [known.client, false],
+    ]);
   });
 
-  it(`§13 · the Connected clients footer renders verbatim, as one block — a client registers itself at the consent screen, and revoking touches neither the agent it acted as nor that agent's grants`, async () => {
-    // The prose decoder, which turns the `&#39;` in "agent's" back into an apostrophe —
-    // not the shared URL-attribute `decodeEntities`. ONE string exactly as §13 quotes it,
-    // em dash and semicolon included: a split rendering is the drift this guards.
-    expect(textOf(await page(paths.settingsClients))).toContain(CLIENTS_FOOTER);
-  });
-
-  it(`§13/§19.6 · Revoke walks end to end from an active row as a browser walks it — the confirm link on /settings/clients, the dialog whose own form names that row, the form-encoded POST to /settings/clients/connection_revoke, the 303 back to the pane — and the row STAYS listed afterwards as revoked with no control of any shape · it rendered one while it was active (the twin)`, async () => {
+  it(`§13/§19.6 · Revoke walks end to end from an active row: POST /api/hub/settings/clients/connection_revoke answers \`next\` exactly /settings/clients?done=connection_revoke, and the row STAYS in the read as revoked — re-consent revives it — while it was active before (the twin)`, async () => {
     const AGENT = uniqueSlug("revcagt");
     const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
     const session = await seedOwnerSession(ns.owner);
     const client = uniqueSlug("revcli");
-    const { bindingId } = await consentOnce(ns, session.cookie, AGENT, { client_name: client });
+    const { clientId, bindingId } = await consentOnce(ns, session.cookie, AGENT, { client_name: client });
 
-    const listed = await page(paths.settingsClients, session.cookie);
-    // The twin, asserted BEFORE the post: while it was active, the pane rendered a control.
-    const confirm = confirmLinkFor(listed, "revoke-connection", bindingId);
-    expect(confirm, "the active row rendered no confirm link").not.toBeNull();
-    // §13's "confirm state rides the owning pane's URL", made observable.
-    expect(new URL(confirm ?? "", ORIGIN).pathname).toBe(paths.settingsClients);
+    const rowOf = async () =>
+      (await settingsOf(session.cookie)).connections.find((row) => row.clientId === clientId);
+    // The twin, asserted BEFORE the post: while it was active, it carried no revocation.
+    expect((await rowOf())?.revokedAt).toBeNull();
 
-    // The dialog's OWN form names this row — §13 pins no dialog copy for this pane and
-    // `design/Dialogs.dc.html` draws no connection dialog, so the copy is not asserted.
-    const dialog = await page(confirm ?? "", session.cookie);
-    const control = controlFor(dialog, bindingId);
-    expect(new URL(control.action, ORIGIN).pathname).toBe(`${paths.settingsClients}/connection_revoke`);
-    // The move's other half, on the two renders this row already holds: the pane and its
-    // dialog post at the new prefix and nothing posts at the old one (§19).
-    for (const target of postTargets([listed, dialog].join("\n"))) {
-      expect(target.startsWith(`${paths.oauthConnections}/`), `posts at ${target}`).toBe(false);
-    }
-
-    const answered = await formPost(control.action, control.fields, session.cookie);
-    expect(answered.status, await answered.text()).toBe(303);
-    expect(answered.headers.get("Location")).toBe(`${paths.settingsClients}?done=connection_revoke`);
-
-    // A revoked row STAYS listed, because re-consent revives it (§19.4's UNIQUE pair) —
-    // with no control of any shape, the same both-shapes check the No-Issue row makes.
-    const after = await page(paths.settingsClients, session.cookie);
-    expect(after, "the revoked client left the listing").toContain(client);
-    expect(textOf(after)).toMatch(/\brevoked\b/);
-    expect(textOf(after)).not.toMatch(/\bactive\b/);
-    expect(revokeTargets(await paneWithDialogs(paths.settingsClients, session.cookie), "connection_revoke")).toEqual(
-      new Set(),
+    const { raw } = await redirectedOf(
+      await settingsPost(settingsApi.connectionRevoke, { id: bindingId }, session.cookie),
     );
-    expect(confirmLinkFor(after, "revoke-connection", bindingId)).toBeNull();
+    expect(raw).toBe(`${paths.settingsClients}?done=connection_revoke`);
+
+    // A revoked row STAYS listed, because re-consent revives it (§19.4's UNIQUE pair).
+    const after = await rowOf();
+    expect(after, "the revoked client left the read").toBeDefined();
+    expect(after?.clientName).toBe(client);
+    expect(after?.revokedAt).toEqual(expect.any(Number));
   });
 
-  it(`§13 · a POST to either ops-backed Settings pane carrying no CSRF field is 403 and nothing is revoked · the same target carrying the token that pane rendered succeeds (the twin) — one gate over the /settings prefix, proven on both dispatches`, async () => {
+  it(`§13 · a write to either ops-backed settings route without \`X-Pmcp-Csrf\` is 403 and nothing is revoked · the same write carrying the session's token succeeds (the twin) — one gate over the prefix, proven on both routes`, async () => {
     const AGENT = uniqueSlug("csrfagt");
     const APP = uniqueSlug("csrfapp");
     const ns = await seedNamespace(env.DB, {
@@ -5456,17 +4622,16 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     });
     const tokenId = (await tokensOf(ns.owner.userId))[0].id;
 
-    // Each leg carries the read of ITS OWN row, because the twin below revokes as it goes:
-    // a shared postcondition would be false of the first leg's row by the second's turn.
+    // Each leg carries the read of ITS OWN row, because the twin below revokes as it goes.
     const legs = [
       {
-        pane: paths.settingsTokens,
+        path: settingsApi.tokenRevoke,
         id: tokenId,
         revokedAt: async (): Promise<number | null> =>
           (await tokensOf(ns.owner.userId)).find((row) => row.id === tokenId)?.revokedAt ?? null,
       },
       {
-        pane: paths.settingsClients,
+        path: settingsApi.connectionRevoke,
         id: bindingId,
         revokedAt: async (): Promise<number | null> =>
           (await bindingFor(ns.owner.userId, clientId))?.revokedAt ?? null,
@@ -5474,27 +4639,21 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     ];
     let walked = 0;
     for (const leg of legs) {
-      // Read off the page, never spelled — and through the pane's WHOLE control surface,
-      // since the clients pane's Revoke lives in its dialog.
-      const html = await paneWithDialogs(leg.pane, session.cookie);
-      const target = controlFor(html, leg.id).action;
-
-      // No `csrf` field at all — the shape of a cross-site post.
-      const refused = await post(target, {}, { cookie: session.cookie });
-      expect(refused.status, `POST ${target} with no CSRF field`).toBe(403);
+      // No header at all — the shape of a cross-site request.
+      const refused = await settingsPost(leg.path, { id: leg.id }, session.cookie, null);
+      expect(refused.status, `POST ${leg.path} with no X-Pmcp-Csrf`).toBe(403);
       // The refusal did not answer 403 AFTER mutating.
-      expect(await leg.revokedAt(), `the refused POST ${target} revoked its row`).toBeNull();
+      expect(await leg.revokedAt(), `the refused POST ${leg.path} revoked its row`).toBeNull();
 
-      const accepted = await post(target, {}, { cookie: session.cookie, csrf: csrfOf(html) });
-      expect(accepted.status, `POST ${target} with the page's own token`).toBe(303);
-      expect(await leg.revokedAt(), `the accepted POST ${target} revoked nothing`).not.toBeNull();
+      await redirectedOf(await settingsPost(leg.path, { id: leg.id }, session.cookie));
+      expect(await leg.revokedAt(), `the accepted POST ${leg.path} revoked nothing`).not.toBeNull();
       walked += 1;
     }
-    // Two route groups, not one: "they share a handler" is an assumption about code.
-    expect(walked, "the walk did not cover both dispatchers").toBe(2);
+    // Two routes, not one: "they share a handler" is an assumption about code.
+    expect(walked, "the walk did not cover both routes").toBe(2);
   });
 
-  it(`§19.4/§13 · consenting again after a revoke revives the same row — /settings/clients holds exactly one row for that client, active and revocable again, and oauth_binding still holds exactly one row for the pair`, async () => {
+  it(`§19.4/§13 · consenting again after a revoke revives the same row — the read holds exactly one row for that client, active again, and oauth_binding still holds exactly one row for the pair`, async () => {
     const AGENT = uniqueSlug("reagt");
     const ns = await seedNamespace(env.DB, { agents: [{ slug: AGENT }] });
     const session = await seedOwnerSession(ns.owner);
@@ -5502,36 +4661,26 @@ describe(`§13/§19 · the Connected clients pane`, () => {
     const { clientId, bindingId } = await consentOnce(ns, session.cookie, AGENT, { client_name: client });
     expect(await countBindings(ns.owner.userId, clientId)).toBe(1);
 
-    const listed = await page(paths.settingsClients, session.cookie);
-    const dialog = await page(confirmLinkFor(listed, "revoke-connection", bindingId) ?? "", session.cookie);
-    const control = controlFor(dialog, bindingId);
-    expect((await formPost(control.action, control.fields, session.cookie)).status).toBe(303);
+    await redirectedOf(await settingsPost(settingsApi.connectionRevoke, { id: bindingId }, session.cookie));
     // The pair survives the revoke: an implementation that DELETED the row instead of
     // marking it revoked reads 0 here, and §19.4's UNIQUE (owner_id, client_id) is the
     // whole reason re-consent revives rather than duplicates.
     expect(await countBindings(ns.owner.userId, clientId)).toBe(1);
-
+    const rowsOf = async () =>
+      (await settingsOf(session.cookie)).connections.filter((row) => row.clientId === clientId);
     // The revoked state BETWEEN the two consents is what makes "revives" non-vacuous.
-    const revoked = await page(paths.settingsClients, session.cookie);
-    expect(textOf(revoked)).toMatch(/\brevoked\b/);
-    expect(revokeTargets(await paneWithDialogs(paths.settingsClients, session.cookie), "connection_revoke")).toEqual(
-      new Set(),
-    );
+    expect((await rowsOf()).map((row) => row.revokedAt === null)).toEqual([false]);
 
     await consentAgain(ns, session.cookie, AGENT, clientId);
 
     expect(await countBindings(ns.owner.userId, clientId)).toBe(1);
-    const revived = await page(paths.settingsClients, session.cookie);
-    // Occurrence count, which is why the name is generated per case.
-    expect(mentions(textOf(revived), client)).toBe(1);
-    expect(textOf(revived)).toMatch(/\bactive\b/);
-    expect(textOf(revived)).not.toMatch(/\brevoked\b/);
-    expect(
-      revokeTargets(await paneWithDialogs(paths.settingsClients, session.cookie), "connection_revoke"),
-    ).toEqual(new Set([bindingId]));
+    expect((await rowsOf()).map((row) => [row.id, row.revokedAt])).toEqual([[bindingId, null]]);
   });
 
-  it(`§8 · the Tokens and Connected clients panes DO front ops, and each form's field set equals schemaKeysOf(ops[name]) — the two Access panes join parity direction B rather than the parity exception (the twin of the four panes that front none)`, async () => {
+  it(`§8 · the Tokens and Connected clients writes DO front ops, and each one's body is exactly its op's own keys — schemaKeysOf(ops[name]) — so a body carrying one more key is refused 422 by the op's own parseInput and revokes nothing · the op's own keys revoke (the twin)`, async () => {
+    // Ported with family 2 from "each form's field set equals schemaKeysOf(ops[name])":
+    // the body is the op's input, handed through with no second validator, so parity
+    // direction B is the op's own refusal of anything else.
     const AGENT = uniqueSlug("dirbagt");
     const APP = uniqueSlug("dirbapp");
     const ns = await seedNamespace(env.DB, {
@@ -5539,29 +4688,39 @@ describe(`§13/§19 · the Connected clients pane`, () => {
       agents: [{ slug: AGENT, tokens: [{ as: "agt" }] }],
     });
     const session = await seedOwnerSession(ns.owner);
-    await consentOnce(ns, session.cookie, AGENT, { client_name: uniqueSlug("dirbcli") });
+    const { clientId, bindingId } = await consentOnce(ns, session.cookie, AGENT, { client_name: uniqueSlug("dirbcli") });
+    const tokenId = (await tokensOf(ns.owner.userId))[0].id;
 
-    const seen = new Set<string>();
-    let checked = 0;
-    for (const pane of [paths.settingsTokens, paths.settingsClients]) {
-      // The dialog renders are required for the clients pane, whose Revoke §13 puts behind
-      // a confirm dialog; the Tokens pane's Revoke/Remove, which §13 does not gate, are
-      // found inline in the bare render the same walk collects.
-      for (const form of formsRenderedOn(await paneWithDialogs(pane, session.cookie))) {
-        if (BROWSER_ONLY_TARGETS.has(form.op)) continue;
-        expect(Object.prototype.hasOwnProperty.call(ops, form.op), `${pane} fronts "${form.op}"`).toBe(true);
-        expect(form.fields, `${pane}'s ${form.op} form`).toEqual(schemaKeysOf(ops[form.op]));
-        seen.add(form.op);
-        checked += 1;
-      }
+    for (const { path, op, id, revokedAt } of [
+      {
+        path: settingsApi.tokenRevoke,
+        op: "token_revoke",
+        id: tokenId,
+        revokedAt: async () => (await tokensOf(ns.owner.userId)).find((row) => row.id === tokenId)?.revokedAt ?? null,
+      },
+      {
+        path: settingsApi.connectionRevoke,
+        op: "connection_revoke",
+        id: bindingId,
+        revokedAt: async () => (await bindingFor(ns.owner.userId, clientId))?.revokedAt ?? null,
+      },
+    ]) {
+      expect(schemaKeysOf(ops[op]), `${op}'s own keys`).toEqual(["id"]);
+      const refused = await settingsPost(path, { id, nonesuch: "1" }, session.cookie);
+      expect(refused.status, `POST ${path} with an extra key`).toBe(422);
+      expect(await reasonOf(refused)).toContain("does not declare");
+      expect(await revokedAt(), `the refused POST ${path} revoked anyway`).toBeNull();
+
+      const { next } = await redirectedOf(await settingsPost(path, { id }, session.cookie));
+      expect(next.searchParams.get("done")).toBe(op);
+      expect(await revokedAt()).not.toBeNull();
     }
-    expect(checked, "no form on either Access pane was checked").toBeGreaterThan(0);
-    expect([...seen].sort()).toEqual(["connection_revoke", "token_revoke"]);
   });
 
-  it(`§13 · the two Access markers part company on a revoked row by design: the Tokens marker counts the rows its pane lists — the live key and the expired one, never the revoked one — while the Connected clients marker counts ITS pane's rows with a revoked client among them · revoking through each pane's own control then moves the Tokens marker by one and the clients marker by none (the twin)`, async () => {
-    // The complement of the rail-count row, which seeds four LIVE keys and no revoked or
-    // expired one — leaving both markers satisfiable by a query the shell rule forbids.
+  it(`§13 · the two Access lists part company on a revoked row by design: the read's tokens are the rows the Tokens pane lists — the live key and the expired one, never the revoked one — while its connections keep a revoked client among them · revoking through each write then shortens the tokens by one and the connections by none (the twin)`, async () => {
+    // The complement of the "one read carries every list" row, which seeds four LIVE keys
+    // and no revoked or expired one — leaving both lists satisfiable by a query the shell
+    // rule forbids.
     const KEYS = uniqueSlug("markkeys");
     const AGENT = uniqueSlug("markagt");
     const ns = await seedNamespace(env.DB, {
@@ -5577,15 +4736,11 @@ describe(`§13/§19 · the Connected clients pane`, () => {
       agents: [{ slug: AGENT }],
     });
     const session = await seedOwnerSession(ns.owner);
-    const clientA = uniqueSlug("markcla");
-    const clientB = uniqueSlug("markclb");
-    const bindingA = await consentOnce(ns, session.cookie, AGENT, { client_name: clientA });
-    const bindingB = await consentOnce(ns, session.cookie, AGENT, { client_name: clientB });
-    // A is revoked through the OP, leaving the pane's own control unspent for the delta.
+    const bindingA = await consentOnce(ns, session.cookie, AGENT, { client_name: uniqueSlug("markcla") });
+    const bindingB = await consentOnce(ns, session.cookie, AGENT, { client_name: uniqueSlug("markclb") });
+    // A is revoked through the OP, leaving the pane's own write unspent for the delta.
     await ops.connection_revoke.handler(ns.owner.userId, { id: bindingA.bindingId });
 
-    // Preconditions through the ops, told apart by `expiresAt`/`revokedAt` rather than by
-    // the seed's handles.
     const seeded = (await tokensOf(ns.owner.userId)).filter((row) => row.refSlug === KEYS);
     const dead = seeded.filter((row) => row.revokedAt !== null);
     const stale = seeded.filter(
@@ -5595,122 +4750,125 @@ describe(`§13/§19 · the Connected clients pane`, () => {
       (row) => row.revokedAt === null && (row.expiresAt === null || row.expiresAt > Date.now()),
     );
     expect([seeded.length, live.length, stale.length, dead.length]).toEqual([3, 1, 1, 1]);
-    const connections = await connectionsOf(ns.owner.userId);
-    expect(connections.length).toBe(2);
-    expect(connections.filter((row) => row.revokedAt !== null).length).toBe(1);
 
-    // TOKENS: "3" is the token_list().length bug and "1" the live-keys-only bug. No single
-    // implementation satisfies both this row and the rail-count row's "4".
-    const tokensHtml = await page(paths.settingsTokens, session.cookie);
-    expect(markerOf(tokensHtml, paths.settingsTokens)).toBe("2");
-    expect(revokeTargets(tokensHtml, "token_revoke").size).toBe(2);
-    expect(tokensHtml).toContain(live[0].prefix);
-    expect(tokensHtml).toContain(stale[0].prefix);
-    expect(tokensHtml, "the revoked key is still listed").not.toContain(dead[0].prefix);
+    // TOKENS: 3 is the token_list().length bug and 1 the live-keys-only bug.
+    const before = await settingsOf(session.cookie);
+    expect(new Set(before.tokens.map((row) => row.id))).toEqual(new Set([live[0].id, stale[0].id]));
+    // CLIENTS: 2 with a revoked row among them — the leg a live-bindings-only 1 fails.
+    expect(before.connections.length).toBe(2);
+    expect(before.connections.filter((row) => row.revokedAt !== null).map((row) => row.id)).toEqual([
+      bindingA.bindingId,
+    ]);
 
-    // CLIENTS: "2" with a revoked row among them, and only B is revocable — the leg a
-    // live-bindings-only "1" fails.
-    const clientsHtml = await page(paths.settingsClients, session.cookie);
-    expect(markerOf(clientsHtml, paths.settingsClients)).toBe("2");
-    expect([clientA, clientB].filter((name) => clientsHtml.includes(name)).length).toBe(2);
-    const revocable = revokeTargets(
-      await paneWithDialogs(paths.settingsClients, session.cookie),
-      "connection_revoke",
-    );
-    expect(revocable).toEqual(new Set([bindingB.bindingId]));
-
-    // THE DELTA, each posted as the browser posts it.
-    const revoke = controlFor(tokensHtml, live[0].id);
-    expect((await formPost(revoke.action, revoke.fields, session.cookie)).status).toBe(303);
-    const tokensAfter = await page(paths.settingsTokens, session.cookie);
-    // A drop to "0" would mean the post revoked more than the control named.
-    expect(markerOf(tokensAfter, paths.settingsTokens)).toBe("1");
-    expect(tokensAfter).toContain(stale[0].prefix);
-
-    const dialog = await page(
-      confirmLinkFor(clientsHtml, "revoke-connection", bindingB.bindingId) ?? "",
-      session.cookie,
-    );
-    const control = controlFor(dialog, bindingB.bindingId);
-    expect((await formPost(control.action, control.fields, session.cookie)).status).toBe(303);
-    const clientsAfter = await page(paths.settingsClients, session.cookie);
-    expect(markerOf(clientsAfter, paths.settingsClients)).toBe("2");
-    expect(clientsAfter).toContain(clientB);
+    // THE DELTA, each through its own write.
+    await redirectedOf(await settingsPost(settingsApi.tokenRevoke, { id: live[0].id }, session.cookie));
+    await redirectedOf(await settingsPost(settingsApi.connectionRevoke, { id: bindingB.bindingId }, session.cookie));
+    const after = await settingsOf(session.cookie);
+    // A drop to 0 would mean the write revoked more than it named.
+    expect(after.tokens.map((row) => row.id)).toEqual([stale[0].id]);
+    expect(after.connections.length).toBe(2);
+    expect(after.connections.every((row) => row.revokedAt !== null)).toBe(true);
   });
 });
 
 describe(`§23 · /settings/execution — the timeout pair`, () => {
-  /** The pane's two controls as the render drew them, by field name — read off the form
-   *  itself, so a pane that drew constants where the op's read belongs cannot pass. */
-  const pairOn = (html: string): Record<string, string> => {
-    const [drawn] = formsPostingTo(html, paths.settingsExecutionUpdate);
-    return { defaults: drawn?.default_timeout_ms ?? "", maximum: drawn?.max_timeout_ms ?? "" };
-  };
+  // Ported with decision 38's family 2: the pair is the read's `execution`, its bounds the
+  // read's `limits`, and the Save is POST /api/hub/settings/execution/hub_settings_update,
+  // whose refusal is the op's own field-scoped violations. Drawing each sentence under the
+  // control it names, in the owner's own text, is the client's (routes §2's
+  // `executionErrors`, web-side); so is the rail marker "45s / 120s" (`timeoutLabel`).
 
-  it(`§23 · the pane renders hub_settings_get's committed pair as two integer millisecond controls over one Save, bounded by the op's own minimum and ceiling, and the rail marker reads the pair in seconds`, async () => {
+  it(`§23 · the read carries hub_settings_get's committed pair in milliseconds beside the op's own minimum and ceiling`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    // A pair that is NOT the pinned default, so a pane drawing constants cannot pass.
+    // A pair that is NOT the pinned default, so a read answering constants cannot pass.
     await ops.hub_settings_update.handler(ns.owner.userId, { default_timeout_ms: 45_000, max_timeout_ms: 120_000 });
 
-    const html = await page(paths.settingsExecution, session.cookie);
-    expect(pairOn(html)).toEqual({ defaults: "45000", maximum: "120000" });
-    // The bounds the op's schema advertises, on the controls a browser validates with.
-    expect(html).toContain(`min="${HUB_MIN_TIMEOUT_MS}"`);
-    expect(html).toContain(`max="${HUB_HARD_MAX_TIMEOUT_MS}"`);
-    expect(csrfOf(html)).not.toBe("");
-    expect(markerOf(html, paths.settingsExecution)).toBe("45s / 120s");
+    const read = await settingsOf(session.cookie);
+    expect(read.execution).toEqual({ defaultTimeoutMs: 45_000, maxTimeoutMs: 120_000 });
+    expect([read.limits.minTimeoutMs, read.limits.maxTimeoutMs]).toEqual([HUB_MIN_TIMEOUT_MS, HUB_HARD_MAX_TIMEOUT_MS]);
   });
 
-  it(`§23 · a valid Save writes the pair, redirects to the pane with the notice, and the pane at that Location reads the committed pair back — with exactly one admin.hub_settings_update row`, async () => {
+  it(`§23 · a valid Save — the owner's text in both controls — writes the pair and answers \`next\` on the pane with done=hub_settings_update, and the read afterwards carries the committed pair — with exactly one admin.hub_settings_update row`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    const rendered = await page(paths.settingsExecution, session.cookie);
-    const [drawn] = formsPostingTo(rendered, paths.settingsExecutionUpdate);
 
-    const answered = await formPost(
-      paths.settingsExecutionUpdate,
-      typedInto(drawn ?? {}, { default_timeout_ms: "60000", max_timeout_ms: "150000" }),
-      session.cookie,
+    const { next } = await redirectedOf(
+      await settingsPost(
+        settingsApi.executionUpdate,
+        { default_timeout_ms: "60000", max_timeout_ms: "150000" },
+        session.cookie,
+      ),
     );
-    expect(answered.status).toBe(303);
-    const back = new URL(answered.headers.get("Location") ?? "", ORIGIN);
-    expect(back.pathname).toBe(paths.settingsExecution);
-    expect(back.searchParams.get("done")).toBe("hub_settings_update");
+    expect(next.pathname).toBe(paths.settingsExecution);
+    expect(next.searchParams.get("done")).toBe("hub_settings_update");
     expect((await query(env.DB, ns.owner.userId, { event: "admin.hub_settings_update" })).total).toBe(1);
-    const stored = (await ops.hub_settings_get.handler(ns.owner.userId, {})) as {
-      settings: { defaultTimeoutMs: number; maxTimeoutMs: number };
-    };
-    expect(stored.settings).toEqual({ defaultTimeoutMs: 60_000, maxTimeoutMs: 150_000 });
-    expect(pairOn(await page(`${back.pathname}${back.search}`, session.cookie))).toEqual({
-      defaults: "60000",
-      maximum: "150000",
-    });
+    expect((await settingsOf(session.cookie)).execution).toEqual({ defaultTimeoutMs: 60_000, maxTimeoutMs: 150_000 });
   });
 
-  it(`§23 · an invalid pair redraws the pane at 400 with the op's sentence under the control it named and the owner's own text in both boxes, and writes nothing — the ordering rule, the floor, and a non-integer each land on their own field (the twins)`, async () => {
+  it(`§23 · an invalid pair is a 422 carrying the op's own violations, each naming the control's field — the ordering rule, the floor and a non-integer each land on default_timeout_ms — and writes nothing (the twins)`, async () => {
     const ns = await seedNamespace(env.DB, {});
     const session = await seedOwnerSession(ns.owner);
-    const rendered = await page(paths.settingsExecution, session.cookie);
-    const [drawn] = formsPostingTo(rendered, paths.settingsExecutionUpdate);
     const before = (await query(env.DB, ns.owner.userId, {})).total;
 
     for (const [typed, sentence] of [
-      [{ default_timeout_ms: "200000", max_timeout_ms: "100000" }, 'Must not exceed "max_timeout_ms".'],
-      [{ default_timeout_ms: "500", max_timeout_ms: "30000" }, "Is below the minimum this tool accepts."],
-      [{ default_timeout_ms: "soon", max_timeout_ms: "30000" }, "Has the wrong type."],
+      [{ default_timeout_ms: "200000", max_timeout_ms: "100000" }, 'must not exceed "max_timeout_ms"'],
+      [{ default_timeout_ms: "500", max_timeout_ms: "30000" }, "is below the minimum this tool accepts"],
+      [{ default_timeout_ms: "soon", max_timeout_ms: "30000" }, "has the wrong type"],
     ] as const) {
-      const refused = await formPost(
-        paths.settingsExecutionUpdate,
-        typedInto(drawn ?? {}, { ...typed }),
-        session.cookie,
-      );
-      expect(refused.status, typed.default_timeout_ms).toBe(400);
-      const html = await refused.text();
-      expect(textOf(html), typed.default_timeout_ms).toContain(sentence);
-      expect(pairOn(html).defaults, "the owner's own text was not redrawn").toBe(typed.default_timeout_ms);
+      const refused = await settingsPost(settingsApi.executionUpdate, { ...typed }, session.cookie);
+      expect(refused.status, typed.default_timeout_ms).toBe(422);
+      const body = await jsonOf(refused);
+      expect(typeof body.reason, typed.default_timeout_ms).toBe("string");
+      expect(body.violations, typed.default_timeout_ms).toEqual([
+        { field: "default_timeout_ms", reason: expect.stringContaining(sentence) },
+      ]);
     }
     expect((await query(env.DB, ns.owner.userId, {})).total, "a refused pair wrote").toBe(before);
+    expect((await settingsOf(session.cookie)).execution).toEqual({ defaultTimeoutMs: 30_000, maxTimeoutMs: 30_000 });
+  });
+});
+
+describe(`§13 · the /settings form targets are gone (decision 38)`, () => {
+  it(`§13 · every POST target the settings panes' forms used — the eight credential targets, /settings/tokens/token_revoke, /settings/clients/connection_revoke and /settings/execution/hub_settings_update — answers 404 with no Location to a fresh session carrying its own CSRF field, reaches no op and changes nothing · the JSON write beside each is what answers now (the prefix describe's walk)`, async () => {
+    const ns = await seedNamespace(env.DB, {
+      apps: [{ slug: "news", kind: "tunnel", tokens: [{ as: "app" }] }],
+      agents: [{ slug: "agent" }],
+    });
+    const session = await seedOwnerSession(ns.owner);
+    const passkeyId = await plantPasskey(ns.owner.userId, { name: "MacBook Touch ID" });
+    const tokenId = (await tokensOf(ns.owner.userId))[0].id;
+    const csrf = await csrfFor(session.cookie);
+    // The eight credential targets are the /settings members of `paths.auth` — the
+    // templates the states preview still renders draw them (ruling §5.2) — so the list is
+    // derived there, never spelled; the three ops-backed ones are `paths`' own.
+    const targets = [
+      ...SETTINGS_CREDENTIAL_TARGETS,
+      paths.tokenRevoke(tokenId),
+      paths.connectionRevoke("no-such-connection"),
+      paths.settingsExecutionUpdate,
+    ];
+    expect(targets.length).toBe(11);
+    const before = await settingsOf(session.cookie);
+
+    await withCountedOps([...Object.keys(ops)], async (invocations) => {
+      for (const target of targets) {
+        const answered = await formPost(
+          target,
+          { csrf, password: SEEDED_OWNER_PASSWORD, id: passkeyId, default_timeout_ms: "60000", max_timeout_ms: "60000" },
+          session.cookie,
+        );
+        expect(answered.status, `POST ${target}`).toBe(404);
+        expect(answered.headers.get("Location"), `POST ${target}`).toBeNull();
+      }
+      expect([...invocations.keys()].filter((name) => times(invocations, name) > 0)).toEqual([]);
+    });
+    const after = await settingsOf(session.cookie);
+    expect(after.passkeys).toEqual(before.passkeys);
+    expect(new Set(after.sessions.map((row) => row.id))).toEqual(new Set(before.sessions.map((row) => row.id)));
+    expect(after.twoFactor).toEqual(before.twoFactor);
+    expect(after.execution).toEqual(before.execution);
+    expect(await signsIn(ns.owner.username, SEEDED_OWNER_PASSWORD)).toBe(true);
   });
 });
 
@@ -5900,36 +5058,15 @@ function submitButtonHtml(html: string, value: string): string {
  * ------------------------------------------------------------------ */
 
 /**
- * The better-auth endpoints the credential forms post to, as their final path segment —
- * read off `paths.auth` rather than spelled, so a remount moves both sides together. Every
- * member EXCEPT `base` is a target: most are now hub-owned translation routes rather than
- * better-auth's own mount (better-auth's router allows `application/json` only, so a
- * server-rendered form cannot post to one), and each keeps the final segment of the
- * endpoint it fronts — which is what makes the final segment still name the endpoint.
- */
-const BETTER_AUTH_ACTIONS: ReadonlySet<string> = new Set(
-  Object.values<string>(paths.auth)
-    .filter((path) => path !== paths.auth.base)
-    .map((path) => path.split("/").pop() ?? ""),
-);
-
-/**
- * Every credential mutation /settings fronts, DERIVED from `paths.auth` rather than listed:
- * a translation target under the /settings prefix is one of §4's credential-management
- * endpoints, and a sixth added there is walked by case 26 without this or the case being
- * edited. The /login targets are not here and must not be — they have no session to gate
- * with, which is the whole reason they stand outside `mutation`.
+ * The eight /settings credential form targets the panes posted until decision 38's family
+ * 2, DERIVED from `paths.auth` rather than listed: the retained settings template still
+ * draws them (ruling §5.2), so they stay spelled there, and the gone-targets row walks
+ * every one of them — a target added there is walked without this or the row being edited.
+ * The /login targets are not here and must not be — they are kept routes (routes §0.4).
  */
 const SETTINGS_CREDENTIAL_TARGETS: readonly string[] = Object.values<string>(paths.auth).filter(
   (path) => path.startsWith(`${paths.settings}/`),
 );
-
-const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
-  "connect",
-  "push",
-  "decide",
-  ...BETTER_AUTH_ACTIONS,
-]);
 
 /**
  * Every SERVER-RENDERED, session-backed page — the walk's input for case 4.
@@ -5945,16 +5082,15 @@ const BROWSER_ONLY_TARGETS: ReadonlySet<string> = new Set([
  * `/approvals` and `/approvals/<id>` left with decision 38's first family, and nothing is
  * owed for them: the two targets their forms posted (`/approvals/:op`, `/approvals/push`)
  * are deleted, and the JSON routes that replaced them are `X-Pmcp-Csrf`-gated — pinned by
- * the write-gate describe and by the push rows' own 403. The list shrinks with each family
- * and the walk retires with the last.
+ * the write-gate describe and by the push rows' own 403. The seven `/settings` panes left
+ * with family 2 on the same terms: none of their eleven targets survives, and every JSON
+ * write that replaced one is refused without the header (the prefix describe's gate walk).
+ * The list shrinks with each family and the walk retires with the last.
  */
 async function sessionPages(): Promise<Record<string, string>> {
   const { userCode } = await requestDeviceCodes();
   const rendered: Record<string, string> = {};
   for (const path of [
-    // All seven panes, not just the landing one: a pane is a route, and a form that forgot
-    // its CSRF field on /settings/tokens is as unposted as one that forgot it on /settings.
-    ...PANES,
     `${paths.device}?user_code=${encodeURIComponent(userCode)}`,
   ]) {
     rendered[path] = await page(path);
@@ -6009,21 +5145,12 @@ function hygienic(row: AuditRow, secrets: string[]): void {
 const TOKEN_MATERIAL = tokenPattern(16);
 
 /* ------------------------------------------------------------------ *
- * Panes behind a rail (§13)
+ * The settings panes (§13)
  * ------------------------------------------------------------------ */
 
-/**
- * The accessible names of the two pane navigations each paned page renders. They are the
- * ONLY thing that tells them apart from each other and from the shell header, which
- * repeats `/settings` in every signed-in page — a walk that collected anchors by href
- * would read three navs as one. Spelled here and in the page; that agreement IS the pin.
- */
-const RAIL_NAV_LABEL = "Settings panes";
-const PILL_NAV_LABEL = "Settings panes, compact";
-const APP_RAIL_NAV_LABEL = "App panes";
-const APP_PILL_NAV_LABEL = "App panes, compact";
-
-/** §13's seven settings panes in rail order, read through `paths` and never respelled. */
+/** §13's seven settings panes in rail order, read through `paths` and never respelled —
+ *  the shell URLs the prefix-gate rows walk. (The rail walkers that read their markup went
+ *  with decision 38's family 2: the client draws the rail now.) */
 const PANES: readonly string[] = [
   paths.settings,
   paths.settingsTwoFactor,
@@ -6033,63 +5160,6 @@ const PANES: readonly string[] = [
   paths.settingsClients,
   paths.settingsExecution,
 ];
-
-/** One entry of a pane navigation. `marker` is "" when the entry carries none, which is
- *  §13's `none` cell said as an absence a walk can see. */
-type RailEntry = { href: string; label: string; marker: string; current: boolean };
-
-/**
- * The entries of ONE named pane navigation, in the order it drew them. Narrowing by the
- * nav's accessible name first is what makes this readable at all: `/settings` appears in
- * the shell header of every signed-in page and in both of this page's navigations.
- *
- * Inside an entry the walk reads STRUCTURE, never a class: an entry is one anchor holding
- * a label element and, when the pane has a marker, a trailing marker element.
- */
-function railEntries(html: string, navLabel: string): RailEntry[] {
-  const block = navBlock(html, navLabel);
-  if (block === null) return [];
-  const entries: RailEntry[] = [];
-  for (const anchor of block.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)) {
-    const parts = topLevelElements(anchor[2]);
-    entries.push({
-      href: decodeEntities(attributeOf(anchor[1], "href") ?? ""),
-      label: textOf(parts[0] ?? anchor[2]),
-      marker: parts.length > 1 ? textOf(parts[parts.length - 1]) : "",
-      current: attributeOf(anchor[1], "aria-current") === "page",
-    });
-  }
-  return entries;
-}
-
-/** One named navigation's own markup, or null when the page rendered none. Narrowing to
- *  it is what keeps the rail, the pill row and the shell header from being read as one. */
-function navBlock(html: string, navLabel: string): string | null {
-  const nav = new RegExp(`<nav\\b[^>]*aria-label="${navLabel}"[^>]*>([\\s\\S]*?)</nav>`).exec(html);
-  return nav === null ? null : nav[1];
-}
-
-/**
- * The element children of one element's inner HTML, at depth zero — how "the label and,
- * after it, the marker" is read without naming a class. Every tag a rail entry contains
- * is paired (`<span></span>`, never a void element), which is what lets a depth counter
- * stand in for a parser here.
- */
-function topLevelElements(inner: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (const tag of inner.matchAll(/<(\/?)[a-zA-Z][^>]*>/g)) {
-    if (tag[1] === "") {
-      if (depth === 0) start = tag.index;
-      depth += 1;
-    } else {
-      depth -= 1;
-      if (depth === 0) parts.push(inner.slice(start, tag.index + tag[0].length));
-    }
-  }
-  return parts;
-}
 
 /**
  * A fragment's TEXT: tags dropped, entities decoded, whitespace collapsed. The prose
@@ -6133,31 +5203,6 @@ function formsOn(html: string): string[] {
     actions.push(decodeEntities(attributeOf(form[1], "action") ?? ""));
   }
   return actions.sort();
-}
-
-/**
- * Every POST target the seven panes render, with the pane that drew it and the submission it
- * drew — including the ones that exist only under `?confirm=`, which is where §13 puts
- * Disable two-factor, Remove passkey, Revoke session, Revoke all others and the clients
- * pane's Revoke. A walk over the bare panes alone would see none of those five.
- */
-async function settingsPostTargets(
-  cookie: string,
-): Promise<Map<string, { pane: string; fields: Record<string, string> }>> {
-  const found = new Map<string, { pane: string; fields: Record<string, string> }>();
-  for (const pane of PANES) {
-    const bare = await page(pane, cookie);
-    for (const href of [null, ...confirmLinksOn(bare)]) {
-      const html = href === null ? bare : await page(href, cookie);
-      for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-        if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-        const action = decodeEntities(attributeOf(form[1], "action") ?? "");
-        if (!action.startsWith(`${paths.settings}/`)) continue;
-        found.set(action, { pane, fields: submissionOf(form[2]) });
-      }
-    }
-  }
-  return found;
 }
 
 /**
@@ -6208,61 +5253,6 @@ async function signsIn(username: string, password: string): Promise<boolean> {
   return sessionCookieOf(answered) !== null;
 }
 
-/**
- * The row ids the controls fronting one op NAME, as a set — never a count, because a
- * responsive pane may legally draw one row as two forms and §13 pins no control count.
- * The id is read from whichever place the target puts it: the action's `id` query
- * parameter (the final-segment convention every ops-backed target follows) or a hidden
- * control named `id` (what a dialog's form carries). Which of the two a page chose stays
- * the direction-B row's business.
- */
-function revokeTargets(html: string, op: string): Set<string> {
-  const found = new Set<string>();
-  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-    const url = new URL(decodeEntities(attributeOf(form[1], "action") ?? ""), ORIGIN);
-    if ((url.pathname.split("/").filter(Boolean).pop() ?? "") !== op) continue;
-    const id = url.searchParams.get("id") ?? submissionOf(form[2]).id ?? "";
-    if (id !== "") found.add(id);
-  }
-  return found;
-}
-
-/**
- * The one rendered control that names a row id: where it posts, the submission a browser
- * would send (the CSRF token included, as rendered), and THE WORD on its submit button —
- * §13's Revoke-vs-Remove is a label, and a label nothing reads is a claim nothing checks.
- * Throws rather than returning null: a page that draws no such control is a page whose
- * journey the walk can no longer describe.
- */
-function controlFor(
-  html: string,
-  id: string,
-): { action: string; fields: Record<string, string>; label: string } {
-  for (const form of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/g)) {
-    if ((attributeOf(form[1], "method") ?? "get").toLowerCase() !== "post") continue;
-    const action = decodeEntities(attributeOf(form[1], "action") ?? "");
-    const fields = submissionOf(form[2]);
-    if (new URL(action, ORIGIN).searchParams.get("id") !== id && fields.id !== id) continue;
-    const button = /<button\b[^>]*>([\s\S]*?)<\/button>/.exec(form[2]);
-    return { action, fields, label: textOf(button?.[1] ?? "") };
-  }
-  throw new Error(`the page rendered no control naming "${id}"`);
-}
-
-/**
- * One pane's WHOLE control surface: its own render joined with every `?confirm=` render it
- * links to. §13 puts the Connected clients pane's Revoke — and four credential controls —
- * behind a dialog that exists only under the query, so a walk over the bare pane sees none
- * of them. Joined rather than parsed, because the only walks that read this are form walks.
- */
-async function paneWithDialogs(pane: string, cookie: string): Promise<string> {
-  const bare = await page(pane, cookie);
-  const dialogs: string[] = [];
-  for (const href of confirmLinksOn(bare)) dialogs.push(await page(href, cookie));
-  return [bare, ...dialogs].join("\n");
-}
-
 /** `token_list`'s own answer for one namespace — the truth side of every Tokens-pane row,
  *  and the only place a key's display prefix comes from (`SeededToken` carries none). */
 async function tokensOf(ownerId: string): Promise<TokenInfo[]> {
@@ -6273,14 +5263,6 @@ async function tokensOf(ownerId: string): Promise<TokenInfo[]> {
 async function connectionsOf(ownerId: string): Promise<ConnectionRow[]> {
   return ((await ops.connection_list.handler(ownerId, {})) as { connections: ConnectionRow[] })
     .connections;
-}
-
-/** One pane's rail marker, read off the RAIL rather than off "the anchor with that href"
- *  — the pill row repeats every href markerless, and `Number("")` is 0, not NaN. */
-function markerOf(html: string, href: string): string {
-  const entry = railEntries(html, RAIL_NAV_LABEL).find((row) => row.href === href);
-  if (entry === undefined) throw new Error(`the rail carries no entry for "${href}"`);
-  return entry.marker;
 }
 
 /**
@@ -6383,60 +5365,4 @@ async function namespaceShape(): Promise<string> {
     .bind(world.ns.owner.userId)
     .all<Record<string, unknown>>();
   return JSON.stringify({ apps: apps.results, approvals: approvals.results });
-}
-
-/**
- * How often a name is NAMED in some text. Occurrences preceded by a word character do not
- * count, which is what keeps §7's aggregated `<slug>_<tool>` from reading as a second
- * mention of the tool inside it — and, unlike a trailing `\b`, it still finds a URI
- * template that ends in `}`.
- */
-function mentionPattern(name: string): RegExp {
-  return new RegExp(`(?<!\\w)${name.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`, "g");
-}
-
-function mentions(text: string, name: string): number {
-  return [...text.matchAll(mentionPattern(name))].length;
-}
-
-/**
- * One block of text per listed name: asserts each name is mentioned exactly once and in
- * listing order, then slices between one and the next. That is what makes a per-item claim
- * an assertion about ITS item — a page printing one line for everything fails here rather
- * than passing every block. It keys on the listed names alone and takes no markup grip.
- */
-function blocksOf(text: string, names: readonly string[]): Record<string, string> {
-  const at = names.map((name) => {
-    const found = [...text.matchAll(mentionPattern(name))].map((match) => match.index ?? -1);
-    expect(found.length, `"${name}" is named ${found.length} times, not once`).toBe(1);
-    return found[0];
-  });
-  for (let index = 1; index < at.length; index += 1) {
-    expect(at[index], `"${names[index]}" is not listed after "${names[index - 1]}"`).toBeGreaterThan(
-      at[index - 1],
-    );
-  }
-  const blocks: Record<string, string> = {};
-  names.forEach((name, index) => {
-    blocks[name] = text.slice(at[index], index + 1 < at.length ? at[index + 1] : text.length);
-  });
-  return blocks;
-}
-
-/** Every target a page posts to, `action=` and a submit button's `formaction=` alike —
- *  /apps draws Connect as the latter, so a walk over form actions alone would miss the
- *  very control the app page's own is compared against. */
-function postTargets(html: string): string[] {
-  return [...html.matchAll(/(?:form)?action="([^"]*)"/g)].map((match) => decodeEntities(match[1]));
-}
-
-/** The text of every anchor pointing at `href` — a tab's own count read without naming
- *  the element that draws it. Plural because both pane navigations point at the same URLs
- *  and are anchors too. */
-function linkTexts(html: string, href: string): string[] {
-  const found: string[] = [];
-  for (const anchor of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)) {
-    if (decodeEntities(attributeOf(anchor[1], "href") ?? "") === href) found.push(textOf(anchor[2]));
-  }
-  return found;
 }

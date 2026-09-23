@@ -533,31 +533,18 @@ async function main(): Promise<number> {
       return `/app.js 200 ${script.headers.get("content-type") ?? ""}; /app.css 200 ${sheet.headers.get("content-type") ?? ""}`;
     });
 
-    await step("§13 · the /settings panes render behind the prefix gate, and the old paths answer as pinned", async () => {
-      // D15's page legs. The suite owns the panes' content; the deployment can still get
-      // the ROUTING wrong (a pane 404ing, the 301 not shipping, the prefix gate reading a
-      // bearer), and only a walk over the real origin says so. The bearer leg carries the
-      // device-flow session as a header and nothing else — §13's gate never reads
-      // Authorization, so it must bounce to /login exactly as an anonymous request does.
+    await step("§13 · the /settings panes answer the shell behind the prefix gate, their read and writes answer at /api/hub/settings, and the old paths answer as pinned", async () => {
+      // D15's page legs, in their SPA shape (decision 38): the pane URLs answer the shell,
+      // and the one read every pane draws from is `GET /api/hub/settings`. The suite owns
+      // the content; the deployment can still get the ROUTING wrong (a pane 404ing, the 301
+      // not shipping, the prefix gate reading a bearer), and only a walk over the real
+      // origin says so.
       const withCookie = { headers: { Cookie: sessionCookie }, redirect: "manual" as const };
-      const settings = await fetch(`${ORIGIN}/settings`, withCookie);
-      expect(settings.status === 200, `authenticated /settings → ${settings.status}`);
-      const rail = await settings.text();
-      for (const pane of ["/settings/two-factor", "/settings/passkeys", "/settings/sessions", "/settings/tokens", "/settings/clients"]) {
-        expect(rail.includes(`href="${pane}"`), `/settings rail links no ${pane}`);
+      for (const pane of ["/settings", "/settings/clients", "/settings/two-factor"]) {
+        const answered = await fetch(`${ORIGIN}${pane}`, withCookie);
+        expect(answered.status === 200, `authenticated ${pane} → ${answered.status}`);
+        expect((await answered.text()).includes(`id="pmcp-bootstrap"`), `${pane} carried no bootstrap island`);
       }
-      const clients = await fetch(`${ORIGIN}/settings/clients`, withCookie);
-      expect(clients.status === 200, `authenticated /settings/clients → ${clients.status}`);
-      // The two-factor pane is the one whose render needs a QR encoder shipped with the
-      // bundle: a deployment missing it answers 500 where the suite is green. The fresh
-      // namespace has no factor, so the arm this walk always meets is the not-enrolled
-      // one, and its own control is what says the card drew rather than just the shell.
-      const twoFactor = await fetch(`${ORIGIN}/settings/two-factor`, withCookie);
-      expect(twoFactor.status === 200, `authenticated /settings/two-factor → ${twoFactor.status}`);
-      expect(
-        (await twoFactor.text()).includes("Enable two-factor"),
-        "/settings/two-factor rendered no Enable two-factor control",
-      );
       const alias = await fetch(`${ORIGIN}/settings/password`, withCookie);
       expect(alias.status === 404, `/settings/password (no alias, §13) → ${alias.status}`);
       const moved = await fetch(`${ORIGIN}/oauth/connections`, withCookie);
@@ -565,17 +552,21 @@ async function main(): Promise<number> {
         moved.status === 301 && moved.headers.get("location") === "/settings/clients",
         `/oauth/connections → ${moved.status} ${moved.headers.get("location") ?? ""}`,
       );
-      const bearerOnly = await fetch(`${ORIGIN}/settings/change-password`, {
+      // The fresh namespace holds no second factor, so the read's status is the one this
+      // walk always meets.
+      const read = await hubJson("/api/hub/settings", sessionCookie);
+      const twoFactor = asRecord(read.twoFactor, "GET /api/hub/settings twoFactor");
+      expect(twoFactor.enabled === false, `GET /api/hub/settings twoFactor → ${JSON.stringify(twoFactor)}`);
+      // The bearer leg carries the device-flow session as a header and nothing else — the
+      // prefix gate never reads Authorization, so it is the same 401 as no credential.
+      const bearerOnly = await fetch(`${ORIGIN}/api/hub/settings/change-password`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/x-www-form-urlencoded" },
-        body: "csrf=none",
+        headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
+        body: "{}",
         redirect: "manual",
       });
-      expect(
-        bearerOnly.status === 302 && (bearerOnly.headers.get("location") ?? "").startsWith("/login"),
-        `bearer-only POST /settings/change-password → ${bearerOnly.status} ${bearerOnly.headers.get("location") ?? ""}`,
-      );
-      return `/settings 200 with the six-pane rail; /settings/clients 200; /settings/two-factor 200 drawing the Enable control; /settings/password 404; /oauth/connections 301 → /settings/clients; bearer-only change-password → 302 /login`;
+      expect(bearerOnly.status === 401, `bearer-only POST /api/hub/settings/change-password → ${bearerOnly.status}`);
+      return `/settings, /settings/clients, /settings/two-factor 200 shells; /settings/password 404; /oauth/connections 301 → /settings/clients; GET /api/hub/settings 200 with two-factor off; bearer-only change-password → 401`;
     });
 
     await step("§13 · /agents answers the shell and its API reports the agent with the grant it holds", async () => {

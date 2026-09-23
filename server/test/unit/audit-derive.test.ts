@@ -1,8 +1,8 @@
 // The audit explorer as a pure table (§13 decision 36, strategy §3): every reading `/audit`
 // makes of one row set, with no React, no DOM and no clock of its own.
 //
-// A `unit` file over `web/` source — the first; `approvals-derive.test.ts` is the second, for
-// the same reason. That is what `derive.ts`'s "no React, no `@/` runtime imports" buys, and it
+// A `unit` file over `web/` source — the first; `approvals-derive.test.ts` and
+// `settings-derive.test.ts` followed, for the same reason. That is what `derive.ts`'s "no React, no `@/` runtime imports" buys, and it
 // is the reason this file may exist at all: the module is reachable from a plain-Node program,
 // so the rules that decide what a row SAYS are pinned here rather than through a browser.
 //

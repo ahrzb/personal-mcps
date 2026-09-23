@@ -22,7 +22,8 @@ import type { Seed } from "../seed";
 
 /* ------------------------------ the one cast ------------------------------ */
 
-const pendingSetScene: ApprovalRow = {
+/** Exported: /settings' seeds count the same two for the nav badge. */
+export const pendingSetScene: ApprovalRow = {
   id: "apr_8f2k",
   agentSlug: "claude",
   appSlug: "home",
@@ -34,7 +35,7 @@ const pendingSetScene: ApprovalRow = {
   expiresAt: "2026-08-24T15:29:55.000Z",
 };
 
-const pendingCreatePage: ApprovalRow = {
+export const pendingCreatePage: ApprovalRow = {
   id: "apr_3d7m",
   agentSlug: "cron",
   appSlug: "notion",

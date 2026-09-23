@@ -1388,8 +1388,8 @@ export function ceilingNotice(ceiling: number, total: number): string {
  * The page's own number, time and size spellings.
  *
  * Here rather than in `lib/format.ts` because that file is an EXACT copy of the server's
- * formatter and says so: /settings still reads the original, and adding this page's
- * spellings there would break the claim that the two cannot drift. Everything below is
+ * formatter and says so — the spellings the migrated pages printed — and adding this page's
+ * there would make it a second thing. Everything below is
  * UTC — the subtitle says so, and a screenshot must render identically wherever it was taken.
  */
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

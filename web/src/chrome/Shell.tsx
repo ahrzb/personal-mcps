@@ -58,26 +58,22 @@ export function Shell({
   );
 }
 
-/** The five nav destinations, in the order §13 renders them. `routed` marks the ones this
- *  client owns — every family but `/settings` — and therefore the ones that are `Link`s. */
+/** The five nav destinations, in the order §13 renders them — every one a route of this
+ *  client's since /settings moved (decision 38), so every one is a `Link`. */
 const NAV: {
   key: "apps" | "agents" | "audit" | "approvals" | "settings";
   label: string;
   href: string;
-  routed: boolean;
 }[] = [
-  { key: "apps", label: "Apps", href: paths.apps, routed: true },
-  { key: "agents", label: "Agents", href: paths.agents, routed: true },
-  { key: "audit", label: "Audit", href: paths.audit(), routed: true },
-  { key: "approvals", label: "Approvals", href: paths.approvals, routed: true },
-  { key: "settings", label: "Settings", href: paths.settings, routed: false },
+  { key: "apps", label: "Apps", href: paths.apps },
+  { key: "agents", label: "Agents", href: paths.agents },
+  { key: "audit", label: "Audit", href: paths.audit() },
+  { key: "approvals", label: "Approvals", href: paths.approvals },
+  { key: "settings", label: "Settings", href: paths.settings },
 ];
 
 /**
- * One nav entry. `/apps`, `/agents`, `/audit` and `/approvals` are this client's own routes
- * and stay client-side links; `/settings` is still a server-rendered page, so it is a plain
- * anchor — a client-side navigation to a route this router does not own would render nothing
- * at all.
+ * One nav entry, as a client-side link.
  *
  * `onNavigate` fires on activation, before the navigation: the drawer passes its own close
  * so a tapped entry dismisses it. The header's nav bar passes nothing, having nothing to
@@ -97,19 +93,11 @@ function NavEntry({
   const badge =
     item.key === "approvals" ? <PendingBadge /> : null;
   const current = item.key === active ? "page" : undefined;
-  if (item.routed) {
-    return (
-      <Link className={className} to={item.href} aria-current={current} onClick={onNavigate}>
-        {item.label}
-        {badge}
-      </Link>
-    );
-  }
   return (
-    <a className={className} href={item.href} aria-current={current} onClick={onNavigate}>
+    <Link className={className} to={item.href} aria-current={current} onClick={onNavigate}>
       {item.label}
       {badge}
-    </a>
+    </Link>
   );
 }
 

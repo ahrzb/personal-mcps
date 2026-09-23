@@ -6,6 +6,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import type { Router } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import { AppsPage } from "@/features/apps/AppsPage";
 import { AppNewPage } from "@/features/apps/AppNewPage";
 import { AppDetailPage } from "@/features/app-detail/AppDetailPage";
@@ -16,18 +17,20 @@ import { AgentAppPage } from "@/features/agents/AgentAppPage";
 import { AuditPage } from "@/features/audit/AuditPage";
 import { ApprovalsPage } from "@/features/approvals/ApprovalsPage";
 import { ApprovalDetailPage } from "@/features/approvals/ApprovalDetailPage";
+import { SettingsPage } from "@/features/settings/SettingsPage";
+import { settingsPaneOf } from "@/features/settings/derive";
 import { APP_PANES, AGENT_PANES, paths } from "@/lib/paths";
 import type { AppPane, AgentPane } from "@/lib/paths";
 
 /**
- * The route families this client owns, and nothing else. `/settings`, `/login`, `/device` and
- * `/oauth/consent` are still server-rendered pages — the router never sees one, and the
- * shell's nav link to `/settings` is a plain anchor.
+ * The route families this client owns, and nothing else. `/login`, `/device` and
+ * `/oauth/consent` are still server-rendered pages — the router never sees one, and nothing
+ * the shell draws links to them.
  *
  * Adding a family here is adding a page, and a page the Worker does not serve a shell for is
  * unreachable — so each one arrives with its shell route. `/audit` became the third on
  * 2026-09-21 (decision 36); `/approvals` and `/approvals/<id>` the fourth on 2026-09-23, the
- * first of decision 38's move of every page onto the SPA.
+ * first of decision 38's move of every page onto the SPA, and `/settings` the fifth.
  */
 
 /**
@@ -231,6 +234,37 @@ const approvalDetailRoute = createRoute({
   component: ApprovalDetailPage,
 });
 
+/**
+ * `/settings` — the landing pane, Password. It has no `/settings/password` alias (the Worker
+ * 404s that document), which is why it is a route of its own rather than a `$pane` value.
+ *
+ * Every pane is keyed by its name, so a pane switch mounts a fresh page exactly as a GET drew
+ * a fresh document: no notice held over, no typed password kept, no enrolment carried along.
+ */
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  validateSearch: passThroughSearch,
+  component: () => <SettingsPage key="password" pane="password" />,
+});
+
+/** `/settings/<pane>` — the other six. A segment that is not one leaves the pane space, as
+ *  the Worker's 404 does for the document. */
+const settingsPaneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/$pane",
+  validateSearch: passThroughSearch,
+  beforeLoad: ({ params }) => {
+    if (settingsPaneOf(params.pane) === null) throw redirect({ to: paths.settings, replace: true });
+  },
+  component: SettingsPaneRoute,
+});
+
+function SettingsPaneRoute(): ReactNode {
+  const pane = settingsPaneOf(settingsPaneRoute.useParams().pane) ?? "password";
+  return <SettingsPage key={pane} pane={pane} />;
+}
+
 /** The tree both mounts share: `main.tsx` builds a browser-history router over it, and the
  *  preview gallery a memory-history one — which is what lets the gallery show a ROUTE
  *  rather than a component. */
@@ -247,6 +281,8 @@ export const routeTree = rootRoute.addChildren([
   auditRoute,
   approvalsRoute,
   approvalDetailRoute,
+  settingsRoute,
+  settingsPaneRoute,
 ]);
 
 /** The router, built once. No lazy routes: the build is one file by configuration (the

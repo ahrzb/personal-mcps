@@ -1,8 +1,8 @@
 /**
  * The URLs the client navigates to, and the pane tables behind them.
  *
- * A COPY of `server/src/app-routes.ts`'s two pane lists and the `/apps` and `/agents` arms
- * of `pages/model.ts`'s `paths`, for the reason `web/src/lib/types.ts` states: the client is
+ * A COPY of `server/src/app-routes.ts`'s two pane lists and the `/apps`, `/agents`,
+ * `/approvals` and `/settings` arms of `pages/model.ts`'s `paths`, for the reason `web/src/lib/types.ts` states: the client is
  * outside the Worker's dependency closure, so nothing is imported across that line. The
  * spellings are load-bearing — an existing bookmark must keep resolving — so each is
  * written here exactly as the server writes it, and the router validates against these
@@ -35,7 +35,7 @@ export type AgentPane = (typeof AGENT_PANES)[number];
  * groups without inventing a third heading.
  *
  * No `short` column: the app and agent pill rows draw the rail's own label (only
- * /settings shortens one, and /settings is not this client's).
+ * /settings shortens one, and it has its own table, `SETTINGS_PANES` below).
  */
 export const APP_PANE_TABLE: readonly { pane: AppPane; label: string; group: string | null }[] = [
   { pane: "catalog", label: "Catalog", group: "App" },
@@ -96,6 +96,85 @@ export const paths = {
   agentApp: (slug: string, app: string): string =>
     `/agents/${encodeURIComponent(slug)}/apps/${encodeURIComponent(app)}`,
   approval: (id: string): string => `/approvals/${encodeURIComponent(id)}`,
+  /** One /settings pane's own URL. The landing pane (Password) is `/settings` itself and
+   *  has no alias — `/settings/password` is the Worker's 404. */
+  settingsPane: (pane: SettingsPane): string => (pane === "password" ? "/settings" : `/settings/${pane}`),
+  /** A pane with one destructive dialog open: `?confirm=` rides the URL of the pane that
+   *  OWNS the control (`SETTINGS_CONFIRM_PANE`), and `id` names the row where there is one. */
+  settingsConfirm: (pane: SettingsPane, kind: SettingsConfirmKind, id?: string): string =>
+    `/settings${pane === "password" ? "" : `/${pane}`}${query(id === undefined ? { confirm: kind } : { confirm: kind, id })}`,
+} as const;
+
+/**
+ * §13's seven /settings panes, in rail order — also the phone's pill order. `label` is the
+ * rail's and `short` the pill's (they differ for Connected clients alone); `group` is the
+ * rail heading. `pages/model.ts`'s `SETTINGS_PANES`, verbatim.
+ */
+export const SETTINGS_PANES = [
+  { pane: "password", label: "Password", short: "Password", group: "Sign-in" },
+  { pane: "two-factor", label: "Two-factor", short: "Two-factor", group: "Sign-in" },
+  { pane: "passkeys", label: "Passkeys", short: "Passkeys", group: "Sign-in" },
+  { pane: "sessions", label: "Sessions", short: "Sessions", group: "Access" },
+  { pane: "tokens", label: "Tokens", short: "Tokens", group: "Access" },
+  { pane: "clients", label: "Connected clients", short: "Clients", group: "Access" },
+  { pane: "execution", label: "Execution", short: "Execution", group: "Runtime" },
+] as const;
+export type SettingsPane = (typeof SETTINGS_PANES)[number]["pane"];
+
+/** The five destructive confirmations /settings asks, by their `?confirm=` word. */
+export type SettingsConfirmKind =
+  | "disable-two-factor"
+  | "remove-passkey"
+  | "revoke-session"
+  | "revoke-other-sessions"
+  | "revoke-connection";
+
+/**
+ * Which pane OWNS each confirmation — where its link is drawn, where its dialog opens and
+ * where its write lands back. One table, so the same `?confirm=` carried to another pane's
+ * URL is no dialog at all (`pages/model.ts`'s `SETTINGS_CONFIRM_PANE`).
+ */
+export const SETTINGS_CONFIRM_PANE: Record<SettingsConfirmKind, SettingsPane> = {
+  "disable-two-factor": "two-factor",
+  "remove-passkey": "passkeys",
+  "revoke-session": "sessions",
+  "revoke-other-sessions": "sessions",
+  "revoke-connection": "clients",
+};
+
+/**
+ * /settings' JSON surface, relative to `/api/hub` as `ApiClient` takes it — the one read and
+ * the eleven writes (routes design §2), each the old form target's own path under the
+ * `/api/hub/settings/*` recent-auth prefix.
+ *
+ * Also a SERVER contract: `server/test/worker/web-pages.test.ts` imports this table and walks
+ * every entry against the Worker, so a write the client posts and no route answers fails
+ * there rather than on a phone.
+ */
+export const settingsApi = {
+  read: "/settings",
+  totpEnable: "/settings/two-factor/enable",
+  totpVerify: "/settings/two-factor/verify-totp",
+  totpDisable: "/settings/two-factor/disable",
+  backupCodesGenerate: "/settings/two-factor/generate-backup-codes",
+  passkeyDelete: "/settings/passkey/delete-passkey",
+  sessionRevoke: "/settings/revoke-session",
+  revokeOtherSessions: "/settings/revoke-other-sessions",
+  changePassword: "/settings/change-password",
+  tokenRevoke: "/settings/tokens/token_revoke",
+  connectionRevoke: "/settings/clients/connection_revoke",
+  executionUpdate: "/settings/execution/hub_settings_update",
+} as const;
+
+/**
+ * better-auth's two passkey REGISTRATION endpoints, which the Passkeys pane's **Add passkey**
+ * calls directly: a WebAuthn ceremony is two fetches with the browser's authenticator between
+ * them, not a form, so there is nothing for a hub route to translate. better-auth's own
+ * `freshSessionMiddleware` guards both.
+ */
+export const passkeyRegistration = {
+  options: "/api/auth/passkey/generate-register-options",
+  verify: "/api/auth/passkey/verify-registration",
 } as const;
 
 /** §2's reserved role: granted like any other, declared by nobody, and the one the listing

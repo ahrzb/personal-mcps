@@ -14,6 +14,7 @@ import type {
   AuditWindowResponse,
   ApprovalDetailRead,
   ApprovalsResponse,
+  SettingsRead,
   CapabilitiesResponse,
   CatalogFamily,
   CatalogResponse,
@@ -23,6 +24,7 @@ import type {
   TokensResponse,
 } from "./types";
 import type { ApiClient } from "./http";
+import { settingsApi } from "./paths";
 
 /**
  * Every query key this client uses, array-shaped and MOST GENERAL FIRST so a prefix
@@ -53,6 +55,7 @@ export const keys = {
   /** Under `["approvals"]`, so `approval_decide`'s prefix invalidation reaches the one row a
    *  detail page holds as well as both lists. */
   approval: (id: string) => ["approvals", "one", id] as const,
+  settings: () => ["settings"] as const,
 } as const;
 
 /**
@@ -260,6 +263,18 @@ export function approvalQuery(api: ApiClient, id: string) {
     queryFn: () => api.get<ApprovalDetailRead>(`/approvals/${encodeURIComponent(id)}`),
     staleTime: STALE.other,
     retry: false,
+  });
+}
+
+/**
+ * /settings' one read: the rail and all seven panes (§13). Behind the recent-auth prefix, so
+ * a stale session is a 401 like any other — `lib/http` sends it to /login.
+ */
+export function settingsQuery(api: ApiClient) {
+  return queryOptions({
+    queryKey: keys.settings(),
+    queryFn: () => api.get<SettingsRead>(settingsApi.read),
+    staleTime: STALE.other,
   });
 }
 

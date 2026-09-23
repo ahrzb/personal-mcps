@@ -1,18 +1,22 @@
 import { createContext, useContext } from "react";
-import type { Violation } from "@/lib/types";
+import type { TotpEnrollment, Violation } from "@/lib/types";
 
 /**
  * The state gallery's one seam into the pages, and the reason it needs one.
  *
  * Most of what `server/dev/fixtures.ts` shows is reachable without a seam: a query result is
- * seeded into the cache, and an open dialog or a selected row is a search parameter. Four
+ * seeded into the cache, and an open dialog or a selected row is a search parameter. Some
  * states are neither — they are the transient result of a submit that the gallery cannot
  * perform and no resource returns:
  *
  *  - a minted key, which is shown exactly once and deliberately never cached (§4/§15);
  *  - a refused save's field-scoped violations, drawn against the editor's local draft;
  *  - the create receipt;
- *  - §13's connecting screen, whose authorize URL comes from a single-use state row.
+ *  - §13's connecting screen, whose authorize URL comes from a single-use state row;
+ *  - /settings' TOTP enrolment and backup codes, shown once for the same reason as a key.
+ *
+ * Two more arms (`recordSearch`, `openRun`) are typed-in or reading-position state, each
+ * saying below why it is not in the URL.
  *
  * So each owning component reads this context for its INITIAL value and is otherwise
  * unchanged. In production the context is empty and every arm reads as absent, which is the
@@ -54,6 +58,17 @@ export type Transient = {
    * (postmortem 2026-09-21).
    */
   openRun?: number;
+  /**
+   * /settings' two-factor reveals. Both are the answer to a POST that is shown once and never
+   * cached — `enrollment` the in-flight TOTP secret and its QR, `backupCodes` the ten codes an
+   * enable or a regenerate mints (§4/§15) — so, like `revealedToken`, a seed has no other way
+   * to draw them.
+   */
+  enrollment?: TotpEnrollment;
+  backupCodes?: string[];
+  /** What the owner typed into the Execution pane before a refused Save — kept on screen
+   *  beside the op's sentence (`refusal`), which is the whole point of that state. */
+  executionDraft?: { defaults: string; maximum: string };
 };
 
 const TransientContext = createContext<Transient>({});

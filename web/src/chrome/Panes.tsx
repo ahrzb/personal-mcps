@@ -71,6 +71,7 @@ export function PaneRail({ label, groups }: { label: string; groups: PaneGroup[]
               key={entry.href}
               className={entry.marker?.dim === true ? "rail-link rail-link--dim" : "rail-link"}
               to={entry.href}
+              activeOptions={CURRENT_ONLY}
               aria-current={entry.current ? "page" : undefined}
             >
               <span title={entry.label}>{entry.label}</span>
@@ -100,13 +101,29 @@ export function PanePills({ label, entries }: { label: string; entries: PaneEntr
   return (
     <nav className="pill-row" aria-label={label}>
       {entries.map((entry) => (
-        <Link key={entry.href} className="pill" to={entry.href} aria-current={entry.current ? "page" : undefined}>
+        <Link
+          key={entry.href}
+          className="pill"
+          to={entry.href}
+          activeOptions={CURRENT_ONLY}
+          aria-current={entry.current ? "page" : undefined}
+        >
           <span>{entry.short}</span>
         </Link>
       ))}
     </nav>
   );
 }
+
+/**
+ * `entry.current` is the ONE authority on which entry is marked. TanStack's `Link` also
+ * stamps `aria-current="page"` on any link it judges active, and by default that is a PREFIX
+ * match: `/settings` would read as current on every settings pane, and the Password entry
+ * would draw as selected beside the real one. Matching the exact path only (the query being
+ * a pane's own state, `?kind=` and `?sel=` alike) makes the router's judgement agree with
+ * `current` rather than add to it.
+ */
+const CURRENT_ONLY = { exact: true, includeSearch: false } as const;
 
 /** What the narrow level header says: the way up, and where you are. */
 export type LevelHeaderModel = { backHref: string; backLabel: string; title: string };

@@ -13,8 +13,11 @@
  * a wire row, a search bag, or a refusal.
  */
 
-import { formatLastSeen } from "@/lib/format";
-import type { AppKind, AppRow, TokenInfo, Violation } from "@/lib/types";
+// Relative rather than `@/`: /settings' pure module reuses `shownSentence` below, and it is
+// pinned from plain Node (`server/test/unit/settings-derive.test.ts`), where the alias does
+// not resolve.
+import { formatLastSeen } from "../../lib/format";
+import type { AppKind, AppRow, TokenInfo, Violation } from "../../lib/types";
 
 /**
  * A route's search as this client's router hands it over: a string per key, an array where
@@ -270,8 +273,9 @@ export function createErrors(refused: Refusal): AppNewErrors {
 
 /** One violation as the PAGE says it: the op's own sentence with the `"<field>" ` quote
  *  prefix dropped where it has one (the control's label already says which field this is),
- *  capitalised, and ended with exactly one period. The op's words, not the page's. */
-function shownSentence({ field, reason }: Violation): string {
+ *  capitalised, and ended with exactly one period. The op's words, not the page's — and the
+ *  Execution pane's too (`web.ts`'s `shownSentence` is the server's copy). */
+export function shownSentence({ field, reason }: Violation): string {
   const prefix = `"${field}" `;
   const said = reason.startsWith(prefix) ? reason.slice(prefix.length) : reason;
   const ended = said.endsWith(".") ? said : `${said}.`;

@@ -77,6 +77,7 @@ export const PREVIEW_PAGES = [
   "audit",
   "approvals",
   "approval-detail",
+  "settings",
 ] as const;
 
 export type PreviewName = (typeof PREVIEW_PAGES)[number];

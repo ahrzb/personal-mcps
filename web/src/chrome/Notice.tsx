@@ -56,25 +56,35 @@ export function NoticeBanner({
  * one on screen, and a repeat of the same one neither loops nor re-announces.
  */
 export function useFlash(search: Record<string, unknown>): Notice | null {
+  const flash = useFlashParams(search);
+  return flash === null ? null : noticeOf(flash);
+}
+
+/**
+ * The same latch, answering the whole search the flash arrived on rather than the notice
+ * drawn from it — for a page that reads more of the flash than the banner does. /settings'
+ * Password pane is the one: the `field=` a refused change names outlives the strip exactly as
+ * the banner beside it does. `null` when no flash has arrived.
+ */
+export function useFlashParams(search: Record<string, unknown>): URLSearchParams | null {
   const drop = useDropSearchKeys();
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(search)) {
     if (typeof value === "string") params.set(key, value);
   }
-  const arriving = noticeOf(params);
   const identity = hasNotice(params) ? params.toString() : "";
-  const [held, setHeld] = useState<Notice | null>(arriving);
+  const [held, setHeld] = useState<URLSearchParams | null>(identity === "" ? null : params);
   useEffect(() => {
     if (identity === "") return;
-    setHeld(arriving);
+    setHeld(params);
     drop(Object.values(NOTICE_KEYS));
-    // `arriving` and `drop` both close over the current location and are therefore
+    // `params` and `drop` both close over the current location and are therefore
     // deliberately NOT dependencies: re-running on their identity would strip the keys a
     // second time after the navigation that already removed them.
   }, [identity]);
   // Whichever is authoritative: the URL while it still carries the flash, the held copy
   // once the strip has taken the keys off it.
-  return identity === "" ? held : arriving;
+  return identity === "" ? held : params;
 }
 
 /** Tone-appropriate glyph — danger, warning, then success; `stroke="currentColor"` so it

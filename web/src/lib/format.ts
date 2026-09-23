@@ -3,9 +3,10 @@
  * alert class a notice's tone earns.
  *
  * A COPY of `server/src/pages/format.ts`, for `web/src/lib/types.ts`'s reason — and the
- * copy is EXACT on purpose. `/settings` is still server rendered and still reads the
- * original, so a stamp that drifted between the two renderings would be read as meaning:
- * /apps's Last seen column and /settings's token stamps state the same kind of fact.
+ * copy is EXACT on purpose: every page this client took over (/apps, /approvals, /settings)
+ * printed its stamps through the original, and pass 1 holds the look constant, so a stamp
+ * must read here exactly as it read there. The original retires with the server templates
+ * (decision 38, family 5).
  *
  * The one behavioural difference from the server's copy is the clock, and it is not a
  * choice: the server formatted against a render instant carried in props, and the client

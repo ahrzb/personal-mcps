@@ -6,10 +6,11 @@ import type { NoticeTone } from "./format";
  * The SPA mostly does not redirect after its own writes — a mutation's answer is in hand, so
  * it renders the outcome directly — but these keys still arrive two ways: three retained
  * server redirects land on SPA routes carrying them (`POST /apps/connect`'s refusal arm, the
- * upstream OAuth callback, and `/login`'s `signedOut`), and an approval decision lands on
- * `/approvals` with them from either approvals page, exactly as its 303 did
- * (`features/approvals/derive.decisionLanding`). So the keys are read on every search change
- * rather than only at first mount, and stripped with a replacing navigation once shown.
+ * upstream OAuth callback, and `/login`'s `signedOut`), and the JSON writes that replaced a
+ * 303 land with them exactly where it did — an approval decision on `/approvals`
+ * (`features/approvals/derive.decisionLanding`), every /settings write on its pane through the
+ * server's own `next`. So the keys are read on every search change rather than only at first
+ * mount, and stripped with a replacing navigation once shown.
  *
  * A COPY of `pages/model.ts`'s `NOTICE_KEYS` and `web.ts`'s `noticeOf`, spelled here for
  * `web/src/lib/types.ts`'s reason. The server still WRITES them, so the two spellings must
@@ -19,10 +20,9 @@ export const NOTICE_KEYS = {
   done: "done",
   failed: "failed",
   reason: "reason",
-  /** /settings's Password pane extra — never written to an SPA route, kept so the stripper
-   *  removes it if a stale link carries it here. */
+  /** The Password pane's extra: which control a refused change named (§13). */
   field: "field",
-  /** The same, for how many sessions a password change ended. */
+  /** The Password pane's extra: how many other sessions a password change ended. */
   signedOut: "signedOut",
 } as const;
 
@@ -35,7 +35,9 @@ export type Notice = { tone: NoticeTone; title?: string; message: string };
  */
 export function noticeOf(search: URLSearchParams): Notice | null {
   const done = search.get(NOTICE_KEYS.done);
-  if (done !== null) return { tone: "success", message: `${humanize(done)} done.` };
+  if (done !== null) {
+    return done === CHANGE_PASSWORD ? passwordDone(search) : { tone: "success", message: `${humanize(done)} done.` };
+  }
   const failed = search.get(NOTICE_KEYS.failed);
   if (failed === null) return null;
   // §13 (G52): a decision that lost its race — decided or expired between the render and
@@ -54,6 +56,29 @@ export function noticeOf(search: URLSearchParams): Notice | null {
  *  so a route change with no flash does not push a redundant history entry. */
 export function hasNotice(search: URLSearchParams): boolean {
   return Object.values(NOTICE_KEYS).some((key) => search.has(key));
+}
+
+/** The Password pane's op key — the one flash with copy of its own. */
+const CHANGE_PASSWORD = "change_password";
+
+/**
+ * §13's Password-pane success copy (`web.ts`'s `passwordDone`) — the one outcome spelled out
+ * rather than named by its op, because three things are worth saying: what changed, what it
+ * cost in sessions (only when the box was ticked, which is when `signedOut` is present), and
+ * what it did NOT touch — true by construction, since no key derives from the password.
+ */
+function passwordDone(search: URLSearchParams): Notice {
+  const signedOut = search.get(NOTICE_KEYS.signedOut);
+  return {
+    tone: "success",
+    title: "Password updated.",
+    message: [
+      signedOut === null ? null : `${signedOut} other session(s) were signed out — this one stays.`,
+      "App and agent tokens keep working: they do not derive from the password.",
+    ]
+      .filter((line): line is string => line !== null)
+      .join(" "),
+  };
 }
 
 /** `app_archive` → "App archive" — an op key as a sentence's first words. */

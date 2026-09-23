@@ -520,6 +520,116 @@ export type PushSubscribeBody = {
   subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
 };
 
+/* ------------------------------------------------------------------ /settings ---- */
+
+/** Whether TOTP is on — all `/get-session` reports (`twoFactorEnabled`). The backup codes
+ *  live encrypted in identity's own table and no endpoint counts them, so the enabled arm
+ *  carries nothing else. */
+export type TwoFactorSummary = { enabled: false } | { enabled: true };
+
+/** One passkey (`pages/model.ts`'s `PasskeyRow`). ISO-8601 stamps. */
+export type PasskeyRow = {
+  id: string;
+  /** What the authenticator reported, else the model its AAGUID names, else "Passkey". */
+  name: string;
+  addedAt: string;
+  /** §5's column; null until the passkey's first sign-in. */
+  lastUsedAt: string | null;
+};
+
+/** One signed-in session (`pages/model.ts`'s `SessionRow`). NEVER carries the session
+ *  token (§15) — a revoke names the row by `id` and the server maps it. */
+export type SessionRow = {
+  id: string;
+  /** "Chrome on Windows", or "pmcp CLI" for a device-flow session. Untrusted display data. */
+  client: string;
+  source: "web" | "cli";
+  /** ISO-8601. The CURRENT row's is also the "Confirmed your identity N minutes ago" clock:
+   *  the recent-auth gate judges freshness on this value. */
+  createdAt: string;
+  /** ISO-8601. */
+  lastActiveAt: string;
+  /** The session asking — badged "current", never revocable from its own row. */
+  current: boolean;
+};
+
+/** One row of the Tokens pane (`pages/model.ts`'s `TokenRow`): `token_list` minus revoked
+ *  rows, with `expired` judged at read time because it also picks the control's word
+ *  (Revoke a live key, Remove an expired one). Epoch ms. */
+export type SettingsTokenRow = {
+  id: string;
+  prefix: string;
+  kind: "agent" | "app";
+  /** The app or agent slug the key is bound to. */
+  boundTo: string;
+  createdAt: number;
+  /** null: never expires. */
+  expiresAt: number | null;
+  /** null: never presented. */
+  lastUsedAt: number | null;
+  expired: boolean;
+};
+
+/** An in-flight TOTP enrolment, as `POST …/two-factor/enable` answers it — `enrollmentOf`'s
+ *  output. A credential in flight: held in component state only, never cached, never a URL. */
+export type TotpEnrollment = {
+  /** better-auth's `otpauth://` URI, which the QR encodes. */
+  totpUri: string;
+  /** The QR as a self-contained `data:image/svg+xml` URI — the card fetches nothing. */
+  qrDataUri: string;
+  /** The base32 secret grouped in fours for manual entry: "JBSW Y3DP EHPK 3PXP". */
+  secret: string;
+  /** A refused code's sentence (better-auth's own), or null. */
+  error: string | null;
+};
+
+/**
+ * `GET /api/hub/settings` — the ONE read behind the rail and every pane (§13: a marker is
+ * the length of the list its pane draws, never a second query). Everything the URL decides —
+ * the pane, `?kind=`, `?confirm=`, the flash, `?field=` — is the client's.
+ */
+export type SettingsRead = {
+  twoFactor: TwoFactorSummary;
+  passkeys: PasskeyRow[];
+  sessions: SessionRow[];
+  tokens: SettingsTokenRow[];
+  connections: ConnectionRow[];
+  /** §23.3's committed pair, milliseconds. */
+  execution: { defaultTimeoutMs: number; maxTimeoutMs: number };
+  /** Configuration the panes print, so the page holds no second literal of any of them:
+   *  the password length hint, and the Execution inputs' bounds (ms). */
+  limits: { passwordMinLength: number; minTimeoutMs: number; maxTimeoutMs: number };
+};
+
+/**
+ * A settings write's answer where today's form got a 303: `next` is byte for byte the
+ * Location it named (the server's own `noticeUrl`), and `reload` is true exactly when the
+ * answer replaced the session — and with it the CSRF token this document holds — so the
+ * client must load `next` as a document rather than route to it.
+ */
+export type Redirected = { next: string; reload: boolean };
+
+/** `…/two-factor/enable`'s reveal: the enrolment plus the ten backup codes, shown once. */
+export type TotpEnabled = { enrollment: TotpEnrollment; backupCodes: string[] };
+
+/** `…/two-factor/generate-backup-codes`' reveal: a fresh set of ten, shown once. */
+export type BackupCodesRevealed = { backupCodes: string[] };
+
+/** `POST …/settings/change-password`'s body — `api.ts`'s `ChangePasswordBody`. The server
+ *  checks new ≠ confirm itself, BEFORE calling better-auth, which has no confirm field. */
+export type ChangePasswordBody = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+  /** The checkbox's state as a boolean — anything else is a 400 naming this field. */
+  revokeOtherSessions: boolean;
+};
+
+/** `POST …/settings/execution/hub_settings_update`'s body — `api.ts`'s `ExecutionUpdateBody`:
+ *  the owner's TEXT for both controls, so the op's own count check refuses a non-integer under
+ *  the field it names rather than a second validator saying it in other words. */
+export type ExecutionUpdateBody = { default_timeout_ms: string; max_timeout_ms: string };
+
 /** The four shapes `POST /api/hub/apps` answers with, discriminated by which keys are
  *  present — one route, because two of the three arms carry something the client cannot ask
  *  for twice: a plaintext key shown once (§15), and an authorize URL bound to a single-use

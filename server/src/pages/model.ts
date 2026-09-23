@@ -72,14 +72,11 @@ import {
   PASSWORD_MIN_LENGTH,
 } from "../identity";
 import type { TokenInfo } from "../identity";
-import { AUDIT_EXPORT_MAX_VALUES, DEVICE_CODE_TTL_MS } from "../limits";
+import { AUDIT_EXPORT_MAX_VALUES, DEVICE_CODE_TTL_MS, HUB_HARD_MAX_TIMEOUT_MS, HUB_MIN_TIMEOUT_MS } from "../limits";
 import { ROLE_FAMILIES } from "../registry";
 import type { FamilyPatterns, RoleDeclaration, RoleFamily } from "../registry";
 import type { ApprovalListFilters, ApprovalRow, ApprovalStatus } from "../approvals";
 import type { AuditQuery, AuditRow, AuditSlimRow, BodyStub } from "../audit";
-// The one page-layer import: `sessionLabel` is a page string, and the revoke dialog and
-// the row it names must read the same definition of it (format.ts says why).
-import { sessionLabel } from "./format";
 
 /* ------------------------------------------------------------------ *
  * Shared chrome
@@ -216,6 +213,8 @@ export const paths = {
    * pane"). A route of its own rather than the generic dispatch: the two controls are
    * milliseconds the op takes as INTEGERS, and a refusal must redraw the pane at 400 with
    * the op's sentence under the field it named, which a redirect's single flash cannot do.
+   * NO ROUTE since decision 38's family 2, for `auth`'s settings members' reason; the
+   * client posts `POST /api/hub/settings/execution/hub_settings_update`.
    */
   settingsExecutionUpdate: "/settings/execution/hub_settings_update",
   /** App management: active, archived, and the add-app entry point. */
@@ -342,12 +341,16 @@ export const paths = {
     return `${paths.settingsTokens}${query({ kind })}`;
   },
   /** token_revoke (§8) — the Tokens pane's Revoke/Remove control, under its own pane's
-   *  prefix so §13's "mutations belong to a pane" holds for the redirect back. */
+   *  prefix so §13's "mutations belong to a pane" holds for the redirect back.
+   *  NO ROUTE since decision 38's family 2 (see `auth`); the client posts
+   *  `POST /api/hub/settings/tokens/token_revoke`. */
   tokenRevoke(id: string): string {
     return `${paths.settingsTokens}/token_revoke${query({ id })}`;
   },
   /** connection_revoke (§8/§19.6) — the Connected clients pane's Revoke. It moved here
-   *  with its pane: nothing posts under `/oauth/connections` any more. */
+   *  with its pane: nothing posts under `/oauth/connections` any more. NO ROUTE since
+   *  decision 38's family 2 either; the client posts
+   *  `POST /api/hub/settings/clients/connection_revoke`. */
   connectionRevoke(id: string): string {
     return `${paths.settingsClients}/connection_revoke${query({ id })}`;
   },
@@ -416,6 +419,10 @@ export const paths = {
    * pairs. A ceremony is not a form post in the first place — it is two JSON round trips
    * with `navigator.credentials` between them — so there is no form body to translate and
    * nothing a hub route would add (§13: "the one credential POST that is not a form").
+   *
+   * The eight `/settings/…` members have NO ROUTE since decision 38's family 2: only the
+   * retained settings template draws them, for the states preview (ruling §5.2), and the
+   * client posts their JSON twins under `/api/hub/settings/` (api.ts).
    */
   auth: {
     /** Where the composition root mounts better-auth — the prefix every untranslated
@@ -850,6 +857,30 @@ export type SettingsProps = ShellProps & {
 export type SettingsExecution = { defaultTimeoutMs: number; maxTimeoutMs: number };
 
 /**
+ * `GET /api/hub/settings` (routes §2, decision 38) — ONE read for the rail and every pane,
+ * §13's shell rule: each rail marker is a LENGTH of a list here (or, for Two-factor, the
+ * status), so no marker is a second query that could disagree with its pane. It carries
+ * only what a GET of the old pages drew from the server; what they derived from their own
+ * URL — the pane, `?confirm=`, `?kind=`, the flash, `?field=` — is the client's.
+ */
+export type SettingsRead = {
+  twoFactor: TwoFactorSummary;
+  passkeys: PasskeyRow[];
+  /** Every session of the owner, `current` marking the one asking; never a session
+   *  TOKEN (§15) — `BetterAuthSession` does not name the column. */
+  sessions: SessionRow[];
+  /** `token_list` minus revoked rows, `expired` judged at read time (`TokenRow`). */
+  tokens: TokenRow[];
+  /** `connection_list` unchanged, revoked rows included (§13's Connected clients). */
+  connections: ConnectionRow[];
+  execution: SettingsExecution;
+  /** Configuration the panes print, so the page holds no second literal of it (§4/§23):
+   *  better-auth's configured minimum password length, and §23.3's inclusive bounds on
+   *  both timeouts, in milliseconds. */
+  limits: { passwordMinLength: number; minTimeoutMs: number; maxTimeoutMs: number };
+};
+
+/**
  * The Execution pane's form state, one field per control plus the whole-form slot for a
  * refusal that names neither (the pair's ORDERING — "default must not exceed max" — is
  * about both fields at once, though the op still names `default_timeout_ms` for it).
@@ -1100,12 +1131,9 @@ export type PageName = keyof PagePropsByName;
 export type PageContext = {
   ownerId: string;
   username: string;
-  /** The session rendering this page — what /settings badges as "current". */
-  sessionId: string;
   csrfToken: string;
   /** ISO-8601: the render instant, and the only clock any template reads. */
   now: string;
-  notice: Notice | null;
   query: URLSearchParams;
 };
 
@@ -1123,27 +1151,6 @@ async function read<T>(
   const op = Object.prototype.hasOwnProperty.call(ops, name) ? ops[name] : undefined;
   if (op === undefined) throw new Error(`pages: no such admin op "${name}"`);
   return (await op.handler(ctx.ownerId, input)) as T;
-}
-
-/** The shell every signed-in page renders inside; the badge count is the number
- *  of rows /approvals would show as pending, read the same way that page reads it. */
-async function shell<S extends NavSection>(ctx: PageContext, section: S): Promise<ShellProps & { section: S }> {
-  return {
-    now: ctx.now,
-    username: ctx.username,
-    section,
-    pendingApprovals: (await pendingOf(ctx)).length,
-    notice: ctx.notice,
-  };
-}
-
-/** Every pending request in the namespace, newest first — `approval_list`'s own
- *  answer, lazy expiry included (§7), so the badge and the page cannot disagree. */
-async function pendingOf(ctx: PageContext): Promise<ApprovalRow[]> {
-  const listed = await read<{ approvals: ApprovalRow[] }>(ctx, "approval_list", {
-    status: "pending",
-  });
-  return listed.approvals;
 }
 
 /* ------------------- the grant set, parsed and composed ------------------- */
@@ -1710,10 +1717,12 @@ export function noBodiesReason(
 /* --------------------------------- /settings ----------------------------------- */
 
 /**
- * /settings — the one page whose state is better-auth's rather than the ops
- * table's, and §4 gives better-auth exactly one custodian: identity. So this
- * reads it the way the browser does, through identity's own mounted endpoints,
- * rather than reaching into tables that module owns.
+ * `GET /api/hub/settings`'s answer (decision 38) — the one page whose state is
+ * better-auth's rather than the ops table's, and §4 gives better-auth exactly one
+ * custodian: identity. So this reads it the way the browser does, through identity's own
+ * mounted endpoints, rather than reaching into tables that module owns. What the pages
+ * derive from it — which pane, which dialog, which filter, which field a refusal named —
+ * is the client's, off its own URL.
  *
  * Everything the rows say is sourced, and each from the one place that knows it: a
  * session's `source` is identity's own column, stamped by better-auth on the single
@@ -1728,70 +1737,45 @@ export function noBodiesReason(
  * exposes a count, showing it is a build with a §13 sentence behind it, not a field to
  * fill in here.
  */
-export async function settingsProps(
-  ctx: PageContext,
+export async function settingsRead(
+  /** The session asking — `sessionId` is what marks its own row `current`. */
+  session: { ownerId: string; sessionId: string },
+  /** The request whose cookie identity's better-auth reads ride (`callAuth`). */
   req: Request,
-  pane: SettingsPane,
-  /** A refused Execution save's own state, or null on every GET: the owner's submitted
-   *  text for both controls plus the op's messages, keyed by control. The only caller is
-   *  web.ts's `hub_settings_update` route, which redraws the pane at 400 with it. */
-  submitted: SettingsExecutionForm | null = null,
-): Promise<SettingsProps> {
-  // §13's shell rule, as code: ONE read per render feeding both the rail and the pane, so
-  // a marker cannot be a second query that disagrees with the list beside it. Every pane
-  // pays for all seven, which is the price of a rail that is always right.
+): Promise<SettingsRead> {
+  // §13's shell rule, as code: ONE read feeding both the rail and every pane, so a marker
+  // cannot be a second query that disagrees with the list beside it. Every pane pays for
+  // all seven, which is the price of a rail that is always right.
   const [me, sessions, passkeys, lastUsed, tokens, connections, execution] = await Promise.all([
     callAuth<{ user?: { twoFactorEnabled?: boolean } }>(req, "/get-session"),
     callAuth<BetterAuthSession[]>(req, "/list-sessions"),
     callAuth<BetterAuthPasskey[]>(req, "/passkey/list-user-passkeys"),
     // §5's own column, which the plugin's listing cannot carry (identity says why).
-    passkeyLastUsed(ctx.ownerId),
-    read<{ tokens: TokenInfo[] }>(ctx, "token_list"),
-    read<{ connections: ConnectionRow[] }>(ctx, "connection_list"),
-    // §23.3's pair. Read on every pane for the rail marker's sake, exactly like the four
-    // list lengths above — the marker must not be a second query that can disagree with
-    // the pane beside it.
-    read<{ settings: SettingsExecution }>(ctx, "hub_settings_get"),
+    passkeyLastUsed(session.ownerId),
+    read<{ tokens: TokenInfo[] }>(session, "token_list"),
+    read<{ connections: ConnectionRow[] }>(session, "connection_list"),
+    // §23.3's pair, read on every call for the rail marker's sake, exactly like the four
+    // list lengths above.
+    read<{ settings: SettingsExecution }>(session, "hub_settings_get"),
   ]);
-  // better-auth's listings, defended: the shapes are better-auth's own to change, and
-  // /settings showing an empty list is a better answer than a 500 (callAuth's contract
-  // reads a bodiless success as `{}`, which is not a listing).
-  const rows = (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, ctx.sessionId));
-  const keys = (Array.isArray(passkeys) ? passkeys : []).map((pk) =>
-    passkeyRow(pk, ctx.now, lastUsed[pk.id]),
-  );
-  const bound = tokenRows(tokens.tokens, Date.parse(ctx.now));
+  // One instant for every "is it expired" and every missing stamp in this answer.
+  const now = new Date().toISOString();
+  // better-auth's listings, defended: the shapes are better-auth's own to change, and an
+  // empty list is a better answer than a 500 (callAuth's contract reads a bodiless success
+  // as `{}`, which is not a listing).
   return {
-    ...(await shell(ctx, "settings")),
-    pane,
-    csrfToken: ctx.csrfToken,
     twoFactor: me?.user?.twoFactorEnabled ? { enabled: true } : { enabled: false },
-    enrollment: null,
-    revealedBackupCodes: null,
-    passkeys: keys,
-    sessions: rows,
-    tokens: bound,
-    tokenKind: tokenKindOf(ctx.query),
+    passkeys: (Array.isArray(passkeys) ? passkeys : []).map((pk) => passkeyRow(pk, now, lastUsed[pk.id])),
+    sessions: (Array.isArray(sessions) ? sessions : []).map((row) => sessionRow(row, session.sessionId)),
+    tokens: tokenRows(tokens.tokens, Date.parse(now)),
     connections: connections.connections,
-    confirm: settingsConfirm(ctx.query, pane, rows, keys, connections.connections),
-    passwordError: passwordErrorOf(ctx.query, pane),
     execution: execution.settings,
-    // The committed pair on a GET; the owner's own text (and the op's messages) on a
-    // refused save, so the reason they are being shown does not cost them their work.
-    executionForm: submitted ?? {
-      defaults: String(execution.settings.defaultTimeoutMs),
-      maximum: String(execution.settings.maxTimeoutMs),
-      errors: {},
+    limits: {
+      passwordMinLength: PASSWORD_MIN_LENGTH,
+      minTimeoutMs: HUB_MIN_TIMEOUT_MS,
+      maxTimeoutMs: HUB_HARD_MAX_TIMEOUT_MS,
     },
   };
-}
-
-/** The field a refused **Update password** left on the URL, read back on the pane that
- *  drew the form — the same "a mutation belongs to a pane" rule the dialogs follow. */
-function passwordErrorOf(query: URLSearchParams, pane: SettingsPane): PasswordField | null {
-  if (pane !== "password" || query.get(NOTICE_KEYS.failed) === null) return null;
-  const field = query.get(NOTICE_KEYS.field);
-  return PASSWORD_FIELDS.find((name) => name === field) ?? null;
 }
 
 /**
@@ -1812,13 +1796,6 @@ function tokenRows(tokens: TokenInfo[], now: number): TokenRow[] {
       lastUsedAt: token.lastUsedAt,
       expired: token.expiresAt !== null && token.expiresAt <= now,
     }));
-}
-
-/** §13's `?kind=agent|app`, or null for **All** — anything else is All too, because a
- *  filter naming no kind is not a filter (and never an empty listing). */
-function tokenKindOf(query: URLSearchParams): TokenRow["kind"] | null {
-  const kind = query.get("kind");
-  return kind === "agent" || kind === "app" ? kind : null;
 }
 
 /** The passkey fields /settings draws, as the plugin's own listing spells them. */
@@ -1852,55 +1829,6 @@ function passkeyRow(pk: BetterAuthPasskey, now: string, lastUsed?: number): Pass
     addedAt: pk.createdAt ?? now,
     lastUsedAt: lastUsed === undefined ? null : new Date(lastUsed).toISOString(),
   };
-}
-
-/**
- * Which destructive dialog /settings is rendering, read off its own query string — the
- * `?confirm=…` link every Remove/Revoke/Disable control on the page already points at
- * (`paths.settingsConfirm`). Server-rendered state, so the confirm step works with
- * scripting off; a `confirm` that names no row on the page is no dialog at all rather
- * than a dialog about nothing, which is also what keeps a guessed id from drawing one.
- */
-function settingsConfirm(
-  query: URLSearchParams,
-  pane: SettingsPane,
-  sessions: SessionRow[],
-  passkeys: PasskeyRow[],
-  connections: ConnectionRow[],
-): SettingsConfirm | null {
-  const kind = query.get("confirm") ?? "";
-  // A dialog belongs to the pane that draws its control: the same query carried to another
-  // pane's URL opens nothing, which is what makes "?confirm= rides the owning pane" a
-  // property of the page rather than of the links it happens to render.
-  if (!Object.prototype.hasOwnProperty.call(SETTINGS_CONFIRM_PANE, kind)) return null;
-  if (SETTINGS_CONFIRM_PANE[kind as SettingsConfirm["kind"]] !== pane) return null;
-  const id = query.get("id") ?? "";
-  switch (kind) {
-    case "disable-two-factor":
-      return { kind: "disable-two-factor" };
-    case "revoke-session": {
-      const row = sessions.find((session) => session.id === id && !session.current);
-      return row === undefined ? null : { kind: "revoke-session", id, label: sessionLabel(row) };
-    }
-    // The one confirmation that names no row, so there is nothing to look up and nothing
-    // a guessed id could miss: it is about every session except the one asking.
-    case "revoke-other-sessions":
-      return { kind: "revoke-other-sessions" };
-    case "remove-passkey": {
-      const row = passkeys.find((pk) => pk.id === id);
-      return row === undefined ? null : { kind: "remove-passkey", id, name: row.name };
-    }
-    case "revoke-connection": {
-      // A revoked binding stays listed with no control (§13), so it draws no dialog
-      // either — the query naming one is the same as a query naming nothing.
-      const row = connections.find((c) => c.id === id && c.revokedAt === null);
-      return row === undefined
-        ? null
-        : { kind: "revoke-connection", id, client: row.clientName ?? row.clientId };
-    }
-    default:
-      return null;
-  }
 }
 
 /** The session fields /settings draws, as better-auth's own listing spells them.

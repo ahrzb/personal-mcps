@@ -17,7 +17,6 @@
   },
   "include": [
     "server/src",
-    "server/dev",
     "server/test",
     "cli",
     "clients/js/src",

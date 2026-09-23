@@ -1,4 +1,4 @@
-// The PWA icons, rendered from BrandMark's geometry (server/src/pages/layout.tsx) with no
+// The PWA icons, rendered from BrandMark's geometry (web/src/chrome/Shell.tsx) with no
 // browser and no dependency: a signed-distance rasterizer over the four strokes, 8x8
 // supersampled, written as an RGB PNG through node:zlib. Deterministic — the same bytes on
 // every run — so `node scripts/icon.mjs` regenerates what server/src/pages/icon.ts embeds.

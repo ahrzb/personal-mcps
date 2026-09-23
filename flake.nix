@@ -108,13 +108,13 @@
           # `fetcherVersion = 3`: version 2 is deprecated and scheduled for removal in 26.11.
           # The hash is fetcher-version-specific, so moving between them regenerates it.
           #
-          # Regenerated 2026-09-18 with §13's `web` workspace package: the lockfile gained
-          # React, TanStack, Vite, Tailwind and the screenshot tooling, and the fetcher's
-          # output moved with it.
+          # Regenerated 2026-09-23: hub execution (a7f2d96, a7868fd — capnweb, aws4fetch, yaml)
+          # moved the lockfile after the 2026-09-18 regeneration, and `nix flake check` failed
+          # on every master push until this caught up. CI's `got` hash is the source of truth.
           pnpmDeps = (pkgs.fetchPnpmDeps.override { inherit pnpm; }) {
             inherit (final) pname version src;
             fetcherVersion = 3;
-            hash = "sha256-f6VSSFXvy0nv12oBF4hiI6NLWsBMiy79KiTQ47oj/TQ=";
+            hash = "sha256-r7i2DXJAT0fJHSsr7I12pyh1E38RlIz2Ef+MMVts03c=";
           };
 
           # `--ignore-scripts` is the hook's default, and it is what keeps pnpm-workspace.yaml's

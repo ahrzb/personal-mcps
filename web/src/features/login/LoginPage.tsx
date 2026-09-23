@@ -1,7 +1,13 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { AuthFrame } from "@/chrome/AuthFrame";
 import { OtpBoxes } from "@/chrome/OtpBoxes";
 import { useDocumentTitle } from "@/chrome/Shell";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { Field, FieldError, FieldGroup } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { readLoginIsland } from "@/lib/bootstrap";
 import type { LoginIsland } from "@/lib/bootstrap";
 import { loginUrl, passkeyAuthentication, paths } from "@/lib/paths";
@@ -9,7 +15,8 @@ import { loginUrl, passkeyAuthentication, paths } from "@/lib/paths";
 /**
  * `/login` — username and password, the TOTP / backup-code challenge, and the passkey button,
  * as one page (Login.dc.html, TwoFactor.dc.html, AuthStates.dc.html). CHROMELESS: there is no
- * session yet to draw a nav for.
+ * session yet to draw a nav for, so the page is `AuthFrame` (the brand, one card, a foot line)
+ * rather than `Shell`.
  *
  * The port of what `server/src/pages/login.tsx` drew, element for element — with every
  * judgement left on the server, where it was (routes design §5):
@@ -34,24 +41,19 @@ export function LoginPage(): ReactNode {
   const landing = redirectTo ?? paths.apps;
 
   return (
-    <div className="auth">
-      <div className="brand">
-        <BrandMark />
-        <span>personal-mcps</span>
-      </div>
-
+    <AuthFrame
+      foot={
+        step.kind === "credentials" ? (
+          "Lost your password? Reset it with the users script on the server."
+        ) : (
+          <a href={paths.login}>Back to sign in</a>
+        )
+      }
+    >
       {step.kind === "credentials" ? <CredentialsCard step={step} landing={landing} /> : null}
       {step.kind === "totp" ? <TotpCard error={step.error} redirectTo={redirectTo} landing={landing} /> : null}
       {step.kind === "backup-code" ? <BackupCodeCard error={step.error} redirectTo={redirectTo} landing={landing} /> : null}
-
-      {step.kind === "credentials" ? (
-        <div className="auth-foot">Lost your password? Reset it with the users script on the server.</div>
-      ) : (
-        <div className="auth-foot">
-          <a href={paths.login}>Back to sign in</a>
-        </div>
-      )}
-    </div>
+    </AuthFrame>
   );
 }
 
@@ -73,16 +75,16 @@ function CredentialsCard({
   landing: string;
 }): ReactNode {
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Sign in</div>
-        <div className="auth-desc">Use your username and password.</div>
+        <CardTitle>Sign in</CardTitle>
+        <CardDescription>Use your username and password.</CardDescription>
       </div>
-      <form className="form" method="post" action={paths.signIn}>
+      <FieldGroup render={<form method="post" action={paths.signIn} />}>
         <input type="hidden" name="callbackURL" value={landing} />
-        <div className="field">
-          <label htmlFor="username">Username</label>
-          <input
+        <Field>
+          <Label htmlFor="username">Username</Label>
+          <Input
             id="username"
             name="username"
             type="text"
@@ -91,10 +93,10 @@ function CredentialsCard({
             required
             autoFocus={step.username === ""}
           />
-        </div>
-        <div className="field">
-          <label htmlFor="password">Password</label>
-          <input
+        </Field>
+        <Field>
+          <Label htmlFor="password">Password</Label>
+          <Input
             id="password"
             name="password"
             type="password"
@@ -103,26 +105,32 @@ function CredentialsCard({
             aria-invalid={step.error === null ? undefined : "true"}
             autoFocus={step.username !== ""}
           />
-          {step.error === null ? null : <p className="field-error">{step.error}</p>}
-        </div>
-        <button type="submit" className="btn btn--primary btn--block">
+          {step.error === null ? null : <FieldError render={<p />}>{step.error}</FieldError>}
+        </Field>
+        <Button type="submit" className="w-full">
           Sign in
-        </button>
-      </form>
-      <div className="divider">
+        </Button>
+      </FieldGroup>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border before:content-[''] after:h-px after:flex-1 after:bg-border after:content-['']">
         <span>or</span>
       </div>
       {/* A WebAuthn assertion, not a form post — a button, and better-auth's own endpoints. */}
-      <button type="button" className="btn btn--outline btn--block" onClick={() => void passkeySignIn(landing)}>
+      <Button type="button" variant="outline" className="w-full" onClick={() => void passkeySignIn(landing)}>
         <PasskeyIcon />
         <span>Sign in with a passkey</span>
-      </button>
-    </div>
+      </Button>
+    </Card>
   );
 }
 
-/** The six-box TOTP challenge. `.contents` on the form, so its children take the card's own
- *  rhythm rather than `.form`'s. */
+/** The switch link below the TOTP and backup-code cards: a plain link wide, a full-width
+ *  bordered button on the phone (legacy.css's `.switch-method a`, narrow only). */
+const SWITCH_LINK_NARROW =
+  "max-md:flex max-md:h-control-touch max-md:w-full max-md:items-center max-md:justify-center max-md:rounded-md max-md:border max-md:border-border max-md:bg-background max-md:px-4 max-md:text-base max-md:font-medium max-md:text-foreground max-md:no-underline max-md:shadow-xs";
+
+/** The six-box TOTP challenge. `contents` on the form (Tailwind's own utility, matching
+ *  legacy.css's identical `.contents`), so its children take the card's own rhythm rather
+ *  than `FieldGroup`'s. */
 function TotpCard({
   error,
   redirectTo,
@@ -134,24 +142,29 @@ function TotpCard({
   landing: string;
 }): ReactNode {
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Two-factor code</div>
-        <div className="auth-desc">Enter the 6-digit code from your authenticator app.</div>
+        <CardTitle>Two-factor code</CardTitle>
+        <CardDescription>Enter the 6-digit code from your authenticator app.</CardDescription>
       </div>
       <form method="post" action={paths.totpVerify} className="contents" data-otp-form>
         <input type="hidden" name="callbackURL" value={landing} />
         <OtpBoxes invalid={error !== null} />
-        {error === null ? null : <p className="field-error center">{error}</p>}
-        <button type="submit" className="btn btn--primary btn--block">
+        {error === null ? null : (
+          <FieldError render={<p />} className="text-center">
+            {error}
+          </FieldError>
+        )}
+        <Button type="submit" className="w-full">
           Verify
-        </button>
+        </Button>
       </form>
-      {/* A full-width bordered button on the phone (`.switch-method`), a plain link wide. */}
-      <p className="muted center switch-method">
-        <a href={loginUrl({ method: "backup-code", next: redirectTo })}>Use a backup code instead</a>
+      <p className="text-center text-sm text-muted-foreground">
+        <a href={loginUrl({ method: "backup-code", next: redirectTo })} className={SWITCH_LINK_NARROW}>
+          Use a backup code instead
+        </a>
       </p>
-    </div>
+    </Card>
   );
 }
 
@@ -166,36 +179,35 @@ function BackupCodeCard({
   landing: string;
 }): ReactNode {
   return (
-    <div className="auth-card">
+    <Card size="auth">
       <div>
-        <div className="auth-title">Use a backup code</div>
-        <div className="auth-desc">Each backup code works once.</div>
+        <CardTitle>Use a backup code</CardTitle>
+        <CardDescription>Each backup code works once.</CardDescription>
       </div>
       <form method="post" action={paths.backupCodeVerify} className="contents">
         <input type="hidden" name="callbackURL" value={landing} />
-        <div className="field">
-          <label htmlFor="backup-code">Backup code</label>
-          <input
+        <Field>
+          <Label htmlFor="backup-code">Backup code</Label>
+          <Input
             id="backup-code"
             name="code"
             type="text"
-            className="input--mono"
             placeholder="xxxx-xxxx-xxxx"
             autoComplete="one-time-code"
             required
             aria-invalid={error === null ? undefined : "true"}
             autoFocus
           />
-          {error === null ? null : <p className="field-error">{error}</p>}
-        </div>
-        <button type="submit" className="btn btn--primary btn--block">
+          {error === null ? null : <FieldError render={<p />}>{error}</FieldError>}
+        </Field>
+        <Button type="submit" className="w-full">
           Verify
-        </button>
+        </Button>
       </form>
-      <p className="muted center">
+      <p className="text-center text-sm text-muted-foreground">
         <a href={loginUrl({ method: "totp", next: redirectTo })}>Use your authenticator app instead</a>
       </p>
-    </div>
+    </Card>
   );
 }
 
@@ -263,18 +275,6 @@ function encode(buffer: ArrayBuffer): string {
   let text = "";
   for (const byte of new Uint8Array(buffer)) text += String.fromCharCode(byte);
   return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** The hub mark — duplicated from the Shell, which /login does not render. */
-function BrandMark(): ReactNode {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.5" />
-      <path d="M12 8.5V3.5" />
-      <path d="M14.5 14.5L18.5 18.5" />
-      <path d="M9.5 14.5L5.5 18.5" />
-    </svg>
-  );
 }
 
 function PasskeyIcon(): ReactNode {

@@ -3027,21 +3027,39 @@ describe("§19.5 · the consent screen", () => {
     expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
   });
 
-  it("§19.5 · a consent POST naming an agent in another namespace is refused", async () => {
+  it("§19.5 · a consent POST whose agent does not resolve in this owner's namespace — an invented slug, or another namespace's real agent — is refused 400 and writes NOTHING: no binding and no consent at the provider, so the next authorize still lands on the consent screen instead of the client's redirect · the same signed query naming this owner's own agent then binds and redirects to the client (the twin)", async () => {
+    // Brief §5.3's ruling, decided 2026-09-23: the chosen agent is resolved BEFORE the
+    // provider's /oauth2/consent is called. Until then a refused agent was refused AFTER the
+    // provider had accepted — it kept a consent row with no oauth_binding beside it, the next
+    // authorize skipped this screen, and the token that minted was refused at the door until
+    // the provider's consent was cleared.
     await seedNamespace(env.DB, { agents: [{ slug: "outsider" }] });
-    const { clientId } = await registerOAuthClient();
-    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
-      resource: oauthResourceFor(world.ns.owner.username),
-    });
-    const csrf = csrfOf(html);
-    const refused = await post(
-      paths.oauthConsent,
-      { oauth_query: oauthQuery, decision: "accept", agent: "outsider" },
-      { csrf },
-    );
-    expect(refused.status).toBeGreaterThanOrEqual(400);
-    expect(refused.status).toBeLessThan(500);
-    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+    const resource = oauthResourceFor(world.ns.owner.username);
+    for (const agent of [uniqueSlug("nosuchagent"), "outsider"]) {
+      const { clientId } = await registerOAuthClient();
+      const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, { resource });
+      const csrf = csrfOf(html);
+
+      const refused = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "accept", agent }, { csrf });
+      expect(refused.status, agent).toBe(400);
+      expect(refused.headers.get("Location"), agent).toBeNull();
+      expect(await bindingFor(world.ns.owner.userId, clientId), agent).toBeNull();
+      expect(await consentRowExists(world.ns.owner.userId, clientId), `the provider kept a consent for ${agent}`).toBe(false);
+      // The observable half of "no consent": the provider still asks the owner.
+      const again = await call(new Request(authorizeUrl(clientId, { resource }), { headers: { Cookie: world.session.cookie } }));
+      expect(again.status, agent).toBe(302);
+      expect(again.headers.get("Location") ?? "", `the next authorize skipped the screen after ${agent}`).toMatch(
+        /^\/oauth\/consent\?/,
+      );
+
+      // THE TWIN, on the same client and the same signed query — which the refusal never
+      // spent, because the provider was never called.
+      const accepted = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "accept", agent: "agent" }, { csrf });
+      expect(accepted.status, await accepted.clone().text()).toBe(303);
+      expect(new URL(accepted.headers.get("Location") ?? "").origin).toBe(new URL(OAUTH_REDIRECT_URI).origin);
+      expect((await bindingFor(world.ns.owner.userId, clientId))?.agentId).toBe(world.ns.agents.agent.id);
+      expect(await consentRowExists(world.ns.owner.userId, clientId)).toBe(true);
+    }
   });
 
   // The `/oauth/connections` listing row that stood here is gone with the page it was

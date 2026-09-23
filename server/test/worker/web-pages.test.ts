@@ -31,6 +31,10 @@
 // verdict is `POST /api/hub/device/decide` (28, 29 and 31 ported). The binding the render
 // had — the first signed-in reader claims the code, only the claimant sees its client and
 // only the claimant can decide — is pinned on the read and the decide themselves.
+// Family 4, `/oauth/consent`: the shell runs the provider's signature check before any
+// HTML (a refused query is still the plain 400), the screen's strings are
+// `GET /api/hub/oauth/consent` over the same raw query, and the POST is unchanged — its rows
+// read the CSRF token off `#pmcp-bootstrap` now, since the client draws the form.
 //
 // SINCE 2026-09-18, "the pages" means TWO surfaces and this file describes both.
 // `/apps/*` and `/agents/*` are a browser SPA: they answer one shell document with a
@@ -80,7 +84,7 @@
 // deps: harness/seed · src/index (exports.default.fetch) · src/admin (ops — one handler substituted to prove non-execution) · src/audit · src/approvals · src/identity (session minting) · src/principal (tokenPattern) · applyD1Migrations
 
 import { env } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ops } from "../../src/admin";
 import type { AdminOp, AppRow as OpsAppRow } from "../../src/admin";
 import { AGENT_PANES, APP_PANES } from "../../src/app-routes";
@@ -113,8 +117,8 @@ import { paths } from "../../src/pages/model";
 // a React form posting to a route the worker does not translate is invisible to any test that
 // reads server HTML (24a). `settingsApi` is the same table's JSON half — every `/api/hub`
 // target the settings pages call, walked by case 24.
-import { deviceApi, settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
-import type { DeviceRead, SettingsRead } from "../../src/api";
+import { consentApi, deviceApi, settingsApi, paths as webPaths } from "../../../web/src/lib/paths";
+import type { ConsentRead, DeviceRead, SettingsRead } from "../../src/api";
 import type { ConnectionRow } from "../../src/pages/model";
 import { tokenPattern } from "../../src/principal";
 import { PMCP_SLUG, Registry, validateSchemaIndirection } from "../../src/registry";
@@ -432,19 +436,12 @@ async function page(path: string, cookie?: string): Promise<string> {
   return response.text();
 }
 
-/** The CSRF token a page rendered — the only place a test may get one, because it is the
- *  only place a browser gets one. */
-function csrfOf(html: string): string {
-  const token = /name="csrf"\s+value="([^"]+)"/.exec(html)?.[1];
-  if (token === undefined) throw new Error("the page rendered no CSRF field");
-  return token;
-}
-
 /**
- * The CSRF token a SHELL document bootstrapped — the other half of `csrfOf`, and the only
- * place a browser on an SPA route gets one. `/apps/*` and `/agents/*` render no form at
- * all since 2026-09-18: the session's token rides a `<script type="application/json"
- * id="pmcp-bootstrap">` island that the client parses on mount.
+ * The CSRF token a SHELL document bootstrapped — the only place a browser gets one, and so
+ * the only place a test may: since decision 38's family 4 no server page renders a CSRF
+ * field (the consent form's is drawn by the client from this island). The session's token
+ * rides a `<script type="application/json" id="pmcp-bootstrap">` island that the client
+ * parses on mount.
  *
  * Parsed with `JSON.parse`, not scraped with a second regex, because that is what the
  * client does: a token this helper could read but the island's JSON could not carry is a
@@ -936,9 +933,9 @@ describe("§13 · CSRF on every mutating POST", () => {
   // walked out of `sessionPages()`'s server HTML — retired with decision 38's family 3: its
   // last page, /device, answers the shell now, and the list it walked is empty. Where the
   // guarantee went: the three form targets that survive each have a row that posts WITHOUT
-  // the field and is refused and WITH the page's own token and is admitted — the consent
-  // POST (§19.5's CSRF row, the token read off the rendered consent form, so "drawn" is
-  // proven with "read"), /apps/connect (5b) — and /login's forms carry none by design (no
+  // the field and is refused and WITH the session's own token and is admitted — the consent
+  // POST (§19.5's CSRF row; since family 4 its token comes off the shell's bootstrap, as the
+  // client's form takes it), /apps/connect (5b) — and /login's forms carry none by design (no
   // session yet; the origin rule stands in). Every JSON write carries the header instead,
   // which the write-gate describe pins.
   it("4. §13 · the write that replaced the last ops-backed form, posted without its `X-Pmcp-Csrf`, is refused with its op never reaching a handler — the token is READ, not decorative · the same write carrying the session's token reaches the op once (the twin)", async () => {
@@ -2129,7 +2126,7 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
   // the React shell's Sign out posted at better-auth's 415 for a month (routes §7.1). Replaced
   // with decision 38's family 2 by the walk that would have caught it: the targets are read
   // out of the SPA's own path table, the one the client posts through, never out of HTML.
-  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx; and `deviceApi` is the device read and verdict routes §3 designs, each answering its designed JSON", async () => {
+  it("24. §13 · every target the SPA's own path table names answers as designed — each FORM target it renders (Sign out, Connect) is one of the kept form routes and answers a form-encoded post with a 303, never 415 or 404; and `settingsApi` is exactly the settings read plus the eleven writes routes §2 designs, the read answering 200 and each write answering its JSON body with a designed answer (200 or 422 JSON), never 404, 415 or a 5xx; and `deviceApi` is the device read and verdict routes §3 designs and `consentApi` the consent read routes §4 designs, each answering its designed JSON", async () => {
     // A NAMESPACE of this case's own: Sign out and Revoke all others both succeed, and each
     // ends sessions of whichever owner it rides.
     const ns = await seedNamespace(env.DB, {
@@ -2194,6 +2191,15 @@ describe("§4/§13 · the credential forms speak the browser's content type", ()
       csrf: await csrfFor(reader.cookie),
     });
     expect((await redirectedOf(decided)).raw).toBe(`${paths.device}?decided=denied`);
+
+    // `consentApi` (family 4), the same way: its read, over a query the provider really
+    // signed and appended verbatim, answers the screen. The consent POST is a kept form
+    // route (routes §0.4), which the form rows above post as a browser does.
+    expect({ ...consentApi }).toEqual({ read: "/oauth/consent" });
+    const { clientId } = await registerOAuthClient();
+    const { oauthQuery } = await reachConsent(clientId, reader.cookie, { resource: oauthResourceFor(ns.owner.username) });
+    const consent = await hub("GET", `/api/hub${consentApi.read}?${oauthQuery}`, undefined, { cookie: reader.cookie });
+    expect(consent.status, `GET ${consentApi.read} → ${await consent.clone().text()}`).toBe(200);
   });
 
   it("24a. §13 · the SPA's Sign out — the one form the React shell renders, which 24's walk of server HTML cannot see — posts where this worker translates it: a control-less form body answers 303 to /login and ends the session, never better-auth's 415 JSON (it did, from the SPA's first ship until 2026-09-23)", async () => {
@@ -2412,7 +2418,7 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
   // without `render`. On the twin's side the 404 earns its keep: it proves the header
   // rides the page renderer rather than a blanket middleware.
   it(
-    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals, /approvals/<id>, /settings and /device (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
+    `§13 · one renderer emits every HTML page, so every one carries Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" and Cache-Control: no-store — checked on the three shapes: /login anonymous, /apps shelled under the owner's cookie, /apps/new chromeless — and on the shell at /approvals, /approvals/<id>, /settings, /device and /oauth/consent (decision 38: a page that moved into the client keeps its anti-framing header) — while the hub's non-HTML answers, /styles.css and the surface's 404, carry neither (the twin; no-store added 2026-09-03)`,
     async () => {
       const CSP = "frame-ancestors 'self'; base-uri 'self'; object-src 'none'";
       // Each page family joins this list as it becomes the shell (decision 38), until all
@@ -2425,6 +2431,12 @@ describe("§4/§13/§15/§19.5 · /login's landing — one relative-only rule fo
         await get(paths.approval(world.approvalId)),
         await get(paths.settings),
         await get(`${paths.device}?user_code=${encodeURIComponent("BDWJ-KTQP")}`),
+        // The consent shell needs a query the provider really signed.
+        (
+          await reachConsent((await registerOAuthClient()).clientId, world.session.cookie, {
+            resource: oauthResourceFor(world.ns.owner.username),
+          })
+        ).response,
       ];
       for (const carrier of carriers) {
         expect(carrier.status).toBe(200);
@@ -2851,74 +2863,150 @@ describe("§19.5 · the consent screen", () => {
     expect(decoded).not.toContain("/evil");
   });
 
-  it("§19.5 · the consent page renders the client's name, the requested scopes, the namespace, and an agent picker listing every agent in the namespace", async () => {
+  // Ported with decision 38's family 4: the screen's strings are `GET /api/hub/oauth/consent`'s
+  // now (§19.5 step 3's amendment), read with the client's own signed query appended
+  // verbatim — so each row below asks the READ what the screen shows. Drawing them — the name
+  // as a text node, the marker beside it, the picker, the empty state, the disabled Allow —
+  // is the client's, held by its gallery states.
+
+  it("§19.5 · GET /oauth/consent with a session answers the SPA shell once the provider has verified the signed query — 200, `no-store`, the bootstrap island, and the tab title naming the client — before any HTML the check runs, and the read beside it is the screen's", async () => {
     const { clientId } = await registerOAuthClient({ client_name: "Acme Connector" });
-    const { html } = await reachConsent(clientId, world.session.cookie, {
+    const { response, html } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    expect(html).toContain("Acme Connector");
-    expect(html).toContain(">mcp<");
-    expect(html).toContain(world.ns.owner.username);
-    expect(html).toContain('value="agent"');
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(bootstrapCsrfOf(html)).toBe(await csrfFor(world.session.cookie));
+    expect(html).toContain("<title>Connect Acme Connector</title>");
   });
 
-  it("§19.5 · the consent page names the redirect_uri's ORIGIN — the string that decides where the code goes is shown to the owner, not just the client's self-chosen name", async () => {
+  it("§19.5 · the read answers the client's name, the requested scopes, the namespace, and the agent picker's options — every agent in the namespace", async () => {
+    const { clientId } = await registerOAuthClient({ client_name: "Acme Connector" });
+    const { read } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    expect(read.clientName).toBe("Acme Connector");
+    expect(read.scopes).toContain("mcp");
+    expect(read.namespace).toBe(world.ns.owner.username);
+    const listed = (await ops.agent_list.handler(world.ns.owner.userId, {})) as { agents: { slug: string; name: string }[] };
+    expect(read.agents).toEqual(listed.agents.map((agent) => ({ slug: agent.slug, name: agent.name })));
+    expect(read.agents.map((agent) => agent.slug)).toContain("agent");
+  });
+
+  it("§19.5 · the read names the redirect_uri's ORIGIN — the string that decides where the code goes is shown to the owner, not just the client's self-chosen name", async () => {
     const { clientId } = await registerOAuthClient();
-    const { html } = await reachConsent(clientId, world.session.cookie, {
+    const { read } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    expect(html).toContain(new URL(OAUTH_REDIRECT_URI).origin);
+    expect(read.redirectOrigin).toBe(new URL(OAUTH_REDIRECT_URI).origin);
   });
 
-  it('§19.5 · a self-registered (DCR) client\'s name carries the "registered itself, identity unverified" marker · a pre-registered client does not (the twin)', async () => {
+  it('§19.5 · a self-registered (DCR) client reads `clientSelfRegistered: true` — the "registered itself, identity unverified" marker\'s source · a pre-registered client reads false (the twin)', async () => {
     const dcr = await registerOAuthClient({ client_name: "Anon Client" });
     const preRegistered = await registerOAuthClient({ client_name: "Known Client" }, world.session.cookie);
     const resource = oauthResourceFor(world.ns.owner.username);
-    const dcrHtml = (await reachConsent(dcr.clientId, world.session.cookie, { resource })).html;
-    const knownHtml = (await reachConsent(preRegistered.clientId, world.session.cookie, { resource })).html;
-    expect(dcrHtml).toContain("registered itself");
-    expect(knownHtml).not.toContain("registered itself");
+    expect((await reachConsent(dcr.clientId, world.session.cookie, { resource })).read.clientSelfRegistered).toBe(true);
+    expect((await reachConsent(preRegistered.clientId, world.session.cookie, { resource })).read.clientSelfRegistered).toBe(false);
   });
 
-  it("§19.5 · a client name containing markup is rendered as text — the consent screen displays attacker-supplied strings and escapes every one", async () => {
+  it("§19.5 · a client name containing markup crosses as a JSON string, byte for byte — the read carries it raw, for the client to render as a text node — and the shell document, whose tab title names the client, never carries it raw: the title is escaped text", async () => {
     const { clientId } = await registerOAuthClient({ client_name: "<script>alert(1)</script>" });
-    const { html } = await reachConsent(clientId, world.session.cookie, {
+    const { html, read } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
+    expect(read.clientName).toBe("<script>alert(1)</script>");
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
   });
 
   // G8 (2026-09-03): the empty state sent the owner to /apps, which cannot create an agent.
-  // §19.5 amended; this row replaces the one below it, which is retired with the fix.
-  it(`§19.5 · a namespace with zero agents renders the picker's empty state naming the Agents page — "Create one under Agents before connecting a client." linking /agents/new, never /apps, which has no agent affordance — and disables submit; consent is impossible until an agent exists · the same page with one agent submits (the twin)`, async () => {
+  // Ported with family 4: the empty state naming /agents/new and the disabled Allow are the
+  // client's to draw; what they are drawn FROM is an empty option list, here.
+  it(`§19.5 · a namespace with zero agents reads \`agents: []\` — the first-run path, where the client draws the empty state naming the Agents page and disables Allow, so consent is impossible until an agent exists · the fixture namespace's read lists its agent (the twin)`, async () => {
     const empty = await seedNamespace(env.DB, {});
     const emptySession = await seedOwnerSession(empty.owner);
     const emptyClient = await registerOAuthClient();
-    const emptyHtml = (
+    const emptyRead = (
       await reachConsent(emptyClient.clientId, emptySession.cookie, { resource: oauthResourceFor(empty.owner.username) })
-    ).html;
-    expect(textOf(emptyHtml)).toMatch(/Create one under\s+Agents\s+before connecting a client/);
-    expect(emptyHtml).toContain(`href="${paths.agentNew}"`);
-    expect(emptyHtml).not.toContain(`href="${paths.apps}"`);
-    expect(submitButtonHtml(emptyHtml, "accept")).toContain("disabled");
+    ).read;
+    expect(emptyRead.agents).toEqual([]);
 
-    // The twin: the fixture namespace has an agent, so the same button is submittable.
     const fullClient = await registerOAuthClient();
-    const fullHtml = (
+    const fullRead = (
       await reachConsent(fullClient.clientId, world.session.cookie, { resource: oauthResourceFor(world.ns.owner.username) })
-    ).html;
-    expect(submitButtonHtml(fullHtml, "accept")).not.toContain("disabled");
+    ).read;
+    expect(fullRead.agents.length).toBeGreaterThan(0);
   });
 
-  it("§19.5 · the consent form echoes the signed oauth_query byte-for-byte in a hidden field", async () => {
+  it("§19.5 · the read's `oauthQuery` is the consent URL's raw query byte for byte — the value the form posts back is the bytes the provider verified, never one the client assembled", async () => {
     const { clientId } = await registerOAuthClient();
-    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+    const { oauthQuery, read } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    const field = /name="oauth_query"\s+value="([^"]*)"/.exec(html)?.[1];
-    expect(field, "no oauth_query hidden field rendered").not.toBeUndefined();
-    expect(decodeEntities(field ?? "")).toBe(oauthQuery);
+    expect(read.oauthQuery).toBe(oauthQuery);
+  });
+
+  it("§19.5 · the read answers exactly ConsentRead — oauthQuery, clientName, clientSelfRegistered, redirectOrigin, scopes, namespace, agents — and nothing else the screen does not show or echo: no CSRF token, no clock, no client id beyond the signed query", async () => {
+    const { clientId } = await registerOAuthClient({ client_name: "Keyset Client" });
+    const { oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const answered = await consentReadOf(oauthQuery, world.session.cookie);
+    expect(answered.status).toBe(200);
+    expect(answered.headers.get("Cache-Control")).toBe("no-store");
+    expect(Object.keys(await jsonOf(answered)).sort()).toEqual([
+      "agents",
+      "clientName",
+      "clientSelfRegistered",
+      "namespace",
+      "oauthQuery",
+      "redirectOrigin",
+      "scopes",
+    ]);
+  });
+
+  it("§19.5 · without a session the read is the reader's 401 — it answers nothing to anyone but the owner — while the document for the same query is the 302 to /login carrying it (the row above)", async () => {
+    const { clientId } = await registerOAuthClient();
+    const { oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+      resource: oauthResourceFor(world.ns.owner.username),
+    });
+    const anonymous = await consentReadOf(oauthQuery, null);
+    expect(anonymous.status).toBe(401);
+    expect(await reasonOf(anonymous)).toBe("Sign in again.");
+  });
+
+  it("§19.5 · an EDITED signed query and an EXPIRED one are each refused before any screen exists — the document is the plain 400 (text/plain, no CSP, no no-store) and the read is 400 `{ reason }` — and nothing is written: no binding and no consent at the provider · the untouched query answers both (the twin)", async () => {
+    const resource = oauthResourceFor(world.ns.owner.username);
+    const { clientId } = await registerOAuthClient();
+    const { oauthQuery } = await reachConsent(clientId, world.session.cookie, { resource });
+    const edited = new URLSearchParams(oauthQuery);
+    edited.set("scope", "mcp offline_access");
+
+    const refusedBoth = async (query: string, name: string): Promise<void> => {
+      const document = await get(`${paths.oauthConsent}?${query}`);
+      expect(document.status, `${name} document`).toBe(400);
+      expect(document.headers.get("Content-Type") ?? "", `${name} document`).toContain("text/plain");
+      expect(document.headers.get("Content-Security-Policy"), `${name} document`).toBeNull();
+      expect(document.headers.get("Cache-Control"), `${name} document`).toBeNull();
+      const read = await consentReadOf(query, world.session.cookie);
+      expect(read.status, `${name} read`).toBe(400);
+      expect(await reasonOf(read), `${name} read`).toBe("The authorization request could not be verified.");
+    };
+    await refusedBoth(edited.toString(), "edited");
+    // Expired: the provider signs a query good for `codeExpiresIn` (600 s); the clock is
+    // moved past it for the two requests alone, which is what an owner who left the screen
+    // open would meet.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 11 * 60_000 });
+    try {
+      await refusedBoth(oauthQuery, "expired");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+    expect(await consentRowExists(world.ns.owner.userId, clientId)).toBe(false);
+
+    // The twin: the same query, unedited and in time.
+    expect((await get(`${paths.oauthConsent}?${oauthQuery}`)).status).toBe(200);
+    expect((await consentReadOf(oauthQuery, world.session.cookie)).status).toBe(200);
   });
 
   it("§19.5 · POST /oauth/consent without a CSRF token is refused and writes no binding · the same POST with one binds and redirects (the twin)", async () => {
@@ -2934,7 +3022,7 @@ describe("§19.5 · the consent screen", () => {
     expect(refused.status).toBe(403);
     expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
 
-    const csrf = csrfOf(html);
+    const csrf = bootstrapCsrfOf(html);
     const accepted = await post(
       paths.oauthConsent,
       { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
@@ -2949,7 +3037,7 @@ describe("§19.5 · the consent screen", () => {
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    const csrf = csrfOf(html);
+    const csrf = bootstrapCsrfOf(html);
     const edited = new URLSearchParams(oauthQuery);
     edited.set("client_id", `${clientId}-tampered`);
     const refused = await post(
@@ -2967,7 +3055,7 @@ describe("§19.5 · the consent screen", () => {
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    const csrf = csrfOf(html);
+    const csrf = bootstrapCsrfOf(html);
     const before = await query(env.DB, world.ns.owner.userId, { event: "oauth.consented" });
     const accepted = await post(
       paths.oauthConsent,
@@ -2989,7 +3077,7 @@ describe("§19.5 · the consent screen", () => {
     const { html, oauthQuery } = await reachConsent(clientId, session.cookie, {
       resource: oauthResourceFor(ns.owner.username),
     });
-    const csrf = csrfOf(html);
+    const csrf = bootstrapCsrfOf(html);
     const first = await post(
       paths.oauthConsent,
       { oauth_query: oauthQuery, decision: "accept", agent: "one" },
@@ -3015,16 +3103,22 @@ describe("§19.5 · the consent screen", () => {
     expect(rebound.total).toBe(1);
   });
 
-  it("§19.5 · denying writes no binding and redirects to the client with access_denied", async () => {
-    const { clientId } = await registerOAuthClient();
-    const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
-      resource: oauthResourceFor(world.ns.owner.username),
-    });
-    const csrf = csrfOf(html);
-    const denied = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "deny" }, { csrf });
-    expect(denied.status, await denied.text()).toBe(303);
-    expect(denied.headers.get("Location")).toContain("error=access_denied");
-    expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+  it("§19.5 · denying writes no binding and redirects to the client with access_denied — whether the post carries no agent field or the empty one the client's form sends when Deny is pressed with nothing chosen: the agent is read on accept alone, so a deny is never refused for it", async () => {
+    // Since decision 38's family 4 the SPA's Deny skips the picker's `required`, so its post
+    // carries `agent=""`; since brief §5.3 the agent is resolved before the provider on
+    // ACCEPT — which must not turn an empty picker into a refused Deny.
+    const variants: Record<string, string>[] = [{}, { agent: "" }];
+    for (const fields of variants) {
+      const { clientId } = await registerOAuthClient();
+      const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
+        resource: oauthResourceFor(world.ns.owner.username),
+      });
+      const csrf = bootstrapCsrfOf(html);
+      const denied = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "deny", ...fields }, { csrf });
+      expect(denied.status, `${JSON.stringify(fields)} → ${await denied.text()}`).toBe(303);
+      expect(denied.headers.get("Location")).toContain("error=access_denied");
+      expect(await bindingFor(world.ns.owner.userId, clientId)).toBeNull();
+    }
   });
 
   it("§19.5 · a consent POST whose agent does not resolve in this owner's namespace — an invented slug, or another namespace's real agent — is refused 400 and writes NOTHING: no binding and no consent at the provider, so the next authorize still lands on the consent screen instead of the client's redirect · the same signed query naming this owner's own agent then binds and redirects to the client (the twin)", async () => {
@@ -3038,7 +3132,7 @@ describe("§19.5 · the consent screen", () => {
     for (const agent of [uniqueSlug("nosuchagent"), "outsider"]) {
       const { clientId } = await registerOAuthClient();
       const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, { resource });
-      const csrf = csrfOf(html);
+      const csrf = bootstrapCsrfOf(html);
 
       const refused = await post(paths.oauthConsent, { oauth_query: oauthQuery, decision: "accept", agent }, { csrf });
       expect(refused.status, agent).toBe(400);
@@ -3072,7 +3166,7 @@ describe("§19.5 · the consent screen", () => {
     const { html, oauthQuery } = await reachConsent(clientId, world.session.cookie, {
       resource: oauthResourceFor(world.ns.owner.username),
     });
-    const csrf = csrfOf(html);
+    const csrf = bootstrapCsrfOf(html);
     await post(
       paths.oauthConsent,
       { oauth_query: oauthQuery, decision: "accept", agent: "agent" },
@@ -5063,7 +5157,7 @@ async function consentAgain(
   const accepted = await post(
     paths.oauthConsent,
     { oauth_query: oauthQuery, decision: "accept", agent: agentSlug },
-    { cookie, csrf: csrfOf(html) },
+    { cookie, csrf: bootstrapCsrfOf(html) },
   );
   expect(accepted.status, await accepted.text()).toBe(303);
 }
@@ -5139,14 +5233,15 @@ function oauthResourceFor(username: string): string {
 
 /**
  * Drives GET `/api/auth/oauth2/authorize` with a session cookie all the way to the hub's
- * own `/oauth/consent` (§19.5 step 2) and returns its rendered HTML alongside the RAW signed
- * query the redirect carried — the same bytes the hidden field must echo (case 8).
+ * own `/oauth/consent` (§19.5 step 2) and returns the shell document it answered (whose
+ * bootstrap carries the CSRF token the consent form posts) and the screen's read, beside
+ * the RAW signed query the redirect carried — the bytes the read must echo.
  */
 async function reachConsent(
   clientId: string,
   cookie: string,
   extra: Record<string, string> = {},
-): Promise<{ html: string; oauthQuery: string }> {
+): Promise<{ response: Response; html: string; oauthQuery: string; read: ConsentRead }> {
   const authorized = await call(new Request(authorizeUrl(clientId, extra), { headers: { Cookie: cookie } }));
   expect(authorized.status, "authorize did not redirect to consent").toBe(302);
   const location = authorized.headers.get("Location") ?? "";
@@ -5155,7 +5250,16 @@ async function reachConsent(
   const response = await call(new Request(`${ORIGIN}${location}`, { headers: { Cookie: cookie } }));
   const html = await response.text();
   expect(response.status, html).toBe(200);
-  return { html, oauthQuery };
+  const read = await consentReadOf(oauthQuery, cookie);
+  expect(read.status, await read.clone().text()).toBe(200);
+  return { response, html, oauthQuery, read: (await read.json()) as ConsentRead };
+}
+
+/** `GET /api/hub/oauth/consent` as the SPA asks it: the signed query appended VERBATIM —
+ *  never parsed, rebuilt or re-encoded (§19.5 step 3's amendment). `cookie` null is the
+ *  signed-out fetch. */
+function consentReadOf(oauthQuery: string, cookie: string | null): Promise<Response> {
+  return hub("GET", `/api/hub/oauth/consent?${oauthQuery}`, undefined, { cookie });
 }
 
 /** One `oauth_binding` row, read straight off D1 — the ground truth the consent POST and
@@ -5350,7 +5454,7 @@ async function consentOnce(
   const accepted = await post(
     paths.oauthConsent,
     { oauth_query: oauthQuery, decision: "accept", agent: agentSlug },
-    { cookie, csrf: csrfOf(html) },
+    { cookie, csrf: bootstrapCsrfOf(html) },
   );
   expect(accepted.status, await accepted.text()).toBe(303);
   const binding = await bindingFor(ns.owner.userId, clientId);

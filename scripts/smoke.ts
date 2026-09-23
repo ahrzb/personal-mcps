@@ -824,12 +824,9 @@ async function main(): Promise<number> {
           `authorize (signed in) → ${toConsent.status} ${consentLocation}`,
         );
 
-        // The consent page itself: its own CSRF token, and the oauth_query it can only
-        // echo — never invent, drop or edit (§19.5 step 2).
-        const consentPageUrl = new URL(consentLocation, ORIGIN).toString();
-        const consentHtml = await (await fetch(consentPageUrl, { headers: { Cookie: browserCookie } })).text();
-        const csrf = hiddenField(consentHtml, "csrf");
-        const oauthQuery = hiddenField(consentHtml, "oauth_query");
+        // The consent screen itself: the CSRF token its form carries, and the oauth_query it
+        // can only echo — never invent, drop or edit (§19.5 step 2).
+        const { csrf, oauthQuery } = await consentForm(consentLocation, browserCookie);
 
         // An agent THIS step creates and grants, so the scoped call below rides on
         // a grant this step controls — never on whatever approval state the main flow left
@@ -930,10 +927,7 @@ async function main(): Promise<number> {
         });
         let rotatedLocation = await redirectTarget(rotatedAuthorize);
         if (rotatedLocation.includes("/oauth/consent")) {
-          const rotatedConsentUrl = new URL(rotatedLocation, ORIGIN).toString();
-          const rotatedConsentHtml = await (await fetch(rotatedConsentUrl, {
-            headers: { Cookie: browserCookie },
-          })).text();
+          const rotatedForm = await consentForm(rotatedLocation, browserCookie);
           const rotatedConsent = await fetch(`${ORIGIN}/oauth/consent`, {
             method: "POST",
             redirect: "manual",
@@ -943,8 +937,8 @@ async function main(): Promise<number> {
               Origin: ORIGIN,
             },
             body: new URLSearchParams({
-              csrf: hiddenField(rotatedConsentHtml, "csrf"),
-              oauth_query: hiddenField(rotatedConsentHtml, "oauth_query"),
+              csrf: rotatedForm.csrf,
+              oauth_query: rotatedForm.oauthQuery,
               agent: OAUTH_AGENT,
               decision: "accept",
             }),
@@ -1518,20 +1512,39 @@ function unique(values: string[]): string[] {
 // ── §19: the OAuth walk's own small readers (no HTML parser dependency, §4) ────────────
 
 /**
- * One hidden `<input>`'s value off rendered HTML, by name — consent.tsx renders
- * `<input type="hidden" name="…" value="…" />` in that order, and only ECHOES its two
- * fields (csrf, oauth_query) rather than rebuilding them. Hono JSX escapes attribute values
- * as HTML, so the raw match is entity-decoded before use.
+ * One hidden `<input>`'s value off rendered HTML, by name — login.tsx renders
+ * `<input type="hidden" name="…" value="…" />` in that order for its `callbackURL`, the one
+ * server-rendered hidden field this walk still reads (the consent screen's moved to the SPA
+ * with decision 38 — `consentForm` below). Hono JSX escapes attribute values as HTML, so the
+ * raw match is entity-decoded before use.
  */
 function hiddenField(html: string, name: string): string {
   const match = new RegExp(`name="${name}" value="([^"]*)"`).exec(html);
-  if (match === null) throw new Error(`no hidden field named ${name} on the consent page`);
+  if (match === null) throw new Error(`no hidden field named ${name} on the page`);
   return match[1]
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+}
+
+/**
+ * What the consent screen's form posts, read where the SPA reads it (decision 38): the CSRF
+ * token off the shell's `#pmcp-bootstrap` island, and `oauth_query` off the screen's read —
+ * `GET /api/hub/oauth/consent` with the consent URL's own query appended VERBATIM (taken off
+ * the Location string, never re-serialized), whose answer echoes the bytes the provider
+ * just verified. `consentLocation` is the provider's redirect to `/oauth/consent?<signed>`.
+ */
+async function consentForm(consentLocation: string, cookie: string): Promise<{ csrf: string; oauthQuery: string }> {
+  const signed = consentLocation.slice(consentLocation.indexOf("?"));
+  const shell = await fetch(`${ORIGIN}/oauth/consent${signed}`, { headers: { Cookie: cookie } });
+  if (shell.status !== 200) throw new Error(`GET /oauth/consent → ${shell.status}`);
+  const island = /<script type="application\/json" id="pmcp-bootstrap">([\s\S]*?)<\/script>/.exec(await shell.text());
+  if (island === null) throw new Error("the consent shell carried no #pmcp-bootstrap island");
+  const csrf = asString(asRecord(JSON.parse(island[1]), "the consent shell's bootstrap").csrf, "bootstrap csrf");
+  const read = await hubJson(`/api/hub/oauth/consent${signed}`, cookie);
+  return { csrf, oauthQuery: asString(read.oauthQuery, "the consent read's oauthQuery") };
 }
 
 /** Bytes to the base64url this walk's PKCE verifier/challenge and state are spelled in. */

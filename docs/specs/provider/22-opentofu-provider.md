@@ -608,7 +608,10 @@ that reference automatically.
 `log_bodies`, `redact`, `redact_results`, for tunneled apps `owner_roles` *(2026-09-17, decision
 32: the owner's own roles, `{}` when none — the app's declaration is not an attribute)*, and for
 proxied apps `endpoint`, `auth`,
-`forward_identity`, `roles`, `capabilities`. It carries **no** header attributes; the hub never
+`forward_identity`, `roles`, `capabilities`. *(Amended 2026-09-24: `roles` is on every row, not
+proxied apps' alone — for a proxied app the owner-configured roles, for a tunneled app its own
+declaration, read-only here as on no resource; the provider's description says so since
+terraform-provider-pmcp#2.)* It carries **no** header attributes; the hub never
 returns them. Looking up the builtin `pmcp` slug is an error, not an empty result.
 
 `pmcp_agent` returns `slug`, `name`, `description`, `created_at`, and `grants` as a map of app
